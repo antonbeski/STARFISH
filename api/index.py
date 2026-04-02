@@ -36,9 +36,9 @@ app = Flask(__name__)
 OPEN_ROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY", "")
 
 AI_MODELS = [
-    {"id": "deepseek/deepseek-r1",              "key": "deepseek", "label": "DeepSeek R1",   "desc": "Chain-of-thought reasoning", "color": "#7c3aed"},
-    {"id": "meta-llama/llama-3.3-70b-instruct", "key": "llama",    "label": "Llama 3.3 70B", "desc": "Fast & balanced",            "color": "#0ea5e9"},
-    {"id": "qwen/qwen3-coder",                  "key": "qwen",     "label": "Qwen3 Coder",   "desc": "Quantitative focus",         "color": "#f59e0b"},
+    {"id": "deepseek/deepseek-r1",              "key": "deepseek", "label": "DeepSeek R1",   "desc": "Chain-of-thought reasoning", "color": "#000"},
+    {"id": "meta-llama/llama-3.3-70b-instruct", "key": "llama",    "label": "Llama 3.3 70B", "desc": "Fast & balanced",            "color": "#000"},
+    {"id": "qwen/qwen3-coder",                  "key": "qwen",     "label": "Qwen3 Coder",   "desc": "Quantitative focus",         "color": "#000"},
 ]
 RL_RPM = 20
 RL_RPD = 200
@@ -638,13 +638,13 @@ def call_openrouter(model_id, prompt):
 # ══════════════════════════════════════════════════════════════════════════════
 # CHART BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
-_C = {"bg":"rgba(0,0,0,0)","paper":"rgba(0,0,0,0)","grid":"rgba(255,255,255,0.06)","axis":"#555",
-      "text":"#888","white":"#fff","green":"#26a69a","red":"#ef5350",
-      "sma20":"#FFD700","sma50":"#FF8C00","sma200":"#00BFFF",
-      "bb_u":"rgba(120,180,255,0.7)","bb_l":"rgba(120,180,255,0.7)","bb_f":"rgba(120,180,255,0.06)",
-      "rsi":"#a78bfa","rsi_ob":"rgba(239,83,80,0.25)","rsi_os":"rgba(38,166,154,0.25)",
-      "macd":"#60a5fa","sig":"#f97316","hp":"rgba(38,166,154,0.8)","hn":"rgba(239,83,80,0.8)",
-      "vu":"rgba(38,166,154,0.5)","vd":"rgba(239,83,80,0.5)"}
+_C = {"bg":"rgba(0,0,0,0)","paper":"rgba(0,0,0,0)","grid":"rgba(0,0,0,0.06)","axis":"#aaa",
+      "text":"#666","white":"#000","green":"#000","red":"#777",
+      "sma20":"#222","sma50":"#666","sma200":"#aaa",
+      "bb_u":"rgba(0,0,0,0.5)","bb_l":"rgba(0,0,0,0.5)","bb_f":"rgba(0,0,0,0.04)",
+      "rsi":"#333","rsi_ob":"rgba(0,0,0,0.07)","rsi_os":"rgba(0,0,0,0.07)",
+      "macd":"#000","sig":"#666","hp":"rgba(0,0,0,0.75)","hn":"rgba(160,160,160,0.75)",
+      "vu":"rgba(0,0,0,0.5)","vd":"rgba(160,160,160,0.5)"}
 
 
 def build_chart(ticker, period, chart_type, indicators):
@@ -676,12 +676,12 @@ def build_chart(ticker, period, chart_type, indicators):
 
     if chart_type == "candlestick":
         fig.add_trace(go.Candlestick(x=dates,open=op,high=hi,low=lo,close=cl,name="Price",
-            increasing_line_color=_C["green"],increasing_fillcolor="rgba(38,166,154,.18)",
-            decreasing_line_color=_C["red"],decreasing_fillcolor="rgba(239,83,80,.18)",
+            increasing_line_color=_C["green"],increasing_fillcolor="rgba(0,0,0,.12)",
+            decreasing_line_color=_C["red"],decreasing_fillcolor="rgba(150,150,150,.18)",
             line=dict(width=1)), row=1,col=1)
     else:
         fig.add_trace(go.Scatter(x=dates,y=cl,mode="lines",name="Price",
-            line=dict(color=_C["white"],width=2),fill="tozeroy",fillcolor="rgba(255,255,255,.04)"),row=1,col=1)
+            line=dict(color=_C["white"],width=2),fill="tozeroy",fillcolor="rgba(0,0,0,.04)"),row=1,col=1)
 
     if "sma" in indicators:
         for w,color,lbl in [(20,_C["sma20"],"SMA 20"),(50,_C["sma50"],"SMA 50"),(200,_C["sma200"],"SMA 200")]:
@@ -704,7 +704,7 @@ def build_chart(ticker, period, chart_type, indicators):
             line=dict(color=_C["rsi"],width=1.5),showlegend=False),row=rr,col=1)
         fig.add_hrect(y0=70,y1=100,row=rr,col=1,fillcolor=_C["rsi_ob"],line_width=0,layer="below")
         fig.add_hrect(y0=0,y1=30,row=rr,col=1,fillcolor=_C["rsi_os"],line_width=0,layer="below")
-        for lvl,c in [(70,"rgba(239,83,80,.5)"),(30,"rgba(38,166,154,.5)"),(50,"rgba(255,255,255,.15)")]:
+        for lvl,c in [(70,"rgba(0,0,0,.4)"),(30,"rgba(0,0,0,.4)"),(50,"rgba(0,0,0,.15)")]:
             fig.add_hline(y=lvl,row=rr,col=1,line=dict(color=c,width=0.8,dash="dash"))
     if sm and len(cl) >= 27:
         ml,sl,hl = calc_macd(cl)
@@ -714,23 +714,23 @@ def build_chart(ticker, period, chart_type, indicators):
             line=dict(color=_C["macd"],width=1.5),showlegend=False),row=rm,col=1)
         fig.add_trace(go.Scatter(x=dates,y=sl,mode="lines",name="Signal",
             line=dict(color=_C["sig"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_hline(y=0,row=rm,col=1,line=dict(color="rgba(255,255,255,.2)",width=0.8,dash="dash"))
+        fig.add_hline(y=0,row=rm,col=1,line=dict(color="rgba(0,0,0,.2)",width=0.8,dash="dash"))
 
     ax = dict(gridcolor=_C["grid"],color=_C["axis"],showline=False,zeroline=False,tickfont=dict(size=9,color=_C["text"]))
     fig.update_layout(
         height=420+120*(rows-1), plot_bgcolor=_C["bg"], paper_bgcolor=_C["paper"],
         font=dict(color=_C["text"],family="'DM Sans',sans-serif",size=11),
         legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="left",x=0,
-                    bgcolor="rgba(0,0,0,0)",font=dict(size=10,color=_C["text"])),
+                    bgcolor="rgba(255,255,255,0)",font=dict(size=10,color=_C["text"])),
         hovermode="x unified", margin=dict(l=55,r=20,t=55,b=30),
-        hoverlabel=dict(bgcolor="rgba(12,12,12,.95)",bordercolor="rgba(255,255,255,.12)",font=dict(color="#fff")),
+        hoverlabel=dict(bgcolor="rgba(255,255,255,.97)",bordercolor="rgba(0,0,0,.2)",font=dict(color="#000")),
         xaxis_rangeslider_visible=False, dragmode="pan",
     )
     for i in range(1, rows+1):
         fig.update_layout(**{f"xaxis{'' if i==1 else i}": {**ax,"rangeslider":{"visible":False}}})
         fig.update_layout(**{f"yaxis{'' if i==1 else i}": {**ax}})
     if sr: fig.update_layout(**{f"yaxis{'' if rr==1 else rr}": {**ax,"range":[0,100]}})
-    for ann in fig.layout.annotations: ann.font.color="#555"; ann.font.size=10
+    for ann in fig.layout.annotations: ann.font.color="#666"; ann.font.size=10
     return pyo.plot(fig,output_type="div",include_plotlyjs=False), None
 
 
@@ -776,9 +776,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
         ai_cards += f"""<div class="ai-model-card{ex}" data-model="{m['id']}" data-key="{m['key']}" data-color="{m['color']}" data-label="{m['label']}" onclick="selectModel(this)">
   <div class="ai-model-hdr"><span class="ai-dot" style="background:{m['color']}"></span><span class="ai-mname">{m['label']}</span>{"" if rl['available'] else '<span class="ai-rl-badge">Rate Limited</span>'}</div>
   <div class="ai-mdesc">{m['desc']}</div>
-  <div class="ai-rl-bars">
-    <div class="ai-rl-row"><span class="ai-rl-lbl">RPM</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpm-{m['key']}" style="width:{pm}%;background:{m['color']}55;border-right:2px solid {m['color']}"></div></div><span class="ai-rl-cnt" id="rpm-{m['key']}">{rl['rpm_used']}/{rl['rpm_max']}</span></div>
-    <div class="ai-rl-row"><span class="ai-rl-lbl">RPD</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpd-{m['key']}" style="width:{pd_}%;background:{m['color']}33;border-right:2px solid {m['color']}88"></div></div><span class="ai-rl-cnt" id="rpd-{m['key']}">{rl['rpd_used']}/{rl['rpd_max']}</span></div>
+    <div class="ai-rl-bars">
+    <div class="ai-rl-row"><span class="ai-rl-lbl">RPM</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpm-{m['key']}" style="width:{pm}%;background:#000"></div></div><span class="ai-rl-cnt" id="rpm-{m['key']}">{rl['rpm_used']}/{rl['rpm_max']}</span></div>
+    <div class="ai-rl-row"><span class="ai-rl-lbl">RPD</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpd-{m['key']}" style="width:{pd_}%;background:#888"></div></div><span class="ai-rl-cnt" id="rpd-{m['key']}">{rl['rpd_used']}/{rl['rpd_max']}</span></div>
   </div>
 </div>"""
 
@@ -811,244 +811,241 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <style>
     *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
     :root{{
-      --bg:#060606;--sur:rgba(255,255,255,.04);--bdr:rgba(255,255,255,.09);--bds:rgba(255,255,255,.05);
-      --tx:#f0f0f0;--txm:#666;--txd:#3a3a3a;--acc:#fff;--acm:rgba(255,255,255,.1);
-      --blur:blur(20px);--r:16px;--rs:9px;
-      --gold:rgba(200,134,10,1);--gold-dim:rgba(200,134,10,0.12);--gold-bdr:rgba(200,134,10,0.3);
-      --teal:#26a69a;--teal-dim:rgba(38,166,154,0.12);--teal-bdr:rgba(38,166,154,0.3);
+      --bg:#ffffff;--sur:#f8f7f4;--bdr:#000000;--bds:#e5e5e5;
+      --tx:#000000;--txm:#555555;--txd:#888888;--acc:#000000;--acm:rgba(0,0,0,.05);
+      --blur:none;--r:12px;--rs:4px;
+      --gold:#000;--gold-dim:#f0f0f0;--gold-bdr:#000;
+      --teal:#333;--teal-dim:#f0f0f0;--teal-bdr:#aaa;
     }}
     html{{scroll-behavior:smooth}}
     body{{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;
          -webkit-font-smoothing:antialiased;overflow-x:hidden}}
-    body::before{{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
-      background:radial-gradient(ellipse 90% 55% at 15% 5%,rgba(255,255,255,.022) 0%,transparent 55%),
-                 radial-gradient(ellipse 55% 45% at 85% 85%,rgba(255,255,255,.012) 0%,transparent 50%)}}
 
     /* ── HEADER ── */
     header{{position:sticky;top:0;z-index:100;height:58px;display:flex;align-items:center;
-            justify-content:space-between;padding:0 28px;background:rgba(6,6,6,.85);
-            backdrop-filter:var(--blur);border-bottom:1px solid var(--bds)}}
+            justify-content:space-between;padding:0 28px;background:#ffffff;
+            border-bottom:2px solid #000}}
     .logo{{display:flex;align-items:center;gap:11px}}
-    .logo-star{{flex-shrink:0;transition:filter .35s ease}}
-    .logo:hover .logo-star{{filter:drop-shadow(0 0 10px rgba(255,255,255,.35))}}
+    .logo-star{{flex-shrink:0}}
     .logo-text-group{{display:flex;flex-direction:column;gap:2px;line-height:1}}
-    .logo-word{{font-size:.8rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:var(--acc)}}
-    .logo-tagline{{font-size:.5rem;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--txd)}}
+    .logo-word{{font-size:.8rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#000}}
+    .logo-tagline{{font-size:.5rem;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:#888}}
     .header-nav{{display:flex;gap:6px}}
-    .nav-link{{font-size:.65rem;font-weight:500;letter-spacing:.1em;text-transform:uppercase;
-               color:var(--txm);padding:5px 12px;border-radius:6px;cursor:pointer;
+    .nav-link{{font-size:.65rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+               color:#555;padding:5px 12px;border-radius:4px;cursor:pointer;
                transition:all .15s;text-decoration:none;border:1px solid transparent}}
-    .nav-link:hover{{color:var(--tx);background:var(--sur);border-color:var(--bdr)}}
+    .nav-link:hover{{color:#000;background:#f0f0f0;border-color:#000}}
 
     /* ── TICKER STRIP ── */
     .ticker-strip{{position:relative;z-index:10;height:32px;overflow:hidden;display:flex;
-                   align-items:center;background:rgba(10,10,10,.9);border-bottom:1px solid var(--bds)}}
+                   align-items:center;background:#000;border-bottom:1px solid #000}}
     .ticker-strip::before,.ticker-strip::after{{content:'';position:absolute;top:0;bottom:0;width:60px;z-index:2}}
-    .ticker-strip::before{{left:0;background:linear-gradient(90deg,rgba(10,10,10,.9) 40%,transparent)}}
-    .ticker-strip::after{{right:0;background:linear-gradient(-90deg,rgba(10,10,10,.9) 40%,transparent)}}
+    .ticker-strip::before{{left:0;background:linear-gradient(90deg,#000 40%,transparent)}}
+    .ticker-strip::after{{right:0;background:linear-gradient(-90deg,#000 40%,transparent)}}
     .ticker-badge{{position:absolute;left:0;height:100%;z-index:3;display:flex;align-items:center;
-                   padding:0 .9rem;background:rgba(200,134,10,.85);white-space:nowrap;
+                   padding:0 .9rem;background:#fff;white-space:nowrap;
                    font-size:.56rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#000}}
     .ticker-track{{display:flex;padding-left:90px;animation:ticker-run 60s linear infinite;white-space:nowrap}}
     .ticker-track:hover{{animation-play-state:paused}}
     .t-item{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:400;letter-spacing:.08em;
-             color:rgba(255,255,255,.38);padding:0 1.5rem}}
-    .t-item strong{{color:rgba(255,255,255,.78);font-weight:500}}
-    .t-sep{{color:rgba(200,134,10,.6)}}
+             color:rgba(255,255,255,.55);padding:0 1.5rem}}
+    .t-item strong{{color:rgba(255,255,255,.9);font-weight:500}}
+    .t-sep{{color:rgba(255,255,255,.3)}}
     @keyframes ticker-run{{from{{transform:translateX(100vw)}}to{{transform:translateX(-100%)}}}}
 
     /* ── LAYOUT ── */
     main{{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:30px 20px 64px}}
-    .glass{{background:var(--sur);backdrop-filter:var(--blur);border:1px solid var(--bdr);border-radius:var(--r)}}
+    .glass{{background:#f8f7f4;border:2px solid #000;border-radius:var(--r)}}
     .panel{{padding:26px 30px;margin-bottom:18px}}
     .section-divider{{display:flex;align-items:center;gap:14px;margin:36px 0 20px}}
-    .section-divider-line{{flex:1;height:1px;background:var(--bds)}}
+    .section-divider-line{{flex:1;height:1px;background:#e5e5e5}}
     .section-label{{font-size:.6rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
-                    color:var(--txd);white-space:nowrap;display:flex;align-items:center;gap:8px}}
+                    color:#888;white-space:nowrap;display:flex;align-items:center;gap:8px}}
     .section-label .dot{{width:5px;height:5px;border-radius:50%}}
-    .panel-label{{font-size:.62rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--txd);margin-bottom:20px}}
+    .panel-label{{font-size:.62rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#888;margin-bottom:20px}}
 
     /* ── STOCK SEARCH ── */
     form{{display:grid;grid-template-columns:1.5fr 1fr 1fr auto;gap:14px;align-items:end}}
-    .fg label{{display:block;font-size:.7rem;font-weight:500;letter-spacing:.05em;color:var(--txm);margin-bottom:8px}}
-    input,select{{width:100%;background:rgba(255,255,255,.035);border:1px solid var(--bdr);border-radius:var(--rs);
-                  color:var(--tx);padding:10px 14px;font-size:.875rem;font-family:inherit;outline:none;
+    .fg label{{display:block;font-size:.7rem;font-weight:600;letter-spacing:.05em;color:#555;margin-bottom:8px;text-transform:uppercase}}
+    input,select{{width:100%;background:#ffffff;border:2px solid #000;border-radius:var(--rs);
+                  color:#000;padding:10px 14px;font-size:.875rem;font-family:inherit;outline:none;
                   transition:border-color .2s,background .2s,box-shadow .2s;appearance:none;-webkit-appearance:none}}
-    input::placeholder{{color:var(--txd)}}
-    input:focus,select:focus{{border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.065);box-shadow:0 0 0 3px rgba(255,255,255,.05)}}
-    select{{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23555' d='M5 6L0 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:34px}}
-    select option{{background:#111;color:#f0f0f0}}
-    .btn{{background:var(--acc);color:#000;border:none;border-radius:var(--rs);padding:10px 26px;
-          font-size:.8rem;font-weight:600;font-family:inherit;cursor:pointer;white-space:nowrap;
+    input::placeholder{{color:#aaa}}
+    input:focus,select:focus{{border-color:#000;background:#fff;box-shadow:0 0 0 3px rgba(0,0,0,.06)}}
+    select{{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:34px}}
+    select option{{background:#fff;color:#000}}
+    .btn{{background:#000;color:#fff;border:none;border-radius:var(--rs);padding:10px 26px;
+          font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;
           letter-spacing:.09em;text-transform:uppercase;transition:opacity .18s,transform .13s;height:42px}}
-    .btn:hover{{opacity:.85}}.btn:active{{transform:scale(.96)}}
-    .chips{{display:flex;flex-wrap:wrap;gap:7px;margin-top:22px;padding-top:20px;border-top:1px solid var(--bds)}}
-    .chip{{background:transparent;border:1px solid var(--bdr);border-radius:100px;padding:5px 15px;
-           font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:var(--txm);
+    .btn:hover{{opacity:.8}}.btn:active{{transform:scale(.96)}}
+    .chips{{display:flex;flex-wrap:wrap;gap:7px;margin-top:22px;padding-top:20px;border-top:1px solid #e5e5e5}}
+    .chip{{background:transparent;border:1px solid #000;border-radius:20px;padding:5px 15px;
+           font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
            letter-spacing:.05em;transition:all .16s;user-select:none}}
-    .chip:hover{{border-color:rgba(255,255,255,.3);color:var(--tx);background:var(--acm)}}
-    .chip.active{{background:var(--acc);border-color:var(--acc);color:#000;font-weight:600}}
-    .ind-row{{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;padding-top:16px;border-top:1px solid var(--bds);align-items:center}}
-    .ind-label{{font-size:.62rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--txd);margin-right:4px}}
-    .ind-chip{{background:transparent;border:1px solid var(--bdr);border-radius:100px;padding:4px 14px;
-               font-size:.7rem;font-family:'DM Mono',monospace;cursor:pointer;color:var(--txm);
-               letter-spacing:.05em;transition:all .16s;user-select:none}}
-    .ind-chip:hover{{border-color:rgba(255,255,255,.3);color:var(--tx);background:var(--acm)}}
-    .ind-chip.active{{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.35);color:var(--tx);font-weight:600}}
-    .chart-card{{padding:20px 16px 12px;min-height:460px;display:flex;align-items:flex-start;justify-content:center;overflow:hidden}}
+    .chip:hover{{border-color:#000;color:#000;background:#f0f0f0}}
+    .chip.active{{background:#000;border-color:#000;color:#fff;font-weight:600}}
+    .ind-row{{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;padding-top:16px;border-top:1px solid #e5e5e5;align-items:center}}
+    .ind-label{{font-size:.62rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888;margin-right:4px}}
+    .ind-chip{{background:transparent;border:1px solid #000;border-radius:4px;padding:4px 14px;
+               font-size:.7rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
+               letter-spacing:.05em;transition:all .16s;user-select:none;text-transform:uppercase}}
+    .ind-chip:hover{{border-color:#000;color:#000;background:#f0f0f0}}
+    .ind-chip.active{{background:#eee;border-style:dashed;color:#000;font-weight:600}}
+    .chart-card{{padding:20px 16px 12px;min-height:460px;display:flex;align-items:flex-start;justify-content:center;overflow:hidden;background:#fff}}
     .chart-card>div{{width:100%}}
-    .error-box{{border:1px solid rgba(255,255,255,.1);border-left:3px solid rgba(255,255,255,.45);border-radius:var(--rs);padding:16px 20px;color:#999;font-size:.875rem;background:rgba(255,255,255,.025);width:100%;line-height:1.6}}
-    .empty-state{{color:var(--txd);font-size:.85rem;text-align:center;letter-spacing:.03em}}
+    .error-box{{border:1px solid #000;border-left:3px solid #000;border-radius:var(--rs);padding:16px 20px;color:#555;font-size:.875rem;background:#f8f7f4;width:100%;line-height:1.6}}
+    .empty-state{{color:#888;font-size:.85rem;text-align:center;letter-spacing:.03em}}
 
     /* ── AI PANEL ── */
     .ai-panel{{padding:26px 30px;margin-bottom:18px}}
     .ai-models-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}}
-    .ai-model-card{{background:rgba(255,255,255,.03);border:1px solid var(--bdr);border-radius:12px;
+    .ai-model-card{{background:#fff;border:2px solid #000;border-radius:var(--r);
                     padding:16px;cursor:pointer;transition:all .2s;user-select:none}}
-    .ai-model-card:hover:not(.exhausted){{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.06)}}
-    .ai-model-card.selected{{border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07);box-shadow:0 0 0 1px rgba(255,255,255,.1)}}
+    .ai-model-card:hover:not(.exhausted){{background:#f0f0f0}}
+    .ai-model-card.selected{{background:#000;color:#fff;box-shadow:none}}
+    .ai-model-card.selected .ai-mname{{color:#fff}}
+    .ai-model-card.selected .ai-mdesc{{color:#aaa}}
+    .ai-model-card.selected .ai-rl-lbl{{color:#aaa}}
+    .ai-model-card.selected .ai-rl-cnt{{color:#aaa}}
     .ai-model-card.exhausted{{opacity:.45;cursor:not-allowed}}
     .ai-model-hdr{{display:flex;align-items:center;gap:8px;margin-bottom:4px}}
-    .ai-dot{{width:7px;height:7px;border-radius:50%;flex-shrink:0}}
-    .ai-mname{{font-size:.8rem;font-weight:600;color:var(--tx)}}
-    .ai-mdesc{{font-size:.67rem;color:var(--txm);margin-bottom:12px}}
+    .ai-dot{{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:#000}}
+    .ai-mname{{font-size:.8rem;font-weight:600;color:#000}}
+    .ai-mdesc{{font-size:.67rem;color:#555;margin-bottom:12px}}
     .ai-rl-bars{{display:flex;flex-direction:column;gap:5px}}
     .ai-rl-row{{display:flex;align-items:center;gap:6px}}
-    .ai-rl-lbl{{font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txd);width:26px}}
-    .ai-bar-wrap{{flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden}}
-    .ai-bar{{height:100%;border-radius:2px;transition:width .5s ease}}
-    .ai-rl-cnt{{font-size:.58rem;font-family:'DM Mono',monospace;color:var(--txm);width:34px;text-align:right}}
+    .ai-rl-lbl{{font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#888;width:26px}}
+    .ai-bar-wrap{{flex:1;height:4px;background:#e5e5e5;border-radius:2px;overflow:hidden}}
+    .ai-bar{{height:100%;border-radius:2px;transition:width .5s ease;background:#000}}
+    .ai-rl-cnt{{font-size:.58rem;font-family:'DM Mono',monospace;color:#555;width:34px;text-align:right}}
     .ai-rl-badge{{font-size:.55rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
-                  padding:2px 7px;border-radius:100px;margin-left:auto;
-                  background:rgba(255,160,0,.1);border:1px solid rgba(255,160,0,.25);color:#ffaa44}}
+                  padding:2px 7px;border-radius:4px;margin-left:auto;
+                  background:#f0f0f0;border:1px solid #aaa;color:#555}}
     .ai-action-row{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px}}
-    .btn-ai{{background:linear-gradient(135deg,rgba(255,255,255,.1),rgba(255,255,255,.05));
-             border:1px solid rgba(255,255,255,.18);border-radius:var(--rs);color:var(--tx);
-             padding:10px 28px;font-size:.8rem;font-weight:600;font-family:inherit;cursor:pointer;
+    .btn-ai{{background:#000;border:none;border-radius:var(--rs);color:#fff;
+             padding:10px 28px;font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;
              letter-spacing:.09em;text-transform:uppercase;transition:all .18s}}
-    .btn-ai:hover{{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.32)}}
+    .btn-ai:hover{{opacity:.8}}
     .btn-ai:active{{transform:scale(.96)}}.btn-ai:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
-    .ai-sel-label{{font-size:.72rem;color:var(--txm)}}
-    .ai-timer{{font-size:.67rem;font-family:'DM Mono',monospace;color:var(--txd);margin-left:auto}}
-    .ai-result{{display:none;border:1px solid var(--bdr);border-radius:12px;overflow:hidden;margin-top:4px}}
+    .ai-sel-label{{font-size:.72rem;color:#555}}
+    .ai-timer{{font-size:.67rem;font-family:'DM Mono',monospace;color:#888;margin-left:auto}}
+    .ai-result{{display:none;border:2px solid #000;border-radius:var(--r);overflow:hidden;margin-top:4px;background:#fff}}
     .ai-result.show{{display:block}}
-    .ai-verdict-bar{{display:flex;align-items:center;gap:14px;padding:18px 22px;border-bottom:1px solid var(--bds);flex-wrap:wrap;gap:12px}}
-    .ai-badge{{font-size:.95rem;font-weight:700;letter-spacing:.12em;padding:8px 20px;border-radius:8px;text-transform:uppercase;flex-shrink:0}}
-    .v-BUY{{background:rgba(38,166,154,.2);border:1px solid rgba(38,166,154,.5);color:#26a69a}}
-    .v-SELL{{background:rgba(239,83,80,.2);border:1px solid rgba(239,83,80,.5);color:#ef5350}}
-    .v-HOLD{{background:rgba(255,196,0,.15);border:1px solid rgba(255,196,0,.4);color:#ffc400}}
+    .ai-verdict-bar{{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid #e5e5e5;flex-wrap:wrap}}
+    .ai-badge{{font-size:.95rem;font-weight:700;letter-spacing:.12em;padding:8px 20px;border-radius:4px;text-transform:uppercase;flex-shrink:0}}
+    .v-BUY{{background:#e8f5e9;border:1px solid #333;color:#000}}
+    .v-SELL{{background:#fce4e4;border:1px solid #333;color:#000}}
+    .v-HOLD{{background:#fffde7;border:1px solid #333;color:#000}}
     .ai-vmeta{{display:flex;flex-direction:column;gap:4px;flex:1}}
-    .ai-summary{{font-size:.84rem;color:var(--tx);line-height:1.5}}
+    .ai-summary{{font-size:.84rem;color:#000;line-height:1.5}}
     .ai-meta-row{{display:flex;gap:14px;flex-wrap:wrap}}
-    .ai-mi{{font-size:.67rem;color:var(--txm)}}.ai-mi strong{{color:var(--txd)}}
+    .ai-mi{{font-size:.67rem;color:#555}}.ai-mi strong{{color:#888}}
     .ai-model-tag{{display:inline-flex;align-items:center;gap:5px;font-size:.6rem;font-weight:600;
-                   letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:100px;
-                   border:1px solid var(--bdr);color:var(--txm);background:rgba(255,255,255,.04);white-space:nowrap}}
-    .ai-pts{{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--bds);border-bottom:1px solid var(--bds)}}
-    .ai-pt{{background:var(--bg);padding:14px 16px;text-align:center}}
-    .ai-pt-lbl{{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--txd);margin-bottom:5px}}
+                   letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:4px;
+                   border:1px solid #000;color:#555;background:#f8f7f4;white-space:nowrap}}
+    .ai-pts{{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#e5e5e5;border-bottom:1px solid #e5e5e5}}
+    .ai-pt{{background:#fff;padding:14px 16px;text-align:center}}
+    .ai-pt-lbl{{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#888;margin-bottom:5px}}
     .ai-pt-val{{font-size:.92rem;font-weight:600;font-family:'DM Mono',monospace}}
-    .pt-e{{color:#fff}}.pt-sl{{color:#ef5350}}.pt-t1{{color:#26a69a}}.pt-t2{{color:#00BFFF}}
+    .pt-e{{color:#000}}.pt-sl{{color:#555}}.pt-t1{{color:#000}}.pt-t2{{color:#333}}
     .ai-secs{{padding:0}}
-    .ai-sec{{padding:18px 22px;border-bottom:1px solid var(--bds)}}
+    .ai-sec{{padding:18px 22px;border-bottom:1px solid #e5e5e5}}
     .ai-sec:last-child{{border-bottom:none}}
     .ai-sec-hdr{{font-size:.58rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
-                 color:var(--txd);margin-bottom:10px;display:flex;align-items:center;gap:7px}}
-    .ai-sec-body{{font-size:.82rem;color:#bbb;line-height:1.8;white-space:pre-wrap;word-break:break-word}}
+                 color:#888;margin-bottom:10px;display:flex;align-items:center;gap:7px}}
+    .ai-sec-body{{font-size:.82rem;color:#333;line-height:1.8;white-space:pre-wrap;word-break:break-word}}
     .ai-loading{{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:50px 24px;gap:14px}}
-    .ai-spin{{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.08);
-              border-top-color:rgba(255,255,255,.5);animation:spin .7s linear infinite}}
+    .ai-spin{{width:26px;height:26px;border-radius:50%;border:2px solid #e5e5e5;
+              border-top-color:#000;animation:spin .7s linear infinite}}
     @keyframes spin{{to{{transform:rotate(360deg)}}}}
-    .ai-load-txt{{font-size:.78rem;color:var(--txm);letter-spacing:.04em}}
-    .ai-err{{padding:20px 22px;color:#ff9966;font-size:.82rem;line-height:1.6}}
+    .ai-load-txt{{font-size:.78rem;color:#555;letter-spacing:.04em}}
+    .ai-err{{padding:20px 22px;color:#c00;font-size:.82rem;line-height:1.6}}
 
     /* ── SECTOR SECTION ── */
     .sector-panel{{padding:26px 30px;margin-bottom:18px}}
     .sector-selector-row{{display:flex;gap:10px;align-items:stretch;margin-bottom:20px}}
-    .sector-select-wrap{{flex:1;display:flex;background:rgba(255,255,255,.035);border:1px solid var(--bdr);
+    .sector-select-wrap{{flex:1;display:flex;background:#fff;border:2px solid #000;
                           border-radius:var(--rs);overflow:hidden;transition:border-color .2s}}
-    .sector-select-wrap:focus-within{{border-color:rgba(255,255,255,.28)}}
+    .sector-select-wrap:focus-within{{border-color:#000}}
     .sel-prefix{{display:flex;align-items:center;padding:0 1rem;font-size:.58rem;font-weight:700;
-                 letter-spacing:.15em;text-transform:uppercase;color:var(--txd);white-space:nowrap;
-                 border-right:1px solid var(--bds);background:rgba(255,255,255,.02);flex-shrink:0}}
+                 letter-spacing:.15em;text-transform:uppercase;color:#888;white-space:nowrap;
+                 border-right:1px solid #e5e5e5;background:#f8f7f4;flex-shrink:0}}
     .sector-select{{flex:1;appearance:none;background:transparent;border:none;outline:none;
                     padding:.75rem 2.5rem .75rem 1rem;font-family:inherit;font-size:.875rem;
-                    font-weight:500;color:var(--tx);cursor:pointer;
-                    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23666' d='M5 6L0 0z'/%3E%3C/svg%3E");
+                    font-weight:500;color:#000;cursor:pointer;
+                    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");
                     background-repeat:no-repeat;background-position:right 12px center}}
-    .sector-select option{{background:#111;color:#f0f0f0}}
-    .btn-sector{{background:var(--acc);color:#000;border:none;border-radius:var(--rs);padding:0 22px;
+    .sector-select option{{background:#fff;color:#000}}
+    .btn-sector{{background:#000;color:#fff;border:none;border-radius:var(--rs);padding:0 22px;
                  font-size:.75rem;font-weight:700;font-family:inherit;cursor:pointer;
                  letter-spacing:.1em;text-transform:uppercase;transition:opacity .18s,transform .13s;white-space:nowrap}}
-    .btn-sector:hover{{opacity:.85}}.btn-sector:active{{transform:scale(.96)}}
+    .btn-sector:hover{{opacity:.8}}.btn-sector:active{{transform:scale(.96)}}
     .btn-sector:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
     .sector-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:8px;margin-bottom:4px}}
-    .s-tile{{background:rgba(255,255,255,.03);border:1px solid var(--bdr);border-radius:10px;
+    .s-tile{{background:#fff;border:2px solid #000;border-radius:var(--r);
              padding:14px 12px;cursor:pointer;text-align:left;color:inherit;
-             transition:transform .15s,box-shadow .15s,border-color .15s,background .15s;
+             transition:background .15s,color .15s;
              display:flex;flex-direction:column;gap:4px}}
-    .s-tile:hover{{transform:translateY(-2px);background:rgba(255,255,255,.06);
-                   box-shadow:0 8px 24px rgba(0,0,0,.3);border-color:var(--gold-bdr)}}
-    .s-tile-key{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.12em;
-                 text-transform:uppercase;color:rgba(200,134,10,.9);background:var(--gold-dim);
-                 border:1px solid var(--gold-bdr);padding:.14rem .5rem;border-radius:4px;
+    .s-tile:hover{{background:#000;color:#fff}}
+    .s-tile:hover .s-tile-key{{color:#fff;background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.4)}}
+    .s-tile:hover .s-tile-name{{color:#fff}}
+    .s-tile:hover .s-tile-sub{{color:#aaa}}
+    .s-tile-key{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:700;letter-spacing:.12em;
+                 text-transform:uppercase;color:#000;background:#f0f0f0;
+                 border:1px solid #000;padding:.14rem .5rem;border-radius:4px;
                  display:inline-block;align-self:flex-start;margin-bottom:2px}}
-    .s-tile-name{{font-size:.78rem;font-weight:600;color:var(--tx);line-height:1.3}}
-    .s-tile-sub{{font-size:.64rem;color:var(--txm);line-height:1.3}}
+    .s-tile-name{{font-size:.78rem;font-weight:700;color:#000;line-height:1.3}}
+    .s-tile-sub{{font-size:.64rem;color:#555;line-height:1.3}}
 
     /* Sector news output */
     #sector-output{{margin-top:18px}}
     .sector-res-header{{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;
-                         margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--bds);flex-wrap:wrap}}
-    .sector-res-title{{font-size:1.05rem;font-weight:600;color:var(--tx)}}
-    .sector-res-title em{{font-style:normal;color:rgba(200,134,10,.9)}}
+                         margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #e5e5e5;flex-wrap:wrap}}
+    .sector-res-title{{font-size:1.05rem;font-weight:600;color:#000}}
+    .sector-res-title em{{font-style:normal;color:#000;font-weight:800}}
     .sector-res-meta{{display:flex;align-items:center;gap:8px;flex-wrap:wrap}}
     .res-count-badge{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.12em;
-                      text-transform:uppercase;color:var(--teal);background:var(--teal-dim);
-                      border:1px solid var(--teal-bdr);padding:.22rem .7rem;border-radius:100px}}
-    .res-time-badge{{font-family:'DM Mono',monospace;font-size:.58rem;color:var(--txm)}}
+                      text-transform:uppercase;color:#333;background:#f0f0f0;
+                      border:1px solid #000;padding:.22rem .7rem;border-radius:4px}}
+    .res-time-badge{{font-family:'DM Mono',monospace;font-size:.58rem;color:#555}}
     .filter-row{{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;align-items:center}}
     .filter-label{{font-size:.58rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
-                   color:var(--txd);margin-right:4px}}
+                   color:#888;margin-right:4px}}
     .pill{{font-size:.68rem;font-weight:500;padding:.28rem .75rem;
-           border:1px solid var(--bdr);border-radius:100px;
-           background:transparent;color:var(--txm);cursor:pointer;transition:all .15s;user-select:none}}
-    .pill:hover{{border-color:var(--gold-bdr);color:rgba(200,134,10,.9);background:var(--gold-dim)}}
-    .pill.active{{background:var(--acc);border-color:var(--acc);color:#000;font-weight:600}}
+           border:1px solid #000;border-radius:20px;
+           background:transparent;color:#555;cursor:pointer;transition:all .15s;user-select:none}}
+    .pill:hover{{border-color:#000;color:#000;background:#f0f0f0}}
+    .pill.active{{background:#000;border-color:#000;color:#fff;font-weight:600}}
     .news-grid-sec{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}}
     @keyframes card-in{{from{{opacity:0;transform:translateY(10px)}}to{{opacity:1;transform:translateY(0)}}}}
-    .news-card{{background:rgba(255,255,255,.03);border:1px solid var(--bdr);border-radius:10px;
+    .news-card{{background:#fff;border:1px solid #000;border-radius:4px;
                 padding:16px;display:flex;flex-direction:column;gap:10px;
-                box-shadow:0 2px 8px rgba(0,0,0,.2);transition:transform .18s,box-shadow .18s,border-color .18s;
+                transition:transform .18s,box-shadow .18s;
                 position:relative;overflow:hidden;animation:card-in .32s ease both}}
-    .news-card::after{{content:'';position:absolute;top:0;left:0;width:100%;height:2px;
-                       background:linear-gradient(90deg,rgba(200,134,10,.6),var(--teal));
-                       opacity:0;transition:opacity .2s}}
-    .news-card:hover{{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3);border-color:rgba(255,255,255,.14)}}
-    .news-card:hover::after{{opacity:1}}
+    .news-card:hover{{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.12)}}
     .news-card-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}}
-    .news-card-src{{font-family:'DM Mono',monospace;font-size:.56rem;font-weight:500;letter-spacing:.12em;
-                    text-transform:uppercase;color:var(--teal);background:var(--teal-dim);
-                    border:1px solid var(--teal-bdr);padding:.14rem .5rem;border-radius:3px;white-space:nowrap}}
-    .news-card-num{{font-family:'DM Mono',monospace;font-size:.6rem;color:var(--txd);flex-shrink:0}}
-    .news-card-title{{font-size:.85rem;font-weight:600;line-height:1.5;color:var(--tx);flex:1}}
+    .news-card-src{{font-family:'DM Mono',monospace;font-size:.56rem;font-weight:700;letter-spacing:.12em;
+                    text-transform:uppercase;color:#000;background:#f0f0f0;
+                    border:1px solid #000;padding:.14rem .5rem;border-radius:3px;white-space:nowrap}}
+    .news-card-num{{font-family:'DM Mono',monospace;font-size:.6rem;color:#888;flex-shrink:0}}
+    .news-card-title{{font-size:.85rem;font-weight:600;line-height:1.5;color:#000;flex:1}}
     .news-card-title a{{color:inherit;text-decoration:none;display:block;transition:color .15s}}
-    .news-card-title a:hover{{color:rgba(200,134,10,.9)}}
+    .news-card-title a:hover{{color:#333;text-decoration:underline}}
     .news-card-footer{{display:flex;align-items:center;justify-content:space-between;gap:8px;
-                       margin-top:auto;padding-top:10px;border-top:1px solid var(--bds)}}
-    .news-card-date{{font-family:'DM Mono',monospace;font-size:.58rem;color:var(--txm);
+                       margin-top:auto;padding-top:10px;border-top:1px solid #e5e5e5}}
+    .news-card-date{{font-family:'DM Mono',monospace;font-size:.58rem;color:#555;
                      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-    .news-card-read{{font-size:.62rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
-                     color:var(--txm);text-decoration:none;padding:.24rem .65rem;
-                     border:1px solid var(--bdr);border-radius:4px;background:rgba(255,255,255,.03);
+    .news-card-read{{font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+                     color:#000;text-decoration:none;padding:.24rem .65rem;
+                     border:1px solid #000;border-radius:4px;background:#fff;
                      transition:all .15s;white-space:nowrap;flex-shrink:0}}
-    .news-card-read:hover{{background:var(--acc);color:#000;border-color:var(--acc)}}
+    .news-card-read:hover{{background:#000;color:#fff;border-color:#000}}
     .sector-state{{display:flex;flex-direction:column;align-items:center;justify-content:center;
-                   padding:40px 20px;text-align:center;gap:12px;color:var(--txm)}}
-    .sector-spinner{{width:32px;height:32px;border-radius:50%;border:2px solid var(--bdr);
-                     border-top-color:rgba(200,134,10,.7);animation:spin .75s linear infinite}}
-    .sector-state-title{{font-size:.95rem;font-weight:600;color:var(--txm)}}
-    .sector-state-sub{{font-size:.78rem;color:var(--txd);max-width:340px;line-height:1.6}}
+                   padding:40px 20px;text-align:center;gap:12px;color:#555}}
+    .sector-spinner{{width:32px;height:32px;border-radius:50%;border:2px solid #e5e5e5;
+                     border-top-color:#000;animation:spin .75s linear infinite}}
+    .sector-state-title{{font-size:.95rem;font-weight:600;color:#555}}
+    .sector-state-sub{{font-size:.78rem;color:#888;max-width:340px;line-height:1.6}}
 
     /* ── LIVE NEWS ── */
     .news-panel{{padding:26px 30px;margin-bottom:18px}}
@@ -1056,41 +1053,41 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                     margin-right:6px;animation:lp 1.4s ease-in-out infinite;vertical-align:middle}}
     @keyframes lp{{0%,100%{{opacity:1;transform:scale(1)}}50%{{opacity:.3;transform:scale(.6)}}}}
     .news-tabs{{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}}
-    .news-tab{{background:transparent;border:1px solid var(--bdr);border-radius:100px;padding:6px 18px;
-               font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:var(--txm);
+    .news-tab{{background:transparent;border:1px solid #000;border-radius:20px;padding:6px 18px;
+               font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
                letter-spacing:.05em;transition:all .16s;user-select:none}}
-    .news-tab:hover{{border-color:rgba(255,255,255,.3);color:var(--tx);background:var(--acm)}}
-    .news-tab.active{{background:var(--acc);border-color:var(--acc);color:#000;font-weight:600}}
-    .news-tab.active .news-tag{{background:rgba(0,0,0,.15);color:rgba(0,0,0,.5)}}
-    .news-iframe-wrap{{position:relative;width:100%;padding-top:56.25%;border-radius:var(--rs);overflow:hidden;background:rgba(0,0,0,.5)}}
+    .news-tab:hover{{border-color:#000;color:#000;background:#f0f0f0}}
+    .news-tab.active{{background:#000;border-color:#000;color:#fff;font-weight:600}}
+    .news-tab.active .news-tag{{background:rgba(255,255,255,.2);color:rgba(255,255,255,.7)}}
+    .news-iframe-wrap{{position:relative;width:100%;padding-top:56.25%;border:4px solid #000;border-radius:0;overflow:hidden;background:#000}}
     .news-loading{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-                   color:var(--txm);font-size:.8rem;letter-spacing:.05em;flex-direction:column;gap:12px}}
-    .news-spinner{{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.1);border-top-color:rgba(255,255,255,.5);animation:spin .8s linear infinite}}
+                   color:#888;font-size:.8rem;letter-spacing:.05em;flex-direction:column;gap:12px;background:#f8f7f4}}
+    .news-spinner{{width:22px;height:22px;border-radius:50%;border:2px solid #e5e5e5;border-top-color:#000;animation:spin .8s linear infinite}}
     .news-iframe-wrap iframe{{position:absolute;inset:0;width:100%;height:100%;border:none}}
     .news-tag{{font-size:.55rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
-               padding:1px 5px;border-radius:4px;background:rgba(255,255,255,.08);color:var(--txd);margin-left:4px;vertical-align:middle}}
+               padding:1px 5px;border-radius:4px;background:rgba(255,255,255,.15);color:rgba(255,255,255,.7);margin-left:4px;vertical-align:middle}}
     .nsb{{display:inline-flex;align-items:center;gap:5px;font-size:.62rem;font-weight:700;
-           letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;border-radius:100px;white-space:nowrap}}
-    .nsb.live{{background:rgba(255,60,60,.15);border:1px solid rgba(255,60,60,.35);color:#ff6b6b}}
+           letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;white-space:nowrap}}
+    .nsb.live{{background:rgba(255,60,60,.12);border:1px solid rgba(255,60,60,.4);color:#c00}}
     .nsb.live::before{{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:#ff4444;animation:lp 1.4s ease-in-out infinite}}
-    .nsb.latest{{background:rgba(255,255,255,.06);border:1px solid var(--bdr);color:var(--txm)}}
-    .nsb.error{{background:rgba(255,160,0,.1);border:1px solid rgba(255,160,0,.25);color:#ffaa44}}
+    .nsb.latest{{background:#f0f0f0;border:1px solid #000;color:#333}}
+    .nsb.error{{background:#fff5e5;border:1px solid #aaa;color:#888}}
 
     /* ── DISCLAIMER ── */
     .disclaimer-wrap{{max-width:1200px;margin:0 auto;padding:0 20px 32px;position:relative;z-index:1}}
-    .disclaimer-box{{display:flex;gap:12px;align-items:flex-start;background:rgba(255,255,255,.016);
-                     border:1px solid rgba(255,255,255,.05);border-radius:8px;padding:14px 18px}}
-    .disclaimer-icon{{color:rgba(255,255,255,.16);flex-shrink:0;margin-top:2px}}
-    .disclaimer-body{{font-size:.65rem;color:#383838;line-height:1.8}}
+    .disclaimer-box{{display:flex;gap:12px;align-items:flex-start;background:#f8f7f4;
+                     border:1px solid #e5e5e5;border-radius:4px;padding:14px 18px}}
+    .disclaimer-icon{{color:#aaa;flex-shrink:0;margin-top:2px}}
+    .disclaimer-body{{font-size:.65rem;color:#555;line-height:1.8}}
     .disclaimer-label{{display:inline-block;font-size:.54rem;font-weight:700;letter-spacing:.16em;
-                        text-transform:uppercase;color:#484848;border:1px solid rgba(255,255,255,.06);
-                        border-radius:4px;padding:1px 6px;background:rgba(255,255,255,.025);
+                        text-transform:uppercase;color:#333;border:1px solid #000;
+                        border-radius:4px;padding:1px 6px;background:#f0f0f0;
                         vertical-align:middle;position:relative;top:-1px;margin-right:7px}}
 
     /* ── FOOTER ── */
-    .site-footer{{position:relative;z-index:1;text-align:center;padding:48px 20px 72px;border-top:1px solid rgba(255,255,255,.04)}}
-    .site-footer-sub{{font-size:.6rem;font-weight:600;letter-spacing:.24em;text-transform:uppercase;color:#2a2a2a;margin-bottom:12px}}
-    .site-footer-name{{font-size:clamp(3rem,9vw,6rem);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#fff;line-height:1}}
+    .site-footer{{position:relative;z-index:1;text-align:center;padding:48px 20px 72px;border-top:2px solid #000;background:#f8f7f4}}
+    .site-footer-sub{{font-size:.6rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#888;margin-bottom:12px}}
+    .site-footer-name{{font-size:clamp(3rem,9vw,6rem);font-weight:800;letter-spacing:-.02em;text-transform:uppercase;color:#000;line-height:1}}
 
     @media(max-width:860px){{form{{grid-template-columns:1fr 1fr;gap:12px}}.fg:first-child{{grid-column:span 2}}.btn{{grid-column:span 2;width:100%}}.ai-models-grid{{grid-template-columns:repeat(2,1fr)}}.ai-pts{{grid-template-columns:repeat(2,1fr)}}.sector-grid{{grid-template-columns:repeat(3,1fr)}}}}
     @media(max-width:600px){{header{{padding:0 16px}}main{{padding:18px 14px 48px}}.panel,.sector-panel,.ai-panel,.news-panel{{padding:20px 18px}}.chart-card{{padding:16px 10px 10px;min-height:300px}}.ai-models-grid{{grid-template-columns:1fr}}.sector-grid{{grid-template-columns:repeat(2,1fr)}}.sector-selector-row{{flex-direction:column}}.btn-sector{{padding:.75rem;width:100%}}.news-grid-sec{{grid-template-columns:1fr}}}}
