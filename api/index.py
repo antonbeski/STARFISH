@@ -35,11 +35,16 @@ except ImportError:
 app = Flask(__name__)
 
 # ── Logo (embedded base64 JPG) ───────────────────────────────────────────────
-_LOGO_PATH = os.path.join(os.path.dirname(__file__), "starfish_logo.jpg")
+_LOGO_SEARCH_PATHS = [
+    os.path.join(os.path.dirname(__file__), "starfish_logo.jpg"),
+    os.path.join(os.path.dirname(__file__), "..", "starfish_logo.jpg"),
+]
 _LOGO_DATA_URI = ""
-if os.path.exists(_LOGO_PATH):
-    with open(_LOGO_PATH, "rb") as _f:
-        _LOGO_DATA_URI = "data:image/jpeg;base64," + base64.b64encode(_f.read()).decode()
+for _path in _LOGO_SEARCH_PATHS:
+    if os.path.exists(_path):
+        with open(_path, "rb") as _f:
+            _LOGO_DATA_URI = "data:image/jpeg;base64," + base64.b64encode(_f.read()).decode()
+        break
 
 # ── OpenRouter AI config ─────────────────────────────────────────────────────
 OPEN_ROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY", "")
@@ -1489,4 +1494,4 @@ if __name__ == "__main__":
     print()
     print("  export OPEN_ROUTER_API_KEY=your_key_here")
     print()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=False, host="0.0.0.0", port=5000)
