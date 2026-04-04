@@ -492,6 +492,18 @@ def calc_macd(c, f=12, s=26, sg=9):
 def calc_atr(h, l, c, w=14):
     tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
     return tr.ewm(com=w-1, min_periods=w).mean()
+def calc_stoch(h, l, c, k=14, d=3):
+    lowest_l  = l.rolling(k).min()
+    highest_h = h.rolling(k).max()
+    pct_k = 100 * (c - lowest_l) / (highest_h - lowest_l).replace(0, np.nan)
+    pct_d = pct_k.rolling(d).mean()
+    return pct_k, pct_d
+def calc_obv(c, v):
+    direction = np.sign(c.diff().fillna(0))
+    return (direction * v).cumsum()
+def calc_vwap(h, l, c, v):
+    typical = (h + l + c) / 3
+    return (typical * v).cumsum() / v.cumsum()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -530,15 +542,64 @@ def build_analysis_payload(ticker, period, name, df):
     sma200 = _sf(calc_sma(c,200).iloc[-1]) if n>=200 else None
     rsi_v  = _sf(calc_rsi(c).iloc[-1])     if n>=15  else None
     atr_v  = _sf(calc_atr(h,lo,c).iloc[-1]) if n>=15 else None
+
+    # Stochastic
+    stoch_d = {}
+    if n >= 17:
+        sk, sd = calc_stoch(h, lo, c)
+        stoch_d = {
+            "k": _sf(sk.iloc[-1]), "d": _sf(sd.iloc[-1]),
+            "k_prev": _sf(sk.iloc[-2]) if n > 17 else None,
+            "d_prev": _sf(sd.iloc[-2]) if n > 17 else None,
+            "zone": "overbought" if sk.iloc[-1] > 80 else "oversold" if sk.iloc[-1] < 20 else "neutral",
+            "crossover": "bullish" if (sk.iloc[-1] > sd.iloc[-1] and sk.iloc[-2] < sd.iloc[-2]) else
+                         "bearish" if (sk.iloc[-1] < sd.iloc[-1] and sk.iloc[-2] > sd.iloc[-2]) else "none"
+        }
+
+    # OBV
+    obv_d = {}
+    if vol is not None and n >= 5:
+        obv = calc_obv(c, vol)
+        obv_slope = _sf(obv.iloc[-1] - obv.iloc[-6]) if n >= 6 else None
+        obv_d = {"latest": _sf(obv.iloc[-1]), "slope_5d": obv_slope,
+                 "trend": "rising" if obv_slope and obv_slope > 0 else "falling" if obv_slope and obv_slope < 0 else "flat"}
+
+    # Support & Resistance (simple pivot points from last 20 bars)
+    sr_d = {}
+    if n >= 20:
+        recent_h = h.tail(20); recent_l = lo.tail(20)
+        pivot = _sf((recent_h.iloc[-1] + recent_l.iloc[-1] + c.iloc[-1]) / 3)
+        r1 = _sf(2 * pivot - recent_l.iloc[-1]) if pivot else None
+        s1 = _sf(2 * pivot - recent_h.iloc[-1]) if pivot else None
+        r2 = _sf(pivot + (recent_h.iloc[-1] - recent_l.iloc[-1])) if pivot else None
+        s2 = _sf(pivot - (recent_h.iloc[-1] - recent_l.iloc[-1])) if pivot else None
+        # Rolling 20-bar high/low as key S/R
+        roll_high = _sf(recent_h.max()); roll_low = _sf(recent_l.min())
+        sr_d = {"pivot": pivot, "r1": r1, "s1": s1, "r2": r2, "s2": s2,
+                "20bar_high": roll_high, "20bar_low": roll_low}
+
+    # Price momentum
+    mom_d = {}
+    ret_1d  = _sf(((cur - prev) / prev) * 100)            if cur and prev else None
+    ret_5d  = _sf(((cur - _sf(c.iloc[-6])) / _sf(c.iloc[-6])) * 100) if n >= 6  else None
+    ret_20d = _sf(((cur - _sf(c.iloc[-21])) / _sf(c.iloc[-21])) * 100) if n >= 21 else None
+    ret_60d = _sf(((cur - _sf(c.iloc[-61])) / _sf(c.iloc[-61])) * 100) if n >= 61 else None
+    mom_d = {"ret_1d": ret_1d, "ret_5d": ret_5d, "ret_20d": ret_20d, "ret_60d": ret_60d}
+
     vol_d  = {}
     if vol is not None:
         avg20 = _sf(vol.tail(20).mean()); cv = _sf(vol.iloc[-1])
-        vol_d = {"latest": cv, "avg_20d": avg20, "ratio_vs_avg": _sf(cv/avg20) if avg20 else None}
+        avg5  = _sf(vol.tail(5).mean())
+        vol_d = {"latest": cv, "avg_5d": avg5, "avg_20d": avg20,
+                 "ratio_vs_avg": _sf(cv/avg20) if avg20 else None,
+                 "trend": "rising" if avg5 and avg20 and avg5 > avg20 * 1.1 else
+                          "falling" if avg5 and avg20 and avg5 < avg20 * 0.9 else "neutral"}
     trend = []
     if sma20  and cur: trend.append("above_sma20"  if cur>sma20  else "below_sma20")
     if sma50  and cur: trend.append("above_sma50"  if cur>sma50  else "below_sma50")
     if sma200 and cur: trend.append("above_sma200" if cur>sma200 else "below_sma200")
     if sma20  and sma50: trend.append("golden_cross" if sma20>sma50 else "death_cross")
+    if sma50  and sma200: trend.append("bull_regime" if sma50>sma200 else "bear_regime")
 
     recent = df.tail(30).copy(); recent.index = recent.index.astype(str)
     ohlcv = [{"date": d[:10], "open": _sf(r.get("Open")), "high": _sf(r.get("High")),
@@ -550,69 +611,188 @@ def build_analysis_payload(ticker, period, name, df):
         "price": {"current": cur, "prev": prev, "change": _sf(cur-prev) if cur and prev else None,
                   "change_pct": _sf(((cur-prev)/prev)*100) if cur and prev else None,
                   "52w_high": hi52, "52w_low": lo52,
-                  "pct_from_52h": _sf(((cur-hi52)/hi52)*100) if cur and hi52 else None},
+                  "pct_from_52h": _sf(((cur-hi52)/hi52)*100) if cur and hi52 else None,
+                  "pct_from_52l": _sf(((cur-lo52)/lo52)*100) if cur and lo52 else None},
+        "momentum": mom_d,
         "ma": {"sma20": sma20, "sma50": sma50, "sma200": sma200,
                "ema9": _sf(calc_ema(c,9).iloc[-1]), "ema21": _sf(calc_ema(c,21).iloc[-1])},
         "bb": bb_d, "rsi": {"value": rsi_v, "last5": [_sf(v) for v in calc_rsi(c).tail(5).tolist()] if n>=20 else []},
-        "macd": macd_d, "atr": {"value": atr_v, "pct": _sf((atr_v/cur)*100) if atr_v and cur else None},
-        "volume": vol_d, "trend": trend, "ohlcv": ohlcv,
+        "macd": macd_d, "stochastic": stoch_d,
+        "atr": {"value": atr_v, "pct": _sf((atr_v/cur)*100) if atr_v and cur else None},
+        "volume": vol_d, "obv": obv_d,
+        "support_resistance": sr_d,
+        "trend": trend, "ohlcv": ohlcv,
     }
 
 
 def build_prompt(payload):
     p = payload; px = p["price"]; ma = p["ma"]; bb = p.get("bb",{}); rsi = p.get("rsi",{})
     macd = p.get("macd",{}); atr = p.get("atr",{}); vol = p.get("volume",{})
+    stoch = p.get("stochastic", {}); obv = p.get("obv", {})
+    sr = p.get("support_resistance", {}); mom = p.get("momentum", {})
     f = lambda v,d=2: f"{v:.{d}f}" if v is not None else "N/A"
-    up = lambda v: ("↑ Price above" if px["current"] and v and px["current"]>v else "↓ Price below") if v else "N/A"
+    up = lambda v: ("↑ above" if px["current"] and v and px["current"]>v else "↓ below") if v else "N/A"
     lines = [
-        f"You are a senior quantitative stock analyst with deep knowledge of technical analysis, market microstructure, and fundamental analysis.",
-        f"Analyse the following comprehensive data for **{p['name']} ({p['ticker']})** over the {p['period']} period.",
+        "You are an elite quantitative analyst and professional trader with 20+ years of experience in technical analysis, market microstructure, options flow, and systematic trading strategies.",
+        "Your analysis must be RIGOROUS, PRECISE, and ACTIONABLE — based entirely on the hard data provided.",
+        "Do NOT use vague language. Every claim must be grounded in the specific numbers below.",
         "",
-        "## PRICE SNAPSHOT",
-        f"- Current: {p['currency']} {f(px['current'])}  |  Prev Close: {p['currency']} {f(px['prev'])}",
-        f"- Change: {f(px['change'])} ({f(px['change_pct'])}%)",
-        f"- 52W High: {p['currency']} {f(px['52w_high'])}  |  52W Low: {p['currency']} {f(px['52w_low'])}",
-        f"- Distance from 52W High: {f(px['pct_from_52h'])}%",
+        f"## INSTRUMENT: {p['name']} ({p['ticker']}) — {p['period']} period — {p['bars']} trading bars",
+        f"## CURRENCY: {p['currency']}",
         "",
-        "## MOVING AVERAGES",
-        f"- SMA 20:  {p['currency']} {f(ma['sma20'])}  ({up(ma['sma20'])} SMA20)",
-        f"- SMA 50:  {p['currency']} {f(ma['sma50'])}  ({up(ma['sma50'])} SMA50)",
-        f"- SMA 200: {p['currency']} {f(ma['sma200'])}  ({up(ma['sma200'])} SMA200)",
-        f"- EMA 9:   {p['currency']} {f(ma['ema9'])}  |  EMA 21: {p['currency']} {f(ma['ema21'])}",
-        f"- Trend signals: {', '.join(p['trend']) or 'none'}",
+        "═══════════════════════════════════════════════════════",
+        "## 1. PRICE ACTION & MOMENTUM",
+        "═══════════════════════════════════════════════════════",
+        f"Current:       {p['currency']} {f(px['current'])}",
+        f"Prev Close:    {p['currency']} {f(px['prev'])}",
+        f"Day Change:    {f(px['change'])} ({f(px['change_pct'])}%)",
+        f"52W High:      {p['currency']} {f(px['52w_high'])}  ({f(px.get('pct_from_52h'))}% from 52W high)",
+        f"52W Low:       {p['currency']} {f(px['52w_low'])}  ({f(px.get('pct_from_52l'))}% above 52W low)",
+        f"1D return:     {f(mom.get('ret_1d'))}%",
+        f"5D return:     {f(mom.get('ret_5d'))}%",
+        f"20D return:    {f(mom.get('ret_20d'))}%",
+        f"60D return:    {f(mom.get('ret_60d'))}%",
         "",
-        "## BOLLINGER BANDS (20,2σ)",
-        f"- Upper: {f(bb.get('upper'))}  Mid: {f(bb.get('mid'))}  Lower: {f(bb.get('lower'))}",
-        f"- %B: {f(bb.get('percent_b'),3)} (>1=overbought, <0=oversold)  |  Bandwidth: {f(bb.get('bandwidth'))}%",
+        "═══════════════════════════════════════════════════════",
+        "## 2. TREND STRUCTURE & MOVING AVERAGES",
+        "═══════════════════════════════════════════════════════",
+        f"EMA 9:         {p['currency']} {f(ma['ema9'])}  (price {up(ma['ema9'])} EMA9)",
+        f"EMA 21:        {p['currency']} {f(ma['ema21'])}  (price {up(ma['ema21'])} EMA21)",
+        f"SMA 20:        {p['currency']} {f(ma['sma20'])}  (price {up(ma['sma20'])} SMA20)",
+        f"SMA 50:        {p['currency']} {f(ma['sma50'])}  (price {up(ma['sma50'])} SMA50)",
+        f"SMA 200:       {p['currency']} {f(ma['sma200'])}  (price {up(ma['sma200'])} SMA200)",
+        f"MA Signals:    {', '.join(p['trend']) or 'none'}",
         "",
-        "## RSI (14)",
-        f"- Current: {f(rsi.get('value'))}  Zone: {'OVERBOUGHT' if rsi.get('value') and rsi['value']>70 else 'OVERSOLD' if rsi.get('value') and rsi['value']<30 else 'NEUTRAL'}",
-        f"- Last 5: {', '.join(f(v) for v in rsi.get('last5',[]))}",
+        "TREND INTERPRETATION RULES TO APPLY:",
+        "- If price > SMA200 AND SMA50 > SMA200 → confirmed bull regime",
+        "- If price < SMA200 AND SMA50 < SMA200 → confirmed bear regime",
+        "- Golden cross (SMA20>SMA50) with rising volume = strong bullish",
+        "- Death cross (SMA20<SMA50) with falling volume = strong bearish",
+        "- Price between SMA50 and SMA200 = transition/consolidation zone",
         "",
-        "## MACD (12,26,9)",
-        f"- MACD: {f(macd.get('macd'))}  Signal: {f(macd.get('signal'))}  Histogram: {f(macd.get('histogram'))} (prev: {f(macd.get('hist_prev'))})",
-        f"- Crossover: {(macd.get('crossover') or 'none').upper()}",
+        "═══════════════════════════════════════════════════════",
+        "## 3. VOLATILITY — BOLLINGER BANDS (20, 2σ)",
+        "═══════════════════════════════════════════════════════",
+        f"Upper Band:    {p['currency']} {f(bb.get('upper'))}",
+        f"Middle (SMA20):{p['currency']} {f(bb.get('mid'))}",
+        f"Lower Band:    {p['currency']} {f(bb.get('lower'))}",
+        f"%B:            {f(bb.get('percent_b'),3)}  (>1.0=overbought breakout, <0.0=oversold breakdown)",
+        f"Bandwidth:     {f(bb.get('bandwidth'))}%  (squeeze <5% = breakout pending; expansion = trend in motion)",
         "",
-        "## VOLATILITY & VOLUME",
-        f"- ATR(14): {p['currency']} {f(atr.get('value'))} ({f(atr.get('pct'))}% of price)",
-        f"- Latest Vol: {int(vol['latest']) if vol.get('latest') else 'N/A'}  |  20D Avg: {int(vol['avg_20d']) if vol.get('avg_20d') else 'N/A'}  |  Ratio: {f(vol.get('ratio_vs_avg'))}x",
+        "═══════════════════════════════════════════════════════",
+        "## 4. MOMENTUM OSCILLATORS",
+        "═══════════════════════════════════════════════════════",
+        "### RSI (14-period)",
+        f"Current RSI:   {f(rsi.get('value'))}",
+        f"RSI Last 5:    {', '.join(f(v) for v in rsi.get('last5',[]))}",
+        f"Zone:          {'OVERBOUGHT (>70) — watch for reversal or divergence' if rsi.get('value') and rsi['value']>70 else 'OVERSOLD (<30) — potential bounce setup' if rsi.get('value') and rsi['value']<30 else 'NEUTRAL (30–70)'}",
         "",
-        "## RECENT OHLCV (last 30 trading days)",
+        "### MACD (12, 26, 9)",
+        f"MACD Line:     {f(macd.get('macd'))}",
+        f"Signal Line:   {f(macd.get('signal'))}",
+        f"Histogram:     {f(macd.get('histogram'))}  (prev: {f(macd.get('hist_prev'))})",
+        f"Crossover:     {(macd.get('crossover') or 'none').upper()}",
+        "NOTE: Compare histogram direction (growing vs shrinking) to assess momentum acceleration/deceleration.",
+        "",
+        "### Stochastic Oscillator (14, 3)",
+        f"%K:            {f(stoch.get('k'))}  (prev: {f(stoch.get('k_prev'))})",
+        f"%D:            {f(stoch.get('d'))}  (prev: {f(stoch.get('d_prev'))})",
+        f"Zone:          {stoch.get('zone','N/A').upper()}",
+        f"Crossover:     {stoch.get('crossover','none').upper()}",
+        "NOTE: Stochastic above 80 with RSI above 70 = double overbought. Below 20 with RSI below 30 = double oversold.",
+        "",
+        "═══════════════════════════════════════════════════════",
+        "## 5. VOLUME ANALYSIS & OBV",
+        "═══════════════════════════════════════════════════════",
+        f"Latest Volume: {int(vol['latest']) if vol.get('latest') else 'N/A'}",
+        f"5D Avg Volume: {int(vol['avg_5d']) if vol.get('avg_5d') else 'N/A'}",
+        f"20D Avg Volume:{int(vol['avg_20d']) if vol.get('avg_20d') else 'N/A'}",
+        f"Vol Ratio:     {f(vol.get('ratio_vs_avg'))}x (>1.5 = significant; >2.0 = climactic)",
+        f"Vol Trend:     {vol.get('trend','N/A').upper()}",
+        f"OBV:           {f(obv.get('latest'),0)}",
+        f"OBV 5D Slope:  {f(obv.get('slope_5d'),0)}  ({obv.get('trend','N/A').upper()})",
+        "NOTE: Price up + OBV up = healthy accumulation. Price up + OBV flat/down = distribution warning (bearish divergence).",
+        "",
+        "═══════════════════════════════════════════════════════",
+        "## 6. VOLATILITY — ATR",
+        "═══════════════════════════════════════════════════════",
+        f"ATR (14):      {p['currency']} {f(atr.get('value'))} ({f(atr.get('pct'))}% of price)",
+        "ATR usage: multiply by 1.5–2x for stop loss distance; multiply by 2–3x for realistic target distance.",
+        "",
+        "═══════════════════════════════════════════════════════",
+        "## 7. KEY SUPPORT & RESISTANCE LEVELS",
+        "═══════════════════════════════════════════════════════",
+        f"Pivot Point:   {p['currency']} {f(sr.get('pivot'))}",
+        f"Resistance R1: {p['currency']} {f(sr.get('r1'))}",
+        f"Resistance R2: {p['currency']} {f(sr.get('r2'))}",
+        f"Support S1:    {p['currency']} {f(sr.get('s1'))}",
+        f"Support S2:    {p['currency']} {f(sr.get('s2'))}",
+        f"20-bar High:   {p['currency']} {f(sr.get('20bar_high'))}",
+        f"20-bar Low:    {p['currency']} {f(sr.get('20bar_low'))}",
+        "",
+        "═══════════════════════════════════════════════════════",
+        "## 8. RECENT OHLCV — LAST 30 TRADING DAYS",
+        "═══════════════════════════════════════════════════════",
         "date,open,high,low,close,volume",
     ] + [f"{r['date']},{r['open']},{r['high']},{r['low']},{r['close']},{r['volume']}" for r in p["ohlcv"]] + [
         "",
-        "---",
-        "## INSTRUCTIONS",
-        "Based on ALL data above plus your knowledge of current macro/sector/news context for this stock:",
+        "═══════════════════════════════════════════════════════",
+        "## ANALYTICAL FRAMEWORK & INSTRUCTIONS",
+        "═══════════════════════════════════════════════════════",
         "",
-        "Respond with a single valid JSON object. No markdown. No extra text. Exact structure:",
-        '{"verdict":"BUY|SELL|HOLD","confidence":"Low|Medium|High","time_horizon":"Short|Mid|Long",',
-        '"price_targets":{"entry":0.0,"stop_loss":0.0,"target_1":0.0,"target_2":0.0},',
-        '"technical_analysis":"Detailed multi-paragraph technical breakdown. Which indicators agree/conflict. Key levels.",',
-        '"news_and_macro":"What you know about recent news, earnings, macro environment, sector trends that affect this stock.",',
-        '"risk_factors":"Key risks that could invalidate this trade call.",',
-        '"action_plan":"Step-by-step concrete action for a trader right now. Entry timing, position sizing guidance, exit rules.",',
-        '"summary":"One clear sentence with the core thesis."}',
+        "Apply the following professional analysis framework:",
+        "",
+        "1. MULTI-TIMEFRAME CONFLUENCE: Identify whether short-term (EMA9/21), medium-term (SMA20/50),",
+        "   and long-term (SMA200) trends all align or conflict. Confluence = higher conviction.",
+        "",
+        "2. INDICATOR CONFIRMATION vs DIVERGENCE:",
+        "   - BULLISH DIVERGENCE: Price making lower lows but RSI/MACD making higher lows → reversal signal",
+        "   - BEARISH DIVERGENCE: Price making higher highs but RSI/MACD making lower highs → exhaustion signal",
+        "   - Look for these explicitly in the OHLCV + RSI last-5 data provided.",
+        "",
+        "3. VOLUME-PRICE RELATIONSHIP:",
+        "   - Breakout on high volume (>1.5x avg) = confirmed move",
+        "   - Breakout on low volume = suspect, likely to fail",
+        "   - Heavy volume on down days = institutional selling",
+        "   - OBV divergence is a leading indicator — weight it heavily",
+        "",
+        "4. BAND SQUEEZE RECOGNITION:",
+        "   - BB bandwidth < 5% = volatility compression → imminent breakout",
+        "   - Direction of breakout: use RSI, MACD, OBV direction to forecast which way",
+        "",
+        "5. RISK-REWARD DISCIPLINE:",
+        "   - Stop loss MUST be placed at a logical technical level (below support, below SMA, etc.)",
+        "   - Minimum risk:reward ratio of 1:2 required for a valid trade",
+        "   - Use ATR × 1.5 as minimum stop distance to avoid noise",
+        "   - Targets should be at next resistance / pivot level",
+        "",
+        "6. AVOID THESE ERRORS:",
+        "   - Do NOT issue BUY in a confirmed bear regime (price < SMA200, death cross) without strong reversal evidence",
+        "   - Do NOT issue SELL in a confirmed bull regime without clear distribution signals",
+        "   - Do NOT set stop loss tighter than 1x ATR",
+        "   - Do NOT set targets beyond 3x ATR without exceptional momentum justification",
+        "",
+        "Respond with a single valid JSON object ONLY. No markdown, no preamble, no extra text.",
+        "All price values must be numeric (float). Exact required structure:",
+        '{',
+        '  "verdict": "BUY|SELL|HOLD",',
+        '  "confidence": "Low|Medium|High",',
+        '  "time_horizon": "Short (1–5 days)|Mid (1–4 weeks)|Long (1–6 months)",',
+        '  "price_targets": {',
+        '    "entry": 0.0,',
+        '    "stop_loss": 0.0,',
+        '    "target_1": 0.0,',
+        '    "target_2": 0.0,',
+        '    "risk_reward_ratio": 0.0',
+        '  },',
+        '  "technical_analysis": "Detailed multi-paragraph technical breakdown. Address: (1) trend structure and MA alignment, (2) momentum oscillator signals and any divergences, (3) volume/OBV confirmation or warning, (4) volatility context from BB and ATR, (5) key support/resistance levels in play. Be specific — cite exact numbers from the data.",',
+        '  "pattern_recognition": "Identify any chart patterns visible in the OHLCV data: head & shoulders, double top/bottom, flags, pennants, wedges, triangles, cup & handle, etc. State clearly if none are discernible.",',
+        '  "indicator_confluence": "List which indicators agree with the verdict (bullish/bearish) and which conflict. A high-confidence call requires 4+ indicators aligned.",',
+        '  "news_and_macro": "State what you know about the companys fundamentals, recent earnings, macro environment, sector rotation trends, and any relevant catalysts. Be factual and current.",',
+        '  "risk_factors": "Enumerate concrete technical risks: specific levels that would invalidate the trade, indicator conditions that would change the call, and macro/event risks.",',
+        '  "action_plan": "Step-by-step execution guide: (1) exact entry trigger condition, (2) position sizing relative to portfolio risk, (3) stop loss level and justification, (4) first target and partial exit plan, (5) final target and full exit rule, (6) conditions that would prompt early exit.",',
+        '  "summary": "One precise sentence stating the core thesis with the key supporting indicator."',
+        '}',
     ]
     return "\n".join(lines)
 
@@ -627,7 +807,7 @@ def call_openrouter(model_id, prompt):
                  "HTTP-Referer": "https://starfish.finance",
                  "X-Title": "Starfish Stock Analyzer"},
         json={"model": model_id, "messages": [{"role": "user", "content": prompt}],
-              "temperature": 0.15, "max_tokens": 2048},
+              "temperature": 0.10, "max_tokens": 2800},
         timeout=90,
     )
     r.raise_for_status()
@@ -640,15 +820,48 @@ def call_openrouter(model_id, prompt):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CHART BUILDER
+# CHART BUILDER — STANDARD MARKET COLORS
 # ══════════════════════════════════════════════════════════════════════════════
-_C = {"bg":"rgba(0,0,0,0)","paper":"rgba(0,0,0,0)","grid":"rgba(0,0,0,0.06)","axis":"#aaa",
-      "text":"#666","white":"#000","green":"#000","red":"#777",
-      "sma20":"#222","sma50":"#666","sma200":"#aaa",
-      "bb_u":"rgba(0,0,0,0.5)","bb_l":"rgba(0,0,0,0.5)","bb_f":"rgba(0,0,0,0.04)",
-      "rsi":"#333","rsi_ob":"rgba(0,0,0,0.07)","rsi_os":"rgba(0,0,0,0.07)",
-      "macd":"#000","sig":"#666","hp":"rgba(0,0,0,0.75)","hn":"rgba(160,160,160,0.75)",
-      "vu":"rgba(0,0,0,0.5)","vd":"rgba(160,160,160,0.5)"}
+# Standard financial chart color palette
+_C = {
+    # Backgrounds
+    "bg":       "rgba(0,0,0,0)",
+    "paper":    "rgba(0,0,0,0)",
+    "grid":     "rgba(180,180,180,0.2)",
+    "axis":     "#666",
+    "text":     "#555",
+    # Candlestick — market standard green/red
+    "bull":     "#26a69a",          # Bullish candle body (TradingView green)
+    "bear":     "#ef5350",          # Bearish candle body (TradingView red)
+    "bull_fill":"rgba(38,166,154,0.85)",
+    "bear_fill":"rgba(239,83,80,0.85)",
+    "bull_wick":"#26a69a",
+    "bear_wick":"#ef5350",
+    # Line chart
+    "line":     "#2196f3",          # Standard blue price line
+    "line_fill":"rgba(33,150,243,0.06)",
+    # Moving averages — standard Bloomberg/TV palette
+    "sma20":    "#f59e0b",          # Amber — fast MA
+    "sma50":    "#3b82f6",          # Blue  — mid MA
+    "sma200":   "#ef4444",          # Red   — long-term MA
+    "ema9":     "#a78bfa",          # Purple
+    # Bollinger Bands
+    "bb_u":     "rgba(99,102,241,0.9)",   # Indigo upper
+    "bb_l":     "rgba(99,102,241,0.9)",   # Indigo lower
+    "bb_fill":  "rgba(99,102,241,0.05)",
+    # RSI
+    "rsi_line": "#f59e0b",
+    "rsi_ob":   "rgba(239,83,80,0.08)",
+    "rsi_os":   "rgba(38,166,154,0.08)",
+    # MACD
+    "macd":     "#2196f3",          # Blue MACD line
+    "macd_sig": "#ff9800",          # Orange signal line
+    "hist_pos": "rgba(38,166,154,0.75)",
+    "hist_neg": "rgba(239,83,80,0.75)",
+    # Volume
+    "vol_up":   "rgba(38,166,154,0.55)",
+    "vol_dn":   "rgba(239,83,80,0.45)",
+}
 
 
 def build_chart(ticker, period, chart_type, indicators):
@@ -678,89 +891,153 @@ def build_chart(ticker, period, chart_type, indicators):
                         vertical_spacing=0.03, row_heights=rh, subplot_titles=titles)
     rv = 2 if sv else None; rr = (2+int(sv)) if sr else None; rm = (2+int(sv)+int(sr)) if sm else None
 
+    # ── Main chart: candlestick or line ──────────────────────────────────────
     if chart_type == "candlestick":
-        fig.add_trace(go.Candlestick(x=dates,open=op,high=hi,low=lo,close=cl,name="Price",
-            increasing_line_color=_C["green"],increasing_fillcolor="rgba(0,0,0,.12)",
-            decreasing_line_color=_C["red"],decreasing_fillcolor="rgba(150,150,150,.18)",
-            line=dict(width=1)), row=1,col=1)
+        fig.add_trace(go.Candlestick(
+            x=dates, open=op, high=hi, low=lo, close=cl, name="Price",
+            increasing=dict(line=dict(color=_C["bull_wick"], width=1), fillcolor=_C["bull_fill"]),
+            decreasing=dict(line=dict(color=_C["bear_wick"], width=1), fillcolor=_C["bear_fill"]),
+        ), row=1, col=1)
     else:
-        fig.add_trace(go.Scatter(x=dates,y=cl,mode="lines",name="Price",
-            line=dict(color=_C["white"],width=2),fill="tozeroy",fillcolor="rgba(0,0,0,.04)"),row=1,col=1)
+        fig.add_trace(go.Scatter(
+            x=dates, y=cl, mode="lines", name="Price",
+            line=dict(color=_C["line"], width=2),
+            fill="tozeroy", fillcolor=_C["line_fill"],
+        ), row=1, col=1)
 
+    # ── Moving averages ───────────────────────────────────────────────────────
     if "sma" in indicators:
-        for w,color,lbl in [(20,_C["sma20"],"SMA 20"),(50,_C["sma50"],"SMA 50"),(200,_C["sma200"],"SMA 200")]:
+        ma_cfg = [
+            (20,  _C["sma20"],  "SMA 20",  1.6),
+            (50,  _C["sma50"],  "SMA 50",  1.8),
+            (200, _C["sma200"], "SMA 200", 2.0),
+        ]
+        for w, color, lbl, lw in ma_cfg:
             if len(cl) >= w:
-                fig.add_trace(go.Scatter(x=dates,y=calc_sma(cl,w),mode="lines",name=lbl,
-                    line=dict(color=color,width=1.2),opacity=0.85),row=1,col=1)
+                fig.add_trace(go.Scatter(
+                    x=dates, y=calc_sma(cl, w), mode="lines", name=lbl,
+                    line=dict(color=color, width=lw), opacity=0.9,
+                ), row=1, col=1)
+
+    # ── Bollinger Bands ───────────────────────────────────────────────────────
     if "bb" in indicators and len(cl) >= 20:
-        bbu,bbm,bbl = calc_bb(cl)
-        fig.add_trace(go.Scatter(x=dates,y=bbu,mode="lines",name="BB Upper",
-            line=dict(color=_C["bb_u"],width=1,dash="dot")),row=1,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=bbl,mode="lines",name="BB Lower",
-            line=dict(color=_C["bb_l"],width=1,dash="dot"),
-            fill="tonexty",fillcolor=_C["bb_f"]),row=1,col=1)
+        bbu, bbm, bbl = calc_bb(cl)
+        fig.add_trace(go.Scatter(
+            x=dates, y=bbu, mode="lines", name="BB Upper",
+            line=dict(color=_C["bb_u"], width=1, dash="dot"),
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=dates, y=bbl, mode="lines", name="BB Lower",
+            line=dict(color=_C["bb_l"], width=1, dash="dot"),
+            fill="tonexty", fillcolor=_C["bb_fill"],
+        ), row=1, col=1)
+        # Middle band (SMA20 reference) — lighter
+        fig.add_trace(go.Scatter(
+            x=dates, y=bbm, mode="lines", name="BB Mid",
+            line=dict(color="rgba(99,102,241,0.4)", width=1, dash="dash"),
+            showlegend=False,
+        ), row=1, col=1)
+
+    # ── Volume bars ───────────────────────────────────────────────────────────
     if sv and vol is not None:
-        colors = [_C["vu"] if c>=o else _C["vd"] for c,o in zip(cl,op)]
-        fig.add_trace(go.Bar(x=dates,y=vol,name="Volume",marker_color=colors,showlegend=False),row=rv,col=1)
+        colors = [_C["vol_up"] if c >= o else _C["vol_dn"] for c, o in zip(cl, op)]
+        fig.add_trace(go.Bar(
+            x=dates, y=vol, name="Volume", marker_color=colors,
+            showlegend=False,
+        ), row=rv, col=1)
+
+    # ── RSI ───────────────────────────────────────────────────────────────────
     if sr and len(cl) >= 15:
         rv2 = calc_rsi(cl)
-        fig.add_trace(go.Scatter(x=dates,y=rv2,mode="lines",name="RSI",
-            line=dict(color=_C["rsi"],width=1.5),showlegend=False),row=rr,col=1)
-        fig.add_hrect(y0=70,y1=100,row=rr,col=1,fillcolor=_C["rsi_ob"],line_width=0,layer="below")
-        fig.add_hrect(y0=0,y1=30,row=rr,col=1,fillcolor=_C["rsi_os"],line_width=0,layer="below")
-        for lvl,c in [(70,"rgba(0,0,0,.4)"),(30,"rgba(0,0,0,.4)"),(50,"rgba(0,0,0,.15)")]:
-            fig.add_hline(y=lvl,row=rr,col=1,line=dict(color=c,width=0.8,dash="dash"))
+        fig.add_trace(go.Scatter(
+            x=dates, y=rv2, mode="lines", name="RSI",
+            line=dict(color=_C["rsi_line"], width=1.8), showlegend=False,
+        ), row=rr, col=1)
+        # Overbought / oversold zones
+        fig.add_hrect(y0=70, y1=100, row=rr, col=1, fillcolor=_C["rsi_ob"], line_width=0, layer="below")
+        fig.add_hrect(y0=0,  y1=30,  row=rr, col=1, fillcolor=_C["rsi_os"], line_width=0, layer="below")
+        for lvl, c_col, dash in [
+            (70, "rgba(239,83,80,0.55)",   "dash"),
+            (50, "rgba(100,100,100,0.25)", "dot"),
+            (30, "rgba(38,166,154,0.55)",  "dash"),
+        ]:
+            fig.add_hline(y=lvl, row=rr, col=1, line=dict(color=c_col, width=0.9, dash=dash))
+
+    # ── MACD ─────────────────────────────────────────────────────────────────
     if sm and len(cl) >= 27:
-        ml,sl,hl = calc_macd(cl)
-        hc = [_C["hp"] if v>=0 else _C["hn"] for v in hl.fillna(0)]
-        fig.add_trace(go.Bar(x=dates,y=hl,name="MACD Hist",marker_color=hc,showlegend=False),row=rm,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=ml,mode="lines",name="MACD",
-            line=dict(color=_C["macd"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=sl,mode="lines",name="Signal",
-            line=dict(color=_C["sig"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_hline(y=0,row=rm,col=1,line=dict(color="rgba(0,0,0,.2)",width=0.8,dash="dash"))
+        ml, sl_line, hl = calc_macd(cl)
+        hc = [_C["hist_pos"] if v >= 0 else _C["hist_neg"] for v in hl.fillna(0)]
+        fig.add_trace(go.Bar(
+            x=dates, y=hl, name="MACD Hist", marker_color=hc, showlegend=False,
+        ), row=rm, col=1)
+        fig.add_trace(go.Scatter(
+            x=dates, y=ml, mode="lines", name="MACD",
+            line=dict(color=_C["macd"], width=1.8), showlegend=False,
+        ), row=rm, col=1)
+        fig.add_trace(go.Scatter(
+            x=dates, y=sl_line, mode="lines", name="Signal",
+            line=dict(color=_C["macd_sig"], width=1.5), showlegend=False,
+        ), row=rm, col=1)
+        fig.add_hline(y=0, row=rm, col=1,
+                      line=dict(color="rgba(100,100,100,0.3)", width=0.9, dash="dash"))
 
-    ax = dict(gridcolor=_C["grid"],color=_C["axis"],showline=False,zeroline=False,tickfont=dict(size=9,color=_C["text"]))
-    fig.update_layout(
-        height=420+120*(rows-1), plot_bgcolor=_C["bg"], paper_bgcolor=_C["paper"],
-        font=dict(color=_C["text"],family="'DM Sans',sans-serif",size=11),
-        legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="left",x=0,
-                    bgcolor="rgba(255,255,255,0)",font=dict(size=10,color=_C["text"])),
-        hovermode="x unified", margin=dict(l=55,r=20,t=55,b=30),
-        hoverlabel=dict(bgcolor="rgba(255,255,255,.97)",bordercolor="rgba(0,0,0,.2)",font=dict(color="#000")),
-        xaxis_rangeslider_visible=False, dragmode="pan",
+    # ── Layout ────────────────────────────────────────────────────────────────
+    ax = dict(
+        gridcolor=_C["grid"], color=_C["axis"],
+        showline=False, zeroline=False,
+        tickfont=dict(size=9, color=_C["text"]),
+        linecolor="rgba(180,180,180,0.3)",
     )
-    for i in range(1, rows+1):
-        fig.update_layout(**{f"xaxis{'' if i==1 else i}": {**ax,"rangeslider":{"visible":False}}})
+    fig.update_layout(
+        height=420 + 120 * (rows - 1),
+        plot_bgcolor=_C["bg"],
+        paper_bgcolor=_C["paper"],
+        font=dict(color=_C["text"], family="'DM Sans',sans-serif", size=11),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+            bgcolor="rgba(255,255,255,0.85)", bordercolor="rgba(180,180,180,0.3)",
+            borderwidth=1, font=dict(size=10, color="#333"),
+        ),
+        hovermode="x unified",
+        margin=dict(l=58, r=20, t=55, b=30),
+        hoverlabel=dict(bgcolor="rgba(255,255,255,0.97)", bordercolor="rgba(0,0,0,0.15)",
+                        font=dict(color="#000", size=11)),
+        xaxis_rangeslider_visible=False,
+        dragmode="pan",
+    )
+    for i in range(1, rows + 1):
+        fig.update_layout(**{f"xaxis{'' if i==1 else i}": {**ax, "rangeslider": {"visible": False}}})
         fig.update_layout(**{f"yaxis{'' if i==1 else i}": {**ax}})
-    if sr: fig.update_layout(**{f"yaxis{'' if rr==1 else rr}": {**ax,"range":[0,100]}})
-    for ann in fig.layout.annotations: ann.font.color="#666"; ann.font.size=10
-    return pyo.plot(fig,output_type="div",include_plotlyjs=False), None
+    if sr:
+        fig.update_layout(**{f"yaxis{'' if rr==1 else rr}": {**ax, "range": [0, 100]}})
+    for ann in fig.layout.annotations:
+        ann.font.color = "#555"; ann.font.size = 10
+
+    return pyo.plot(fig, output_type="div", include_plotlyjs=False), None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAIN PAGE RENDERER
+# MAIN PAGE RENDERER  — DEFAULT = LINE CHART
 # ══════════════════════════════════════════════════════════════════════════════
-DEFAULT_INDICATORS = {"sma","vol"}
+DEFAULT_INDICATORS = {"sma", "vol"}
 
 
-def render_page(ticker, period, chart_type, active_indicators, graph_html, error, logo_uri=_LOGO_DATA_URI):
+def render_page(ticker, period, chart_type, active_indicators, graph_html, error):
     chips = "".join(
         '<span class="{cls}" onclick="setTicker(\'{s}\')">{s}</span>\n'.format(
-            cls="chip active" if s==ticker else "chip", s=s)
-        for s,_ in POPULAR_STOCKS)
+            cls="chip active" if s == ticker else "chip", s=s)
+        for s, _ in POPULAR_STOCKS)
     popts = "".join('<option value="{v}" {sel}>{lbl}</option>\n'.format(
-        v=v, sel="selected" if v==period else "", lbl=lbl) for v,lbl in PERIODS)
-    ct_c  = "selected" if chart_type=="candlestick" else ""
-    ct_l  = "selected" if chart_type=="line" else ""
+        v=v, sel="selected" if v == period else "", lbl=lbl) for v, lbl in PERIODS)
+    ct_c = "selected" if chart_type == "candlestick" else ""
+    ct_l = "selected" if chart_type == "line" else ""
     ichips = "".join(
         '<span class="{cls}" data-ind="{k}" onclick="toggleInd(this)">{lbl}</span>\n'.format(
             cls="ind-chip active" if k in active_indicators else "ind-chip", k=k, lbl=lbl)
-        for k,lbl in INDICATORS)
+        for k, lbl in INDICATORS)
     content = (f'<div class="error-box">{error}</div>' if error else
                graph_html if graph_html else '<div class="empty-state">Enter a ticker above.</div>')
 
-    # News tabs
     ntabs_parts = []
     for i, ch in enumerate(NEWS_CHANNELS):
         _cls = "news-tab active" if i == 0 else "news-tab"
@@ -770,23 +1047,21 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
         )
     ntabs = "".join(ntabs_parts)
 
-    # AI model cards
     ai_cards = ""
     for m in AI_MODELS:
         rl = rl_check(m["key"])
-        pm  = int((rl["rpm_used"]/rl["rpm_max"])*100)
-        pd_ = int((rl["rpd_used"]/rl["rpd_max"])*100)
+        pm  = int((rl["rpm_used"] / rl["rpm_max"]) * 100)
+        pd_ = int((rl["rpd_used"] / rl["rpd_max"]) * 100)
         ex  = " exhausted" if not rl["available"] else ""
         ai_cards += f"""<div class="ai-model-card{ex}" data-model="{m['id']}" data-key="{m['key']}" data-color="{m['color']}" data-label="{m['label']}" onclick="selectModel(this)">
   <div class="ai-model-hdr"><span class="ai-dot" style="background:{m['color']}"></span><span class="ai-mname">{m['label']}</span>{"" if rl['available'] else '<span class="ai-rl-badge">Rate Limited</span>'}</div>
   <div class="ai-mdesc">{m['desc']}</div>
-    <div class="ai-rl-bars">
+  <div class="ai-rl-bars">
     <div class="ai-rl-row"><span class="ai-rl-lbl">RPM</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpm-{m['key']}" style="width:{pm}%;background:#000"></div></div><span class="ai-rl-cnt" id="rpm-{m['key']}">{rl['rpm_used']}/{rl['rpm_max']}</span></div>
     <div class="ai-rl-row"><span class="ai-rl-lbl">RPD</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpd-{m['key']}" style="width:{pd_}%;background:#888"></div></div><span class="ai-rl-cnt" id="rpd-{m['key']}">{rl['rpd_used']}/{rl['rpd_max']}</span></div>
   </div>
 </div>"""
 
-    # Sector tiles
     sector_tiles = "".join(
         f'<button class="s-tile" onclick="selectAndFetch(\'{sid}\')">'
         f'<span class="s-tile-key">{cfg["key"]}</span>'
@@ -800,7 +1075,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
     fh = NEWS_CHANNELS[0]["handle"]
     ai_js = json.dumps(list(active_indicators))
-    models_js = json.dumps([{"id":m["id"],"key":m["key"],"label":m["label"],"color":m["color"]} for m in AI_MODELS])
+    models_js = json.dumps([{"id": m["id"], "key": m["key"], "label": m["label"], "color": m["color"]} for m in AI_MODELS])
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -830,7 +1105,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
             justify-content:space-between;padding:0 28px;background:#ffffff;
             border-bottom:2px solid #000}}
     .logo{{display:flex;align-items:center;gap:11px}}
-    .logo-star{{flex-shrink:0}}
+    .logo-icon{{width:38px;height:38px;background:#000;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}}
     .logo-text-group{{display:flex;flex-direction:column;gap:2px;line-height:1}}
     .logo-word{{font-size:.8rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#000}}
     .logo-tagline{{font-size:.5rem;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:#888}}
@@ -895,10 +1170,16 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                letter-spacing:.05em;transition:all .16s;user-select:none;text-transform:uppercase}}
     .ind-chip:hover{{border-color:#000;color:#000;background:#f0f0f0}}
     .ind-chip.active{{background:#eee;border-style:dashed;color:#000;font-weight:600}}
-    .chart-card{{padding:20px 16px 12px;min-height:460px;display:flex;align-items:flex-start;justify-content:center;overflow:hidden;background:#fff}}
+
+    /* Chart colors legend hint */
+    .chart-legend-hint{{display:flex;align-items:center;gap:16px;padding:10px 16px 0;flex-wrap:wrap}}
+    .cleg{{display:flex;align-items:center;gap:5px;font-size:.6rem;color:#888;font-family:'DM Mono',monospace}}
+    .cleg-dot{{width:10px;height:4px;border-radius:2px}}
+
+    .chart-card{{padding:20px 16px 12px;min-height:460px;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;overflow:hidden;background:#fff}}
     .chart-card>div{{width:100%}}
     .error-box{{border:1px solid #000;border-left:3px solid #000;border-radius:var(--rs);padding:16px 20px;color:#555;font-size:.875rem;background:#f8f7f4;width:100%;line-height:1.6}}
-    .empty-state{{color:#888;font-size:.85rem;text-align:center;letter-spacing:.03em}}
+    .empty-state{{color:#888;font-size:.85rem;text-align:center;letter-spacing:.03em;width:100%}}
 
     /* ── AI PANEL ── */
     .ai-panel{{padding:26px 30px;margin-bottom:18px}}
@@ -937,9 +1218,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .ai-result.show{{display:block}}
     .ai-verdict-bar{{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid #e5e5e5;flex-wrap:wrap}}
     .ai-badge{{font-size:.95rem;font-weight:700;letter-spacing:.12em;padding:8px 20px;border-radius:4px;text-transform:uppercase;flex-shrink:0}}
-    .v-BUY{{background:#e8f5e9;border:1px solid #333;color:#000}}
-    .v-SELL{{background:#fce4e4;border:1px solid #333;color:#000}}
-    .v-HOLD{{background:#fffde7;border:1px solid #333;color:#000}}
+    .v-BUY{{background:#e8f5e9;border:1px solid #26a69a;color:#1a7a70}}
+    .v-SELL{{background:#fce4e4;border:1px solid #ef5350;color:#c62828}}
+    .v-HOLD{{background:#fffde7;border:1px solid #f59e0b;color:#92400e}}
     .ai-vmeta{{display:flex;flex-direction:column;gap:4px;flex:1}}
     .ai-summary{{font-size:.84rem;color:#000;line-height:1.5}}
     .ai-meta-row{{display:flex;gap:14px;flex-wrap:wrap}}
@@ -947,11 +1228,11 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .ai-model-tag{{display:inline-flex;align-items:center;gap:5px;font-size:.6rem;font-weight:600;
                    letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:4px;
                    border:1px solid #000;color:#555;background:#f8f7f4;white-space:nowrap}}
-    .ai-pts{{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#e5e5e5;border-bottom:1px solid #e5e5e5}}
+    .ai-pts{{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:#e5e5e5;border-bottom:1px solid #e5e5e5}}
     .ai-pt{{background:#fff;padding:14px 16px;text-align:center}}
     .ai-pt-lbl{{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#888;margin-bottom:5px}}
     .ai-pt-val{{font-size:.92rem;font-weight:600;font-family:'DM Mono',monospace}}
-    .pt-e{{color:#000}}.pt-sl{{color:#555}}.pt-t1{{color:#000}}.pt-t2{{color:#333}}
+    .pt-e{{color:#2196f3}}.pt-sl{{color:#ef5350}}.pt-t1{{color:#26a69a}}.pt-t2{{color:#388e3c}}.pt-rr{{color:#f59e0b}}
     .ai-secs{{padding:0}}
     .ai-sec{{padding:18px 22px;border-bottom:1px solid #e5e5e5}}
     .ai-sec:last-child{{border-bottom:none}}
@@ -1000,8 +1281,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                  display:inline-block;align-self:flex-start;margin-bottom:2px}}
     .s-tile-name{{font-size:.78rem;font-weight:700;color:#000;line-height:1.3}}
     .s-tile-sub{{font-size:.64rem;color:#555;line-height:1.3}}
-
-    /* Sector news output */
     #sector-output{{margin-top:18px}}
     .sector-res-header{{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;
                          margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #e5e5e5;flex-wrap:wrap}}
@@ -1093,8 +1372,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .site-footer-sub{{font-size:.6rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#888;margin-bottom:12px}}
     .site-footer-name{{font-size:clamp(3rem,9vw,6rem);font-weight:800;letter-spacing:-.02em;text-transform:uppercase;color:#000;line-height:1}}
 
-    @media(max-width:860px){{form{{grid-template-columns:1fr 1fr;gap:12px}}.fg:first-child{{grid-column:span 2}}.btn{{grid-column:span 2;width:100%}}.ai-models-grid{{grid-template-columns:repeat(2,1fr)}}.ai-pts{{grid-template-columns:repeat(2,1fr)}}.sector-grid{{grid-template-columns:repeat(3,1fr)}}}}
-    @media(max-width:600px){{header{{padding:0 16px}}main{{padding:18px 14px 48px}}.panel,.sector-panel,.ai-panel,.news-panel{{padding:20px 18px}}.chart-card{{padding:16px 10px 10px;min-height:300px}}.ai-models-grid{{grid-template-columns:1fr}}.sector-grid{{grid-template-columns:repeat(2,1fr)}}.sector-selector-row{{flex-direction:column}}.btn-sector{{padding:.75rem;width:100%}}.news-grid-sec{{grid-template-columns:1fr}}}}
+    @media(max-width:860px){{form{{grid-template-columns:1fr 1fr;gap:12px}}.fg:first-child{{grid-column:span 2}}.btn{{grid-column:span 2;width:100%}}.ai-models-grid{{grid-template-columns:repeat(2,1fr)}}.ai-pts{{grid-template-columns:repeat(3,1fr)}}.sector-grid{{grid-template-columns:repeat(3,1fr)}}}}
+    @media(max-width:600px){{header{{padding:0 16px}}main{{padding:18px 14px 48px}}.panel,.sector-panel,.ai-panel,.news-panel{{padding:20px 18px}}.chart-card{{padding:16px 10px 10px;min-height:300px}}.ai-models-grid{{grid-template-columns:1fr}}.sector-grid{{grid-template-columns:repeat(2,1fr)}}.sector-selector-row{{flex-direction:column}}.btn-sector{{padding:.75rem;width:100%}}.news-grid-sec{{grid-template-columns:1fr}}.ai-pts{{grid-template-columns:repeat(2,1fr)}}}}
   </style>
 </head>
 <body>
@@ -1102,7 +1381,11 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 <!-- ── HEADER ── -->
 <header>
   <div class="logo">
-    <img src="{logo_uri}" height="44" style="display:block; filter:grayscale(1) contrast(150%);" alt="Starfish Logo">
+    <div class="logo-icon">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L14.5 9H22L16 13.5L18.5 20.5L12 16L5.5 20.5L8 13.5L2 9H9.5L12 2Z" fill="white" stroke="white" stroke-width="0.5" stroke-linejoin="round"/>
+      </svg>
+    </div>
     <div class="logo-text-group">
       <span class="logo-word">Starfish</span>
       <span class="logo-tagline">Market Intelligence</span>
@@ -1133,9 +1416,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span class="t-item">Reuters &middot; CNBC &middot; WSJ &middot; Yahoo Finance &middot; MarketWatch &middot; FT &middot; Benzinga &middot; Seeking Alpha <span class="t-sep">&middot;</span></span>
     <span class="t-item"><strong>XLC</strong> Comm Services <span class="t-sep">&middot;</span></span>
     <span class="t-item"><strong>XLY</strong> Consumer Disc <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLP</strong> Consumer Staples <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLE</strong> Energy <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLF</strong> Financials <span class="t-sep">&middot;</span></span>
   </div>
 </div>
 
@@ -1166,14 +1446,24 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <div class="fg">
       <label for="chart_type">Chart Type</label>
       <select id="chart_type" name="chart_type">
-        <option value="candlestick" {ct_c}>Candlestick</option>
         <option value="line" {ct_l}>Line</option>
+        <option value="candlestick" {ct_c}>Candlestick</option>
       </select>
     </div>
     <button type="submit" class="btn">Load</button>
   </form>
   <div class="chips">{chips}</div>
   <div class="ind-row"><span class="ind-label">Indicators</span>{ichips}</div>
+</div>
+
+<!-- Chart color legend -->
+<div class="chart-legend-hint" style="margin-bottom:6px;padding-left:4px">
+  <span class="cleg"><span class="cleg-dot" style="background:#f59e0b"></span>SMA 20</span>
+  <span class="cleg"><span class="cleg-dot" style="background:#3b82f6"></span>SMA 50</span>
+  <span class="cleg"><span class="cleg-dot" style="background:#ef4444"></span>SMA 200</span>
+  <span class="cleg"><span class="cleg-dot" style="background:#26a69a"></span>Bull / Up</span>
+  <span class="cleg"><span class="cleg-dot" style="background:#ef5350"></span>Bear / Down</span>
+  <span class="cleg"><span class="cleg-dot" style="background:#6366f1"></span>Bollinger</span>
 </div>
 
 <div class="glass chart-card">{content}</div>
@@ -1213,11 +1503,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       Fetch News &#8594;
     </button>
   </div>
-
-  <div class="sector-grid">
-    {sector_tiles}
-  </div>
-
+  <div class="sector-grid">{sector_tiles}</div>
   <div id="sector-output"></div>
 </div>
 
@@ -1259,7 +1545,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   </div>
 </div>
 
-<!-- ── FOOTER ── -->
+<!-- ── FOOTER ── */
 <footer class="site-footer">
   <div class="site-footer-sub">made by</div>
   <div class="site-footer-name">ANTON BESKI</div>
@@ -1330,7 +1616,7 @@ function runAnalysis(){{
   var res=document.getElementById('ai-result');
   btn.disabled=true; btn.textContent='Analysing\u2026';
   res.className='ai-result show';
-  res.innerHTML='<div class="ai-loading"><div class="ai-spin"></div><div class="ai-load-txt">Crunching '+TICKER+' data with AI\u2026 (20\u201340s)</div></div>';
+  res.innerHTML='<div class="ai-loading"><div class="ai-spin"></div><div class="ai-load-txt">Running advanced technical analysis on '+TICKER+'\u2026 (20\u201340s)</div></div>';
 
   fetch('/api/ai-analysis',{{
     method:'POST', headers:{{'Content-Type':'application/json'}},
@@ -1354,10 +1640,12 @@ function renderAIResult(data){{
   var verdict=(r.verdict||'HOLD').toUpperCase();
   var pt=r.price_targets||{{}};
   var secs=[
-    {{lbl:'Technical Analysis',key:'technical_analysis'}},
-    {{lbl:'News & Macro Context',key:'news_and_macro'}},
-    {{lbl:'Risk Factors',key:'risk_factors'}},
-    {{lbl:"Trader's Action Plan",key:'action_plan'}},
+    {{lbl:'Technical Analysis',         key:'technical_analysis'}},
+    {{lbl:'Pattern Recognition',        key:'pattern_recognition'}},
+    {{lbl:'Indicator Confluence',       key:'indicator_confluence'}},
+    {{lbl:'News & Macro Context',       key:'news_and_macro'}},
+    {{lbl:'Risk Factors',               key:'risk_factors'}},
+    {{lbl:"Trader's Action Plan",       key:'action_plan'}},
   ];
   var secHtml=secs.map(s=>'<div class="ai-sec"><div class="ai-sec-hdr">'+s.lbl+'</div><div class="ai-sec-body">'+esc(r[s.key]||'No data.')+'</div></div>').join('');
   document.getElementById('ai-result').innerHTML=
@@ -1367,16 +1655,17 @@ function renderAIResult(data){{
         '<div class="ai-summary">'+esc(r.summary||'')+'</div>'+
         '<div class="ai-meta-row">'+
           '<span class="ai-mi"><strong>Confidence&nbsp;</strong>'+esc(r.confidence||'Medium')+'</span>'+
-          '<span class="ai-mi"><strong>Horizon&nbsp;</strong>'+esc(r.time_horizon||'Mid')+'-term</span>'+
+          '<span class="ai-mi"><strong>Horizon&nbsp;</strong>'+esc(r.time_horizon||'Mid-term')+'</span>'+
         '</div>'+
       '</div>'+
-      '<span class="ai-model-tag"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+(m.color||'#fff')+';margin-right:4px"></span>'+esc(m.label||data.model_id)+'</span>'+
+      '<span class="ai-model-tag"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+(m.color||'#000')+';margin-right:4px"></span>'+esc(m.label||data.model_id)+'</span>'+
     '</div>'+
     '<div class="ai-pts">'+
       '<div class="ai-pt"><div class="ai-pt-lbl">Entry</div><div class="ai-pt-val pt-e">'+fn(pt.entry)+'</div></div>'+
       '<div class="ai-pt"><div class="ai-pt-lbl">Stop Loss</div><div class="ai-pt-val pt-sl">'+fn(pt.stop_loss)+'</div></div>'+
       '<div class="ai-pt"><div class="ai-pt-lbl">Target 1</div><div class="ai-pt-val pt-t1">'+fn(pt.target_1)+'</div></div>'+
       '<div class="ai-pt"><div class="ai-pt-lbl">Target 2</div><div class="ai-pt-val pt-t2">'+fn(pt.target_2)+'</div></div>'+
+      '<div class="ai-pt"><div class="ai-pt-lbl">R:R Ratio</div><div class="ai-pt-val pt-rr">'+fn(pt.risk_reward_ratio,1)+'x</div></div>'+
     '</div>'+
     '<div class="ai-secs">'+secHtml+'</div>';
 }}
@@ -1521,10 +1810,10 @@ setInterval(refreshRateLimits,8000);
 def index():
     ticker     = (request.form.get("ticker","AAPL") or "AAPL").strip().upper()
     period     = request.form.get("period","6mo")
-    chart_type = request.form.get("chart_type","candlestick")
+    chart_type = request.form.get("chart_type","line")   # DEFAULT = line
     ind_raw    = request.form.get("indicators",",".join(DEFAULT_INDICATORS))
     if period not in VALID_PERIODS: period = "6mo"
-    if chart_type not in ("candlestick","line"): chart_type = "candlestick"
+    if chart_type not in ("candlestick","line"): chart_type = "line"
     active = set(filter(None, ind_raw.split(","))) if ind_raw else DEFAULT_INDICATORS
     graph_html, error = build_chart(ticker, period, chart_type, active)
     return render_page(ticker, period, chart_type, active, graph_html, error)
