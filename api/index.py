@@ -25,9 +25,17 @@ import httpx
 from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, render_template_string
 import yfinance as yf
-import plotly.graph_objects as go
-import plotly.offline as pyo
-from plotly.subplots import make_subplots
+from bokeh.plotting import figure
+from bokeh.models import (
+    ColumnDataSource, HoverTool, CrosshairTool, Span,
+    Range1d, LinearAxis, BoxAnnotation, Band, NumeralTickFormatter,
+    DatetimeTickFormatter, Label, Arrow, NormalHead
+)
+from bokeh.layouts import column, gridplot
+from bokeh.resources import CDN
+from bokeh.embed import components
+from bokeh.models.widgets import Div
+import math
 
 app = Flask(__name__)
 
@@ -1153,102 +1161,299 @@ def call_openrouter(model_id, prompt):
  
  
 # ══════════════════════════════════════════════════════════════════════════════
-# CHART BUILDER  (unchanged visual design)
+# CHART BUILDER  — Professional Bokeh (Bloomberg/TradingView style)
 # ══════════════════════════════════════════════════════════════════════════════
-_C = {"bg":"rgba(0,0,0,0)","paper":"rgba(0,0,0,0)","grid":"rgba(0,0,0,0.06)","axis":"#aaa",
-      "text":"#666","white":"#000","green":"#000","red":"#777",
-      "sma20":"#222","sma50":"#666","sma200":"#aaa",
-      "bb_u":"rgba(0,0,0,0.5)","bb_l":"rgba(0,0,0,0.5)","bb_f":"rgba(0,0,0,0.04)",
-      "rsi":"#333","rsi_ob":"rgba(0,0,0,0.07)","rsi_os":"rgba(0,0,0,0.07)",
-      "macd":"#000","sig":"#666","hp":"rgba(0,0,0,0.75)","hn":"rgba(160,160,160,0.75)",
-      "vu":"rgba(0,0,0,0.5)","vd":"rgba(160,160,160,0.5)"}
- 
- 
+
+# Pro trading terminal colour palette
+_BC = {
+    "bg":       "#FFFFFF", "plot_bg":  "#FAFAFA", "grid":     "#EEEEEE",
+    "axis":     "#999999", "text":     "#444444", "border":   "#000000",
+    "up":       "#089981", "down":     "#F23645",
+    "up_fill":  "#C8EDE8", "down_fill":"#FAD4D7",
+    "line_price":"#1A1A2E","line_fill": "#E8EAF0",
+    "sma20":    "#F5A623", "sma50":    "#4A90E2", "sma200":   "#9B59B6",
+    "bb_upper": "#2196F3", "bb_fill":  "#E3F2FD",
+    "vol_up":   "#089981", "vol_down": "#F23645",
+    "rsi":      "#6366F1", "rsi_ob":   "#FEE2E2", "rsi_os":   "#DCFCE7",
+    "macd":     "#0066CC", "signal":   "#FF6600",
+    "hist_pos": "#089981", "hist_neg": "#F23645",
+    "cross":    "#999999",
+}
+
+_BOKEH_JS_LOADED = False
+
+
+def _bokeh_style(p):
+    p.background_fill_color   = _BC["plot_bg"]
+    p.border_fill_color       = _BC["bg"]
+    p.outline_line_color      = _BC["border"]
+    p.outline_line_width      = 1
+    p.grid.grid_line_color    = _BC["grid"]
+    p.grid.grid_line_alpha    = 1.0
+    p.grid.grid_line_width    = 0.8
+    p.axis.axis_line_color    = "#CCCCCC"
+    p.axis.major_tick_line_color = "#CCCCCC"
+    p.axis.minor_tick_line_color = None
+    p.axis.major_label_text_color = _BC["axis"]
+    p.axis.major_label_text_font_size = "10px"
+    p.axis.major_label_text_font = "DM Sans, sans-serif"
+    if p.title:
+        p.title.text_font_size  = "11px"
+        p.title.text_color      = _BC["text"]
+        p.title.text_font       = "DM Sans, sans-serif"
+        p.title.text_font_style = "normal"
+
+
 def build_chart(ticker, period, chart_type, indicators):
-    data, err = fetch_yfinance_data(ticker, period)
-    if err: return None, f"Data error: {err}"
-    if data is None or data.empty: return None, f"No data for '{ticker}'. Use .NS for NSE stocks."
-    missing = {"Open","High","Low","Close"} - set(data.columns)
-    if missing: return None, f"Missing: {missing}"
-    data = data.dropna(subset=["Close"])
-    if len(data) < 5: return None, "Not enough data points."
- 
-    cl = data["Close"].squeeze(); hi = data["High"].squeeze()
-    lo = data["Low"].squeeze(); op = data["Open"].squeeze()
-    vol = data["Volume"].squeeze() if "Volume" in data.columns else None
-    dates = data.index; name = _get_name(ticker)
-    currency = "INR" if ticker.upper().endswith((".NS",".BO")) else "USD"
- 
-    sv = "vol" in indicators and vol is not None
-    sr = "rsi" in indicators; sm = "macd" in indicators
-    rows = 1 + int(sv) + int(sr) + int(sm)
-    rh = {1:[1.0],2:[0.65,0.35],3:[0.55,0.22,0.23],4:[0.50,0.17,0.17,0.16]}.get(rows,[0.5,0.17,0.17,0.16])
-    titles = [f"{name} ({ticker.upper()})"]
-    if sv: titles.append("Volume")
-    if sr: titles.append("RSI (14)")
-    if sm: titles.append("MACD (12, 26, 9)")
-    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True,
-                        vertical_spacing=0.03, row_heights=rh, subplot_titles=titles)
-    rv = 2 if sv else None; rr = (2+int(sv)) if sr else None; rm = (2+int(sv)+int(sr)) if sm else None
- 
-    if chart_type == "candlestick":
-        fig.add_trace(go.Candlestick(x=dates,open=op,high=hi,low=lo,close=cl,name="Price",
-            increasing_line_color=_C["green"],increasing_fillcolor="rgba(0,0,0,.12)",
-            decreasing_line_color=_C["red"],decreasing_fillcolor="rgba(150,150,150,.18)",
-            line=dict(width=1)), row=1,col=1)
-    else:
-        fig.add_trace(go.Scatter(x=dates,y=cl,mode="lines",name="Price",
-            line=dict(color=_C["white"],width=2),fill="tozeroy",fillcolor="rgba(0,0,0,.04)"),row=1,col=1)
- 
-    if "sma" in indicators:
-        for w,color,lbl in [(20,_C["sma20"],"SMA 20"),(50,_C["sma50"],"SMA 50"),(200,_C["sma200"],"SMA 200")]:
-            if len(cl) >= w:
-                fig.add_trace(go.Scatter(x=dates,y=calc_sma(cl,w),mode="lines",name=lbl,
-                    line=dict(color=color,width=1.2),opacity=0.85),row=1,col=1)
-    if "bb" in indicators and len(cl) >= 20:
-        bbu,bbm,bbl = calc_bb(cl)
-        fig.add_trace(go.Scatter(x=dates,y=bbu,mode="lines",name="BB Upper",
-            line=dict(color=_C["bb_u"],width=1,dash="dot")),row=1,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=bbl,mode="lines",name="BB Lower",
-            line=dict(color=_C["bb_l"],width=1,dash="dot"),
-            fill="tonexty",fillcolor=_C["bb_f"]),row=1,col=1)
-    if sv and vol is not None:
-        colors = [_C["vu"] if c>=o else _C["vd"] for c,o in zip(cl,op)]
-        fig.add_trace(go.Bar(x=dates,y=vol,name="Volume",marker_color=colors,showlegend=False),row=rv,col=1)
-    if sr and len(cl) >= 15:
-        rv2 = calc_rsi(cl)
-        fig.add_trace(go.Scatter(x=dates,y=rv2,mode="lines",name="RSI",
-            line=dict(color=_C["rsi"],width=1.5),showlegend=False),row=rr,col=1)
-        fig.add_hrect(y0=70,y1=100,row=rr,col=1,fillcolor=_C["rsi_ob"],line_width=0,layer="below")
-        fig.add_hrect(y0=0,y1=30,row=rr,col=1,fillcolor=_C["rsi_os"],line_width=0,layer="below")
-        for lvl,c in [(70,"rgba(0,0,0,.4)"),(30,"rgba(0,0,0,.4)"),(50,"rgba(0,0,0,.15)")]:
-            fig.add_hline(y=lvl,row=rr,col=1,line=dict(color=c,width=0.8,dash="dash"))
-    if sm and len(cl) >= 27:
-        ml,sl,hl = calc_macd(cl)
-        hc = [_C["hp"] if v>=0 else _C["hn"] for v in hl.fillna(0)]
-        fig.add_trace(go.Bar(x=dates,y=hl,name="MACD Hist",marker_color=hc,showlegend=False),row=rm,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=ml,mode="lines",name="MACD",
-            line=dict(color=_C["macd"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=sl,mode="lines",name="Signal",
-            line=dict(color=_C["sig"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_hline(y=0,row=rm,col=1,line=dict(color="rgba(0,0,0,.2)",width=0.8,dash="dash"))
- 
-    ax = dict(gridcolor=_C["grid"],color=_C["axis"],showline=False,zeroline=False,tickfont=dict(size=9,color=_C["text"]))
-    fig.update_layout(
-        height=420+120*(rows-1), plot_bgcolor=_C["bg"], paper_bgcolor=_C["paper"],
-        font=dict(color=_C["text"],family="'DM Sans',sans-serif",size=11),
-        legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="left",x=0,
-                    bgcolor="rgba(255,255,255,0)",font=dict(size=10,color=_C["text"])),
-        hovermode="x unified", margin=dict(l=55,r=20,t=55,b=30),
-        hoverlabel=dict(bgcolor="rgba(255,255,255,.97)",bordercolor="rgba(0,0,0,.2)",font=dict(color="#000")),
-        xaxis_rangeslider_visible=False, dragmode="pan",
+    global _BOKEH_JS_LOADED
+    from bokeh.plotting import figure as bk_figure
+    from bokeh.models import (
+        ColumnDataSource, HoverTool, CrosshairTool, Span,
+        Range1d, BoxAnnotation, Band, NumeralTickFormatter,
+        DatetimeTickFormatter
     )
-    for i in range(1, rows+1):
-        fig.update_layout(**{f"xaxis{'' if i==1 else i}": {**ax,"rangeslider":{"visible":False}}})
-        fig.update_layout(**{f"yaxis{'' if i==1 else i}": {**ax}})
-    if sr: fig.update_layout(**{f"yaxis{'' if rr==1 else rr}": {**ax,"range":[0,100]}})
-    for ann in fig.layout.annotations: ann.font.color="#666"; ann.font.size=10
-    return pyo.plot(fig,output_type="div",include_plotlyjs=False), None
+    from bokeh.layouts import gridplot
+    from bokeh.resources import CDN
+    from bokeh.embed import components
+
+    data, err = fetch_yfinance_data(ticker, period)
+    if err:
+        return None, f"Data error: {err}"
+    if data is None or data.empty:
+        return None, f"No data for '{ticker}'. Use .NS for NSE stocks."
+    missing = {"Open", "High", "Low", "Close"} - set(data.columns)
+    if missing:
+        return None, f"Missing columns: {missing}"
+    data = data.dropna(subset=["Close"])
+    if len(data) < 5:
+        return None, "Not enough data points."
+
+    cl  = data["Close"].squeeze()
+    hi  = data["High"].squeeze()
+    lo  = data["Low"].squeeze()
+    op  = data["Open"].squeeze()
+    vol = data["Volume"].squeeze() if "Volume" in data.columns else None
+    name     = _get_name(ticker)
+    currency = "INR" if ticker.upper().endswith((".NS", ".BO")) else "USD"
+
+    sv = "vol"  in indicators and vol is not None
+    sr = "rsi"  in indicators
+    sm = "macd" in indicators
+
+    # convert index to python datetimes
+    dates_dt = list(data.index.to_pydatetime()) if hasattr(data.index, "to_pydatetime") else list(data.index)
+
+    # ═══════════════════════════════════
+    # MAIN PRICE PANEL
+    # ═══════════════════════════════════
+    p_main = bk_figure(
+        x_axis_type="datetime",
+        height=420,
+        sizing_mode="stretch_width",
+        tools="xpan,xwheel_zoom,reset,save",
+        toolbar_location="right",
+        title=f"{name} ({ticker.upper()})  ·  {currency}  ·  {period.upper()}",
+    )
+    _bokeh_style(p_main)
+    p_main.toolbar.logo = None
+    x_range = p_main.x_range
+    ch = CrosshairTool(line_color=_BC["cross"], line_alpha=0.6, line_width=1)
+    p_main.add_tools(ch)
+
+    if chart_type == "candlestick":
+        inc = list(cl >= op)
+        dec = list(cl < op)
+        w_ms = 12 * 3600 * 1000
+        up_src = ColumnDataSource(dict(
+            date=[d for d,f in zip(dates_dt,inc) if f],
+            open=[o for o,f in zip(op,inc) if f],
+            high=[h for h,f in zip(hi,inc) if f],
+            low =[l for l,f in zip(lo,inc) if f],
+            close=[c for c,f in zip(cl,inc) if f],
+        ))
+        dn_src = ColumnDataSource(dict(
+            date=[d for d,f in zip(dates_dt,dec) if f],
+            open=[o for o,f in zip(op,dec) if f],
+            high=[h for h,f in zip(hi,dec) if f],
+            low =[l for l,f in zip(lo,dec) if f],
+            close=[c for c,f in zip(cl,dec) if f],
+        ))
+        p_main.segment("date","high","date","low", color=_BC["up"],   line_width=1.2, source=up_src)
+        p_main.segment("date","high","date","low", color=_BC["down"], line_width=1.2, source=dn_src)
+        p_main.vbar("date", top="open",  bottom="close", width=w_ms*1.6,
+                    fill_color=_BC["up_fill"],   line_color=_BC["up"],   line_width=1.1, source=up_src)
+        p_main.vbar("date", top="close", bottom="open",  width=w_ms*1.6,
+                    fill_color=_BC["down_fill"], line_color=_BC["down"], line_width=1.1, source=dn_src)
+        hover = HoverTool(
+            tooltips=[("Date","@date{%F}"),("O","@open{0,0.00}"),
+                      ("H","@high{0,0.00}"),("L","@low{0,0.00}"),("C","@close{0,0.00}")],
+            formatters={"@date":"datetime"}, mode="vline")
+        p_main.add_tools(hover)
+    else:
+        src_line = ColumnDataSource(dict(date=dates_dt, close=list(cl)))
+        p_main.line("date","close", source=src_line, line_width=2,
+                    color=_BC["line_price"], legend_label="Price")
+        p_main.varea("date", y1=0, y2="close", source=src_line,
+                     fill_color=_BC["line_fill"], fill_alpha=0.4)
+        hover = HoverTool(
+            tooltips=[("Date","@date{%F}"),("Price",f"@close{{0,0.00}} {currency}")],
+            formatters={"@date":"datetime"}, mode="vline")
+        p_main.add_tools(hover)
+
+    if "sma" in indicators:
+        for w, color, lbl in [(20,_BC["sma20"],"SMA 20"),(50,_BC["sma50"],"SMA 50"),(200,_BC["sma200"],"SMA 200")]:
+            if len(cl) >= w:
+                p_main.line(dates_dt, list(calc_sma(cl,w)), line_width=1.4,
+                            color=color, legend_label=lbl, alpha=0.9)
+
+    if "bb" in indicators and len(cl) >= 20:
+        bbu, bbm, bbl_s = calc_bb(cl)
+        bb_src = ColumnDataSource(dict(date=dates_dt,
+            upper=list(bbu), mid=list(bbm), lower=list(bbl_s)))
+        band = Band(base="date", lower="lower", upper="upper", source=bb_src,
+                    fill_alpha=0.12, fill_color=_BC["bb_fill"],
+                    line_color=_BC["bb_upper"], line_alpha=0.5, line_width=1.0,
+                    line_dash="dashed")
+        p_main.add_layout(band)
+        p_main.line("date","mid", source=bb_src, line_width=1.0,
+                    color=_BC["bb_upper"], alpha=0.5, line_dash="dashed", legend_label="BB Mid")
+
+    if p_main.legend:
+        p_main.legend.location               = "top_left"
+        p_main.legend.label_text_font_size   = "9px"
+        p_main.legend.label_text_color       = _BC["text"]
+        p_main.legend.background_fill_alpha  = 0.85
+        p_main.legend.border_line_color      = "#DDDDDD"
+        p_main.legend.padding                = 4
+        p_main.legend.spacing                = 2
+        p_main.legend.click_policy           = "hide"
+
+    p_main.yaxis.formatter = NumeralTickFormatter(format="0,0.00")
+    p_main.xaxis.formatter = DatetimeTickFormatter(days=["%b %d"], months=["%b %Y"], years=["%Y"])
+
+    sub_panels = []
+
+    # ═══════════════════════════════════
+    # VOLUME
+    # ═══════════════════════════════════
+    if sv and vol is not None:
+        p_vol = bk_figure(x_axis_type="datetime", height=110, sizing_mode="stretch_width",
+                          x_range=x_range, tools="xpan,xwheel_zoom,reset",
+                          toolbar_location=None, title="Volume")
+        _bokeh_style(p_vol)
+        p_vol.add_tools(CrosshairTool(line_color=_BC["cross"], line_alpha=0.5, line_width=1))
+        vol_colors = [_BC["vol_up"] if c>=o else _BC["vol_down"] for c,o in zip(cl,op)]
+        vol_src = ColumnDataSource(dict(date=dates_dt, vol=list(vol), color=vol_colors))
+        p_vol.vbar("date", top="vol", width=12*3600*1000*1.6,
+                   fill_color="color", line_color="color", alpha=0.75, source=vol_src)
+        p_vol.yaxis.formatter = NumeralTickFormatter(format="0.0a")
+        p_vol.xaxis.formatter = DatetimeTickFormatter(days=["%b %d"], months=["%b %Y"])
+        p_vol.xaxis.major_label_text_font_size = "0px"
+        sub_panels.append(p_vol)
+
+    # ═══════════════════════════════════
+    # RSI
+    # ═══════════════════════════════════
+    if sr and len(cl) >= 15:
+        p_rsi = bk_figure(x_axis_type="datetime", height=120, sizing_mode="stretch_width",
+                          x_range=x_range, y_range=Range1d(0,100),
+                          tools="xpan,xwheel_zoom,reset", toolbar_location=None, title="RSI (14)")
+        _bokeh_style(p_rsi)
+        p_rsi.add_tools(CrosshairTool(line_color=_BC["cross"], line_alpha=0.5, line_width=1))
+        rsi_vals = calc_rsi(cl)
+        rsi_src  = ColumnDataSource(dict(date=dates_dt, rsi=list(rsi_vals)))
+        p_rsi.add_layout(BoxAnnotation(top=100, bottom=70, fill_color=_BC["rsi_ob"], fill_alpha=0.4, line_color=None))
+        p_rsi.add_layout(BoxAnnotation(top=30,  bottom=0,  fill_color=_BC["rsi_os"], fill_alpha=0.4, line_color=None))
+        for lvl, col, dash in [(70,"#F23645","dashed"),(30,"#089981","dashed"),(50,"#BBBBBB","dotted")]:
+            p_rsi.add_layout(Span(location=lvl, dimension="width",
+                                  line_color=col, line_dash=dash, line_alpha=0.6, line_width=1))
+        p_rsi.line("date","rsi", source=rsi_src, line_width=1.6, color=_BC["rsi"])
+        p_rsi.yaxis.ticker = [0, 30, 50, 70, 100]
+        p_rsi.xaxis.major_label_text_font_size = "0px"
+        sub_panels.append(p_rsi)
+
+    # ═══════════════════════════════════
+    # MACD
+    # ═══════════════════════════════════
+    if sm and len(cl) >= 27:
+        p_macd = bk_figure(x_axis_type="datetime", height=130, sizing_mode="stretch_width",
+                           x_range=x_range, tools="xpan,xwheel_zoom,reset",
+                           toolbar_location=None, title="MACD (12, 26, 9)")
+        _bokeh_style(p_macd)
+        p_macd.add_tools(CrosshairTool(line_color=_BC["cross"], line_alpha=0.5, line_width=1))
+        ml, sl_macd, hl = calc_macd(cl)
+        hl_f   = list(hl.fillna(0))
+        hcolors = [_BC["hist_pos"] if v>=0 else _BC["hist_neg"] for v in hl_f]
+        macd_src = ColumnDataSource(dict(
+            date=dates_dt, macd=list(ml), signal=list(sl_macd), hist=hl_f, hcolor=hcolors))
+        p_macd.vbar("date", top="hist", width=12*3600*1000*1.6,
+                    fill_color="hcolor", line_color="hcolor", alpha=0.75, source=macd_src)
+        p_macd.line("date","macd",   source=macd_src, line_width=1.5, color=_BC["macd"],   legend_label="MACD")
+        p_macd.line("date","signal", source=macd_src, line_width=1.5, color=_BC["signal"], legend_label="Signal", line_dash="dashed")
+        p_macd.add_layout(Span(location=0, dimension="width", line_color="#AAAAAA", line_alpha=0.5, line_width=1))
+        p_macd.yaxis.formatter = NumeralTickFormatter(format="0.00")
+        p_macd.xaxis.formatter = DatetimeTickFormatter(days=["%b %d"], months=["%b %Y"])
+        if p_macd.legend:
+            p_macd.legend.location               = "top_left"
+            p_macd.legend.label_text_font_size   = "9px"
+            p_macd.legend.background_fill_alpha  = 0.85
+            p_macd.legend.border_line_color      = "#DDDDDD"
+            p_macd.legend.padding                = 3
+            p_macd.legend.spacing                = 1
+            p_macd.legend.click_policy           = "hide"
+        sub_panels.append(p_macd)
+
+    # ── Assemble ──
+    all_panels = [p_main] + sub_panels
+    for p in sub_panels[:-1]:
+        p.xaxis.major_label_text_font_size = "0px"
+
+    grid = gridplot([[p] for p in all_panels],
+                    merge_tools=False, toolbar_location=None,
+                    sizing_mode="stretch_width")
+
+    script, div = components(grid)
+
+    if not _BOKEH_JS_LOADED:
+        bokeh_cdn = CDN.render()
+        _BOKEH_JS_LOADED = True
+    else:
+        bokeh_cdn = ""
+
+    refresh_notice = (
+        '<div id="chart-refresh-notice" style="display:none;position:absolute;top:50%;left:50%;'
+        'transform:translate(-50%,-50%);background:#fff;border:2px solid #000;border-radius:8px;'
+        'padding:20px 28px;text-align:center;z-index:999;box-shadow:0 4px 24px rgba(0,0,0,.15);'
+        'font-family:\'DM Sans\',sans-serif;">'
+        '<div style="font-size:1rem;font-weight:700;color:#000;margin-bottom:8px;">Chart Not Visible?</div>'
+        '<div style="font-size:.82rem;color:#555;margin-bottom:14px;">The chart may need a moment to render.<br/>Please refresh the page.</div>'
+        '<button onclick="location.reload()" style="background:#000;color:#fff;border:none;border-radius:4px;'
+        'padding:8px 20px;font-size:.8rem;font-weight:700;cursor:pointer;letter-spacing:.06em;text-transform:uppercase;">Refresh</button>'
+        '</div>'
+    )
+
+    wrapper = (
+        bokeh_cdn +
+        '<div style="position:relative;width:100%;">' +
+        refresh_notice + div + script +
+        '</div>'
+        '<script>'
+        '(function(){'
+        'var attempts=0;'
+        'var check=setInterval(function(){'
+        'attempts++;'
+        'var canvas=document.querySelector(".bk-canvas");'
+        'if(canvas){clearInterval(check);return;}'
+        'if(attempts>20){'
+        'clearInterval(check);'
+        'var n=document.getElementById("chart-refresh-notice");'
+        'if(n)n.style.display="block";'
+        '}'
+        '},500);'
+        '})();'
+        '</script>'
+    )
+    return wrapper, None
  
  
 # ══════════════════════════════════════════════════════════════════════════════
