@@ -1347,9 +1347,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       --gold:#000;--gold-dim:#f0f0f0;--gold-bdr:#000;
       --teal:#333;--teal-dim:#f0f0f0;--teal-bdr:#aaa;
     }}
-    html{{scroll-behavior:smooth}}
+    html{{scroll-behavior:smooth;overflow-x:hidden}}
     body{{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;
-         -webkit-font-smoothing:antialiased;overflow-x:hidden}}
+         -webkit-font-smoothing:antialiased;overflow-x:hidden;width:100%}}
  
     /* ── HEADER ── */
     header{{position:sticky;top:0;z-index:100;height:58px;display:flex;align-items:center;
@@ -1630,8 +1630,49 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .site-footer-sub{{font-size:.6rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#888;margin-bottom:12px}}
     .site-footer-name{{font-size:clamp(3rem,9vw,6rem);font-weight:800;letter-spacing:-.02em;text-transform:uppercase;color:#000;line-height:1}}
  
-    @media(max-width:860px){{form{{grid-template-columns:1fr 1fr;gap:12px}}.fg:first-child{{grid-column:span 2}}.btn{{grid-column:span 2;width:100%}}.ai-models-grid{{grid-template-columns:repeat(2,1fr)}}.ai-pts{{grid-template-columns:repeat(2,1fr)}}.sector-grid{{grid-template-columns:repeat(3,1fr)}}}}
-    @media(max-width:600px){{header{{padding:0 16px}}main{{padding:18px 14px 48px}}.panel,.sector-panel,.ai-panel,.news-panel{{padding:20px 18px}}.chart-card{{padding:16px 10px 10px;min-height:300px}}.ai-models-grid{{grid-template-columns:1fr}}.sector-grid{{grid-template-columns:repeat(2,1fr)}}.sector-selector-row{{flex-direction:column}}.btn-sector{{padding:.75rem;width:100%}}.news-grid-sec{{grid-template-columns:1fr}}}}
+    html,body{{max-width:100%;overflow-x:hidden}}
+    *{{min-width:0}}
+    @media(max-width:860px){{
+      form{{grid-template-columns:1fr 1fr;gap:12px}}
+      .fg:first-child{{grid-column:span 2}}
+      .btn{{grid-column:span 2;width:100%}}
+      .ai-models-grid{{grid-template-columns:repeat(2,1fr)}}
+      .ai-pts{{grid-template-columns:repeat(2,1fr)}}
+      .sector-grid{{grid-template-columns:repeat(3,1fr)}}
+    }}
+    @media(max-width:600px){{
+      header{{padding:0 12px;height:50px}}
+      .logo-word{{font-size:.7rem;letter-spacing:.16em}}
+      .nav-link{{font-size:.58rem;padding:4px 8px;letter-spacing:.06em}}
+      main{{padding:14px 12px 48px;width:100%}}
+      .disclaimer-wrap{{padding:0 12px 24px}}
+      .panel,.sector-panel,.ai-panel,.news-panel{{padding:16px 14px}}
+      form{{grid-template-columns:1fr;gap:10px}}
+      .fg:first-child{{grid-column:span 1}}
+      .btn{{grid-column:span 1;width:100%}}
+      .chart-card{{padding:12px 8px 8px;min-height:260px}}
+      .chips{{gap:6px;margin-top:16px;padding-top:14px}}
+      .chip{{font-size:.68rem;padding:4px 12px}}
+      .ind-row{{gap:6px}}
+      .ind-chip{{font-size:.65rem;padding:3px 10px}}
+      .ai-models-grid{{grid-template-columns:1fr}}
+      .ai-pts{{grid-template-columns:repeat(2,1fr)}}
+      .ai-verdict-bar{{padding:14px 16px;gap:8px}}
+      .ai-sec{{padding:14px 16px}}
+      .sector-grid{{grid-template-columns:repeat(2,1fr)}}
+      .sector-selector-row{{flex-direction:column}}
+      .btn-sector{{padding:.75rem;width:100%}}
+      .news-grid-sec{{grid-template-columns:1fr}}
+      .news-tabs{{gap:6px}}
+      .news-tab{{padding:5px 12px;font-size:.68rem}}
+      .ticker-strip{{overflow:hidden;width:100%}}
+      .ticker-track{{padding-left:80px}}
+      .site-footer{{padding:32px 16px 56px}}
+      .site-footer-name{{font-size:clamp(2.4rem,14vw,5rem)}}
+      .section-divider{{margin:24px 0 14px}}
+      .sector-res-header{{flex-direction:column;align-items:flex-start;gap:8px}}
+      .alt-data-row{{gap:5px}}
+    }}
   </style>
 </head>
 <body>
