@@ -1155,13 +1155,13 @@ def call_openrouter(model_id, prompt):
 # ══════════════════════════════════════════════════════════════════════════════
 # CHART BUILDER  (unchanged visual design)
 # ══════════════════════════════════════════════════════════════════════════════
-_C = {"bg":"rgba(0,0,0,0)","paper":"rgba(0,0,0,0)","grid":"rgba(0,0,0,0.06)","axis":"#aaa",
-      "text":"#666","white":"#000","green":"#000","red":"#777",
-      "sma20":"#222","sma50":"#666","sma200":"#aaa",
-      "bb_u":"rgba(0,0,0,0.5)","bb_l":"rgba(0,0,0,0.5)","bb_f":"rgba(0,0,0,0.04)",
-      "rsi":"#333","rsi_ob":"rgba(0,0,0,0.07)","rsi_os":"rgba(0,0,0,0.07)",
-      "macd":"#000","sig":"#666","hp":"rgba(0,0,0,0.75)","hn":"rgba(160,160,160,0.75)",
-      "vu":"rgba(0,0,0,0.5)","vd":"rgba(160,160,160,0.5)"}
+_C = {"bg":"rgba(0,0,0,0)","paper":"rgba(0,0,0,0)","grid":"rgba(42,46,57,0.15)","axis":"#787b86",
+      "text":"#787b86","white":"#2962ff","green":"#26a69a","red":"#ef5350",
+      "sma20":"#f9a825","sma50":"#7b1fa2","sma200":"#1565c0",
+      "bb_u":"rgba(33,150,243,0.7)","bb_l":"rgba(33,150,243,0.7)","bb_f":"rgba(33,150,243,0.05)",
+      "rsi":"#7e57c2","rsi_ob":"rgba(239,83,80,0.08)","rsi_os":"rgba(38,166,154,0.08)",
+      "macd":"#2196f3","sig":"#ff6d00","hp":"rgba(38,166,154,0.85)","hn":"rgba(239,83,80,0.85)",
+      "vu":"rgba(38,166,154,0.6)","vd":"rgba(239,83,80,0.6)"}
  
  
 def build_chart(ticker, period, chart_type, indicators):
@@ -1193,12 +1193,12 @@ def build_chart(ticker, period, chart_type, indicators):
  
     if chart_type == "candlestick":
         fig.add_trace(go.Candlestick(x=dates,open=op,high=hi,low=lo,close=cl,name="Price",
-            increasing_line_color=_C["green"],increasing_fillcolor="rgba(0,0,0,.12)",
-            decreasing_line_color=_C["red"],decreasing_fillcolor="rgba(150,150,150,.18)",
+            increasing_line_color=_C["green"],increasing_fillcolor="rgba(38,166,154,.18)",
+            decreasing_line_color=_C["red"],decreasing_fillcolor="rgba(239,83,80,.18)",
             line=dict(width=1)), row=1,col=1)
     else:
         fig.add_trace(go.Scatter(x=dates,y=cl,mode="lines",name="Price",
-            line=dict(color=_C["white"],width=2),fill="tozeroy",fillcolor="rgba(0,0,0,.04)"),row=1,col=1)
+            line=dict(color=_C["white"],width=2),fill="tozeroy",fillcolor="rgba(41,98,255,.06)"),row=1,col=1)
  
     if "sma" in indicators:
         for w,color,lbl in [(20,_C["sma20"],"SMA 20"),(50,_C["sma50"],"SMA 50"),(200,_C["sma200"],"SMA 200")]:
@@ -1221,7 +1221,7 @@ def build_chart(ticker, period, chart_type, indicators):
             line=dict(color=_C["rsi"],width=1.5),showlegend=False),row=rr,col=1)
         fig.add_hrect(y0=70,y1=100,row=rr,col=1,fillcolor=_C["rsi_ob"],line_width=0,layer="below")
         fig.add_hrect(y0=0,y1=30,row=rr,col=1,fillcolor=_C["rsi_os"],line_width=0,layer="below")
-        for lvl,c in [(70,"rgba(0,0,0,.4)"),(30,"rgba(0,0,0,.4)"),(50,"rgba(0,0,0,.15)")]:
+        for lvl,c in [(70,"rgba(239,83,80,.5)"),(30,"rgba(38,166,154,.5)"),(50,"rgba(120,123,134,.3)")]:
             fig.add_hline(y=lvl,row=rr,col=1,line=dict(color=c,width=0.8,dash="dash"))
     if sm and len(cl) >= 27:
         ml,sl,hl = calc_macd(cl)
@@ -1231,7 +1231,7 @@ def build_chart(ticker, period, chart_type, indicators):
             line=dict(color=_C["macd"],width=1.5),showlegend=False),row=rm,col=1)
         fig.add_trace(go.Scatter(x=dates,y=sl,mode="lines",name="Signal",
             line=dict(color=_C["sig"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_hline(y=0,row=rm,col=1,line=dict(color="rgba(0,0,0,.2)",width=0.8,dash="dash"))
+        fig.add_hline(y=0,row=rm,col=1,line=dict(color="rgba(120,123,134,.4)",width=0.8,dash="dash"))
  
     ax = dict(gridcolor=_C["grid"],color=_C["axis"],showline=False,zeroline=False,tickfont=dict(size=9,color=_C["text"]))
     fig.update_layout(
@@ -1240,14 +1240,14 @@ def build_chart(ticker, period, chart_type, indicators):
         legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="left",x=0,
                     bgcolor="rgba(255,255,255,0)",font=dict(size=10,color=_C["text"])),
         hovermode="x unified", margin=dict(l=55,r=20,t=55,b=30),
-        hoverlabel=dict(bgcolor="rgba(255,255,255,.97)",bordercolor="rgba(0,0,0,.2)",font=dict(color="#000")),
+        hoverlabel=dict(bgcolor="rgba(255,255,255,.97)",bordercolor="rgba(120,123,134,.3)",font=dict(color="#000")),
         xaxis_rangeslider_visible=False, dragmode="pan",
     )
     for i in range(1, rows+1):
         fig.update_layout(**{f"xaxis{'' if i==1 else i}": {**ax,"rangeslider":{"visible":False}}})
         fig.update_layout(**{f"yaxis{'' if i==1 else i}": {**ax}})
     if sr: fig.update_layout(**{f"yaxis{'' if rr==1 else rr}": {**ax,"range":[0,100]}})
-    for ann in fig.layout.annotations: ann.font.color="#666"; ann.font.size=10
+    for ann in fig.layout.annotations: ann.font.color="#787b86"; ann.font.size=10
     return pyo.plot(fig,output_type="div",include_plotlyjs=False), None
  
  
