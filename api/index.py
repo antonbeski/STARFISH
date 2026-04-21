@@ -1375,13 +1375,13 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .ticker-badge{{position:absolute;left:0;height:100%;z-index:3;display:flex;align-items:center;
                    padding:0 .9rem;background:#fff;white-space:nowrap;
                    font-size:.56rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#000}}
-    .ticker-track{{display:flex;padding-left:90px;animation:ticker-run 60s linear infinite;white-space:nowrap}}
+    .ticker-track{{display:flex;animation:ticker-run 40s linear infinite;white-space:nowrap;width:max-content}}
     .ticker-track:hover{{animation-play-state:paused}}
     .t-item{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:400;letter-spacing:.08em;
-             color:rgba(255,255,255,.55);padding:0 1.5rem}}
+             color:rgba(255,255,255,.55);padding:0 1.5rem;white-space:nowrap;flex-shrink:0}}
     .t-item strong{{color:rgba(255,255,255,.9);font-weight:500}}
     .t-sep{{color:rgba(255,255,255,.3)}}
-    @keyframes ticker-run{{from{{transform:translateX(100vw)}}to{{transform:translateX(-100%)}}}}
+    @keyframes ticker-run{{from{{transform:translateX(0)}}to{{transform:translateX(-50%)}}}}
  
     /* ── LAYOUT ── */
     main{{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:30px 20px 64px}}
@@ -1714,6 +1714,13 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span class="t-item"><strong>XLP</strong> Consumer Staples <span class="t-sep">&middot;</span></span>
     <span class="t-item"><strong>XLE</strong> Energy <span class="t-sep">&middot;</span></span>
     <span class="t-item"><strong>XLF</strong> Financials <span class="t-sep">&middot;</span></span>
+    <span class="t-item"><strong>XLV</strong> Health Care <span class="t-sep">&middot;</span></span>
+    <span class="t-item"><strong>XLI</strong> Industrials <span class="t-sep">&middot;</span></span>
+    <span class="t-item"><strong>XLK</strong> Info Technology <span class="t-sep">&middot;</span></span>
+    <span class="t-item"><strong>XLB</strong> Materials <span class="t-sep">&middot;</span></span>
+    <span class="t-item"><strong>XLRE</strong> Real Estate <span class="t-sep">&middot;</span></span>
+    <span class="t-item"><strong>XLU</strong> Utilities <span class="t-sep">&middot;</span></span>
+    <span class="t-item">FRED Macro &middot; Google Trends &middot; AIS Shipping &middot; Fundamentals &middot; 10 Indicators <span class="t-sep">&middot;</span></span>
   </div>
 </div>
  
