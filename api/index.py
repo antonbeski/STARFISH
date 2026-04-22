@@ -2230,7 +2230,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       </select>
     </div>
     <button class="btn-sector" id="fetchSectorBtn" onclick="fetchSectorNews()">
-      Fetch News &#8594;
+      Analyse &#8594;
     </button>
   </div>
  
@@ -2450,7 +2450,7 @@ async function fetchSectorNews(){{
       </div>`;
   }}finally{{
     btn.disabled=false;
-    btn.innerHTML='Fetch News &#8594;';
+    btn.innerHTML='Analyse &#8594;';
   }}
 }}
  
