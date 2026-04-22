@@ -2755,10 +2755,10 @@ function renderSatTargets(targets, sectorId) {{
           <div id="${{mid}}" class="sat-map-leaf"></div>
           <div class="sat-map-crosshair"></div>
           <div class="sat-layer-btns">
-            <button class="sat-layer-btn active" data-layer="esri" onclick="switchSatLayer('${{mid}}','esri')">&#128752; SAT</button>
-            <button class="sat-layer-btn" data-layer="clarity" onclick="switchSatLayer('${{mid}}','clarity')">&#10024; HD</button>
-            <button class="sat-layer-btn" data-layer="osm" onclick="switchSatLayer('${{mid}}','osm')">&#128506; MAP</button>
-            <button class="sat-layer-btn" data-layer="toner" onclick="switchSatLayer('${{mid}}','toner')">&#9632; B&amp;W</button>
+            <button class="sat-layer-btn active" data-layer="esri" onclick="switchSatLayer('${{mid}}','esri')">SAT</button>
+            <button class="sat-layer-btn" data-layer="clarity" onclick="switchSatLayer('${{mid}}','clarity')">HD</button>
+            <button class="sat-layer-btn" data-layer="osm" onclick="switchSatLayer('${{mid}}','osm')">MAP</button>
+            <button class="sat-layer-btn" data-layer="toner" onclick="switchSatLayer('${{mid}}','toner')">B&amp;W</button>
           </div>
         </div>
         <div class="sat-body">
