@@ -2660,11 +2660,11 @@ function renderSatTargets(targets, sectorId) {{
 @app.route("/", methods=["GET","POST"])
 def index():
     ticker     = (request.form.get("ticker","AAPL") or "AAPL").strip().upper()
-    period     = request.form.get("period","6mo")
-    chart_type = request.form.get("chart_type","candlestick")
+    period     = request.form.get("period","1mo")
+    chart_type = request.form.get("chart_type","line")
     ind_raw    = request.form.get("indicators",",".join(DEFAULT_INDICATORS))
-    if period not in VALID_PERIODS: period = "6mo"
-    if chart_type not in ("candlestick","line"): chart_type = "candlestick"
+    if period not in VALID_PERIODS: period = "1mo"
+    if chart_type not in ("candlestick","line"): chart_type = "line"
     active = set(filter(None, ind_raw.split(","))) if ind_raw else DEFAULT_INDICATORS
     graph_html, error = build_chart(ticker, period, chart_type, active)
     return render_page(ticker, period, chart_type, active, graph_html, error)
