@@ -2777,7 +2777,7 @@ function renderSatTargets(targets, sectorId) {{
   satDiv.innerHTML = `
     <div class="sat-section-divider">
       <div class="sat-section-divider-line"></div>
-      <div class="sat-label"><span class="sat-dot"></span>Satellite Imagery &mdash; ${{targets.length}} Targets <span class="sat-count-badge" style="margin-left:8px">${{targets.length}} targets</span></div>
+      <div class="sat-label"><span class="sat-dot"></span>Satellite <span class="sat-count-badge" style="margin-left:8px">${{targets.length}} Targets</span></div>
       <div class="sat-section-divider-line"></div>
     </div>
     <div class="sat-grid">${{cards}}</div>`;
