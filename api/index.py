@@ -2429,12 +2429,19 @@ async function fetchSectorNews(){{
       <div class="sector-state-title">Scanning Sources</div>
       <div class="sector-state-sub">Pulling live data from Reuters, CNBC, WSJ, Yahoo Finance, MarketWatch, Financial Times, Benzinga &amp; Seeking Alpha.</div>
     </div>`;
+  // reset satellite panel immediately
+  var satDiv=document.getElementById('sector-satellite');
+  satDiv.style.display='none';
+  satDiv.innerHTML='';
+  Object.keys(satMaps).forEach(k=>{{try{{satMaps[k].map.remove();}}catch(e){{}}delete satMaps[k];}});
   try{{
     var resp=await fetch('/api/news?sector='+encodeURIComponent(sector));
     if(!resp.ok)throw new Error('HTTP '+resp.status);
     var data=await resp.json();
     sectorArticles=data.articles||[];
     renderSectorNews(sectorArticles,data.sector_label,data.elapsed_seconds);
+    // Now load satellite targets below news
+    loadSatelliteTargets(sector);
   }}catch(e){{
     document.getElementById('sector-output').innerHTML=`
       <div class="sector-state">
@@ -2587,9 +2594,6 @@ async function loadSatelliteTargets(sectorId) {{
     </div>
     <div class="sat-loading-state"><div class="sat-spinner"></div><span style="font-size:.78rem;color:#555">Loading satellite targets&hellip;</span></div>`;
 
-  // destroy old maps
-  Object.keys(satMaps).forEach(k=>{{ try{{satMaps[k].map.remove();}}catch(e){{}} delete satMaps[k]; }});
-
   try {{
     const resp = await fetch('/api/satellite?sector='+encodeURIComponent(sectorId));
     if (!resp.ok) throw new Error('HTTP '+resp.status);
@@ -2643,19 +2647,7 @@ function renderSatTargets(targets, sectorId) {{
   }});
 }}
 
-// Hook satellite loading into the existing fetchSectorNews flow
-const _origFetchSectorNews = fetchSectorNews;
-async function fetchSectorNews() {{
-  await _origFetchSectorNews();
-  const sector = document.getElementById('sector-sel').value;
-  if (sector) loadSatelliteTargets(sector);
-}}
-// Also hook into tile clicks
-const _origSelectAndFetch = selectAndFetch;
-function selectAndFetch(id) {{
-  document.getElementById('sector-sel').value = id;
-  fetchSectorNews();
-}}
+
 </script>
 </body>
 </html>"""
