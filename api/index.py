@@ -411,6 +411,399 @@ SCRAPE_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SATELLITE INTELLIGENCE — 30 TARGETS PER SECTOR
+# Keys match SECTORS keys above
+# ══════════════════════════════════════════════════════════════════════════════
+SECTOR_SATELLITE_TARGETS = {
+    "energy": [
+        # US
+        {"name": "Exxon Baytown Refinery", "tag": "REFINERY · US", "lat": 29.7355, "lon": -94.9774},
+        {"name": "Chevron Pascagoula", "tag": "REFINERY · US", "lat": 30.3460, "lon": -88.5560},
+        {"name": "Marathon Garyville", "tag": "REFINERY · US", "lat": 30.0610, "lon": -90.6300},
+        {"name": "Phillips 66 Wood River", "tag": "REFINERY · US", "lat": 38.8686, "lon": -90.0785},
+        {"name": "BP Whiting Refinery", "tag": "REFINERY · US", "lat": 41.6827, "lon": -87.4883},
+        {"name": "Valero Port Arthur", "tag": "REFINERY · US", "lat": 29.8850, "lon": -93.9490},
+        {"name": "Motiva Port Arthur", "tag": "REFINERY · US", "lat": 29.8760, "lon": -93.8960},
+        {"name": "Flint Hills Corpus Christi", "tag": "REFINERY · US", "lat": 27.7696, "lon": -97.4130},
+        {"name": "Shell Puget Sound", "tag": "REFINERY · US", "lat": 48.5110, "lon": -122.6130},
+        {"name": "PBF Delaware City", "tag": "REFINERY · US", "lat": 39.5750, "lon": -75.5910},
+        # India
+        {"name": "Reliance Jamnagar Refinery", "tag": "REFINERY · INDIA", "lat": 22.4707, "lon": 70.0577},
+        {"name": "IOCL Paradip Refinery", "tag": "REFINERY · INDIA", "lat": 20.3160, "lon": 86.6090},
+        {"name": "BPCL Kochi Refinery", "tag": "REFINERY · INDIA", "lat": 9.9312, "lon": 76.3560},
+        {"name": "HPCL Vizag Refinery", "tag": "REFINERY · INDIA", "lat": 17.6870, "lon": 83.2985},
+        {"name": "IOCL Panipat", "tag": "REFINERY · INDIA", "lat": 29.4070, "lon": 76.9660},
+        {"name": "Nayara Vadinar", "tag": "REFINERY · INDIA", "lat": 22.4560, "lon": 69.3700},
+        {"name": "MRPL Mangalore", "tag": "REFINERY · INDIA", "lat": 13.0130, "lon": 74.8140},
+        {"name": "IOCL Bongaigaon", "tag": "REFINERY · INDIA", "lat": 26.4680, "lon": 90.5350},
+        {"name": "HPCL Mumbai", "tag": "REFINERY · INDIA", "lat": 19.0480, "lon": 72.8520},
+        {"name": "CPCL Chennai", "tag": "REFINERY · INDIA", "lat": 13.1470, "lon": 80.2890},
+        # Global
+        {"name": "Saudi Aramco Ras Tanura", "tag": "CRUDE EXPORT · SAUDI", "lat": 26.6447, "lon": 50.1592},
+        {"name": "Shell Pernis Netherlands", "tag": "REFINERY · NL", "lat": 51.8900, "lon": 4.3880},
+        {"name": "Sinopec Zhenhai", "tag": "REFINERY · CHINA", "lat": 29.9850, "lon": 121.7250},
+        {"name": "Freeport LNG Texas", "tag": "LNG EXPORT · US", "lat": 28.9400, "lon": -95.3600},
+        {"name": "Sabine Pass LNG", "tag": "LNG EXPORT · US", "lat": 29.7286, "lon": -93.8700},
+        {"name": "Cheniere Corpus Christi", "tag": "LNG EXPORT · US", "lat": 27.8370, "lon": -97.2150},
+        {"name": "Qatar RasGas LNG", "tag": "LNG EXPORT · QATAR", "lat": 25.9100, "lon": 51.5500},
+        {"name": "Curtis Island LNG Australia", "tag": "LNG EXPORT · AUS", "lat": -23.6000, "lon": 151.2400},
+        {"name": "Nigeria Bonny LNG", "tag": "LNG EXPORT · NGA", "lat": 4.4390, "lon": 7.1510},
+        {"name": "Permian Basin Oil Rigs TX", "tag": "OIL PRODUCTION · US", "lat": 31.9973, "lon": -102.0779},
+    ],
+    "materials": [
+        # US
+        {"name": "Nevada Gold Mines Carlin", "tag": "GOLD MINE · US", "lat": 40.7160, "lon": -116.1190},
+        {"name": "Bingham Canyon Copper Utah", "tag": "COPPER MINE · US", "lat": 40.5243, "lon": -112.1509},
+        {"name": "Teck Trail Smelter Canada", "tag": "SMELTER · CA", "lat": 49.0960, "lon": -117.7140},
+        {"name": "Nucor Ghent Steel KY", "tag": "STEEL MILL · US", "lat": 38.6750, "lon": -84.9450},
+        {"name": "US Steel Gary Works", "tag": "STEEL MILL · US", "lat": 41.6031, "lon": -87.3320},
+        {"name": "Cleveland-Cliffs Indiana Harbor", "tag": "STEEL MILL · US", "lat": 41.6680, "lon": -87.4560},
+        {"name": "Nucor Memphis Steel", "tag": "STEEL MILL · US", "lat": 35.1495, "lon": -90.0490},
+        {"name": "Steel Dynamics Butler IN", "tag": "STEEL MILL · US", "lat": 40.5850, "lon": -85.0050},
+        {"name": "Holcim Ste. Genevieve Cement", "tag": "CEMENT · US", "lat": 37.9770, "lon": -90.0420},
+        {"name": "Ash Grove Cement OK", "tag": "CEMENT · US", "lat": 36.1560, "lon": -95.9960},
+        # India
+        {"name": "JSW Dolvi Steel Maharashtra", "tag": "STEEL MILL · INDIA", "lat": 18.5190, "lon": 72.9900},
+        {"name": "Tata Steel Jamshedpur", "tag": "STEEL MILL · INDIA", "lat": 22.8046, "lon": 86.1850},
+        {"name": "SAIL Bhilai Steel Plant", "tag": "STEEL MILL · INDIA", "lat": 21.2080, "lon": 81.3830},
+        {"name": "JSW Vijayanagar Steel", "tag": "STEEL MILL · INDIA", "lat": 15.1670, "lon": 76.6670},
+        {"name": "Essar Hazira Steel Gujarat", "tag": "STEEL MILL · INDIA", "lat": 21.1200, "lon": 72.7640},
+        {"name": "NMDC Bailadila Iron Ore", "tag": "IRON ORE · INDIA", "lat": 18.7500, "lon": 81.2500},
+        {"name": "Vedanta Sterlite Copper TN", "tag": "COPPER SMELTER · INDIA", "lat": 8.7500, "lon": 77.7000},
+        {"name": "HCL Khetri Copper Rajasthan", "tag": "COPPER MINE · INDIA", "lat": 28.0000, "lon": 75.8000},
+        {"name": "Ultratech Cement Tadipatri", "tag": "CEMENT · INDIA", "lat": 14.9050, "lon": 78.0110},
+        {"name": "Ambuja Cement Bhatinda", "tag": "CEMENT · INDIA", "lat": 30.2100, "lon": 74.9500},
+        # Global
+        {"name": "BHP Escondida Copper Chile", "tag": "COPPER MINE · CL", "lat": -24.2500, "lon": -69.0700},
+        {"name": "Rio Tinto Pilbara Iron Ore", "tag": "IRON ORE · AUS", "lat": -22.7000, "lon": 117.7500},
+        {"name": "Glencore Collahuasi Copper", "tag": "COPPER MINE · CL", "lat": -20.9700, "lon": -68.7000},
+        {"name": "Vale Carajas Iron Ore Brazil", "tag": "IRON ORE · BR", "lat": -6.0667, "lon": -50.1333},
+        {"name": "POSCO Pohang Steel S Korea", "tag": "STEEL MILL · KR", "lat": 36.0190, "lon": 129.3430},
+        {"name": "Baosteel Shanghai", "tag": "STEEL MILL · CN", "lat": 31.4040, "lon": 121.4960},
+        {"name": "Nippon Steel Kimitsu Japan", "tag": "STEEL MILL · JP", "lat": 35.3160, "lon": 139.9150},
+        {"name": "ArcelorMittal Dofasco Canada", "tag": "STEEL MILL · CA", "lat": 43.2470, "lon": -79.8550},
+        {"name": "Lafarge Cement Plant France", "tag": "CEMENT · FR", "lat": 43.8500, "lon": 5.3800},
+        {"name": "Heidelberg Materials Germany", "tag": "CEMENT · DE", "lat": 49.4100, "lon": 8.7100},
+    ],
+    "industrials": [
+        # US
+        {"name": "Boeing Everett Factory WA", "tag": "AIRCRAFT MFG · US", "lat": 47.9209, "lon": -122.2615},
+        {"name": "Ford Dearborn Truck MI", "tag": "AUTO ASSEMBLY · US", "lat": 42.3016, "lon": -83.1583},
+        {"name": "GM Arlington Assembly TX", "tag": "AUTO ASSEMBLY · US", "lat": 32.7236, "lon": -97.1154},
+        {"name": "Tesla Fremont Factory CA", "tag": "EV ASSEMBLY · US", "lat": 37.4924, "lon": -121.9464},
+        {"name": "UPS Worldport Louisville KY", "tag": "AIR CARGO HUB · US", "lat": 38.1781, "lon": -85.7360},
+        {"name": "FedEx Memphis Superhub", "tag": "AIR CARGO HUB · US", "lat": 35.0423, "lon": -89.9762},
+        {"name": "BNSF Chicago Rail Yard", "tag": "RAIL YARD · US", "lat": 41.8300, "lon": -87.7500},
+        {"name": "Union Pacific Bailey Yard NE", "tag": "RAIL YARD · US", "lat": 41.1430, "lon": -101.0190},
+        {"name": "LAX Airport Parking CA", "tag": "AIRPORT · US", "lat": 33.9425, "lon": -118.4081},
+        {"name": "JFK Airport Cargo NY", "tag": "AIRPORT · US", "lat": 40.6413, "lon": -73.7781},
+        # India
+        {"name": "Maruti Suzuki Manesar", "tag": "AUTO ASSEMBLY · INDIA", "lat": 28.3560, "lon": 76.9400},
+        {"name": "Tata Motors Pune", "tag": "AUTO ASSEMBLY · INDIA", "lat": 18.6298, "lon": 73.7997},
+        {"name": "Hero MotoCorp Dharuhera", "tag": "TWO-WHEELER MFG · INDIA", "lat": 28.2080, "lon": 76.7870},
+        {"name": "TVS Hosur TN", "tag": "TWO-WHEELER MFG · INDIA", "lat": 12.7409, "lon": 77.8253},
+        {"name": "Amazon Hyderabad Fulfillment", "tag": "E-COMMERCE DC · INDIA", "lat": 17.4000, "lon": 78.5000},
+        {"name": "Flipkart Bhiwandi Maharashtra", "tag": "E-COMMERCE DC · INDIA", "lat": 19.2813, "lon": 73.0547},
+        {"name": "Mumbai Airport Cargo", "tag": "AIRPORT · INDIA", "lat": 19.0896, "lon": 72.8656},
+        {"name": "Delhi IGI T3 Parking", "tag": "AIRPORT · INDIA", "lat": 28.5562, "lon": 77.1000},
+        {"name": "ICD Sanand Rail Yard Gujarat", "tag": "RAIL ICD · INDIA", "lat": 22.9900, "lon": 72.3800},
+        {"name": "Mundra ICD Container Yard", "tag": "CONTAINER PORT · INDIA", "lat": 22.8500, "lon": 69.7000},
+        # Global
+        {"name": "Airbus Toulouse Final Assembly", "tag": "AIRCRAFT MFG · FR", "lat": 43.6054, "lon": 1.4470},
+        {"name": "Toyota Georgetown KY", "tag": "AUTO ASSEMBLY · US", "lat": 38.2098, "lon": -84.5555},
+        {"name": "VW Wolfsburg Germany", "tag": "AUTO ASSEMBLY · DE", "lat": 52.4200, "lon": 10.7900},
+        {"name": "Samsung Gumi S Korea", "tag": "ELECTRONICS MFG · KR", "lat": 36.1190, "lon": 128.3440},
+        {"name": "Foxconn Zhengzhou China", "tag": "CONTRACT MFG · CN", "lat": 34.7460, "lon": 113.6253},
+        {"name": "Heathrow Airport Cargo UK", "tag": "AIRPORT · UK", "lat": 51.4700, "lon": -0.4543},
+        {"name": "Shanghai Pudong Airport", "tag": "AIRPORT · CN", "lat": 31.1443, "lon": 121.8083},
+        {"name": "Rotterdam Maasvlakte Rail", "tag": "CONTAINER PORT · NL", "lat": 51.9179, "lon": 4.0800},
+        {"name": "Singapore Tuas Port Rail", "tag": "CONTAINER PORT · SG", "lat": 1.2870, "lon": 103.6390},
+        {"name": "Dubai Jebel Ali Container Yard", "tag": "CONTAINER PORT · UAE", "lat": 24.9994, "lon": 55.0610},
+    ],
+    "consumer-discretionary": [
+        # US
+        {"name": "Walmart Bentonville HQ AR", "tag": "RETAIL HQ · US", "lat": 36.3729, "lon": -94.2088},
+        {"name": "Target Minneapolis HQ MN", "tag": "RETAIL HQ · US", "lat": 44.8545, "lon": -93.2422},
+        {"name": "Costco Issaquah HQ WA", "tag": "RETAIL HQ · US", "lat": 47.5301, "lon": -122.0326},
+        {"name": "Home Depot Atlanta HQ GA", "tag": "RETAIL HQ · US", "lat": 33.7490, "lon": -84.3880},
+        {"name": "Lowe's Mooresville HQ NC", "tag": "RETAIL HQ · US", "lat": 35.5845, "lon": -80.8098},
+        {"name": "AutoNation Fort Lauderdale FL", "tag": "AUTO DEALER · US", "lat": 26.1224, "lon": -80.1373},
+        {"name": "Marriott Bethesda HQ MD", "tag": "HOSPITALITY HQ · US", "lat": 38.9850, "lon": -77.0947},
+        {"name": "Hilton McLean HQ VA", "tag": "HOSPITALITY HQ · US", "lat": 38.9340, "lon": -77.1760},
+        {"name": "MGM Grand Vegas Valet NV", "tag": "GAMING/LEISURE · US", "lat": 36.1024, "lon": -115.1701},
+        {"name": "Disney Orlando Parking FL", "tag": "THEME PARK · US", "lat": 28.3772, "lon": -81.5707},
+        # India
+        {"name": "Reliance Retail Mumbai HQ", "tag": "RETAIL HQ · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "DMart Bhandup Mumbai", "tag": "RETAIL · INDIA", "lat": 19.1600, "lon": 72.9400},
+        {"name": "Big Bazaar Mumbai Central", "tag": "RETAIL · INDIA", "lat": 18.9630, "lon": 72.8320},
+        {"name": "Phoenix Marketcity Mumbai", "tag": "MALL · INDIA", "lat": 19.0864, "lon": 72.9096},
+        {"name": "DLF Promenade Delhi", "tag": "MALL · INDIA", "lat": 28.5672, "lon": 77.1573},
+        {"name": "Forum Mall Bangalore", "tag": "MALL · INDIA", "lat": 12.9343, "lon": 77.6101},
+        {"name": "Oberoi Mall Mumbai", "tag": "MALL · INDIA", "lat": 19.1540, "lon": 72.8910},
+        {"name": "Maruti Arena Delhi Dealership", "tag": "AUTO DEALER · INDIA", "lat": 28.7041, "lon": 77.1025},
+        {"name": "Hero Showroom Gurgaon", "tag": "TWO-WHEELER DEALER · INDIA", "lat": 28.4595, "lon": 77.0266},
+        {"name": "Taj Mumbai Hotel Valet", "tag": "HOSPITALITY · INDIA", "lat": 18.9219, "lon": 72.8332},
+        # Global
+        {"name": "Tesco Watford HQ UK", "tag": "RETAIL HQ · UK", "lat": 51.6600, "lon": -0.4200},
+        {"name": "Carrefour HQ Paris France", "tag": "RETAIL HQ · FR", "lat": 48.8589, "lon": 2.1280},
+        {"name": "IKEA Almhult Sweden", "tag": "RETAIL ORIGIN · SE", "lat": 56.5500, "lon": 14.1400},
+        {"name": "Toyota Tokyo HQ Lot", "tag": "AUTO HQ · JP", "lat": 35.6585, "lon": 139.7454},
+        {"name": "Hyundai Ulsan HQ Korea", "tag": "AUTO ASSEMBLY · KR", "lat": 35.5384, "lon": 129.3114},
+        {"name": "Tokyo Disneyland Parking JP", "tag": "THEME PARK · JP", "lat": 35.6329, "lon": 139.8803},
+        {"name": "Dubai Mall Parking UAE", "tag": "MALL · UAE", "lat": 25.1972, "lon": 55.2797},
+        {"name": "ION Orchard Singapore", "tag": "MALL · SG", "lat": 1.3041, "lon": 103.8318},
+        {"name": "Westfield Sydney Mall AUS", "tag": "MALL · AUS", "lat": -33.8708, "lon": 151.2073},
+        {"name": "Galeries Lafayette Paris", "tag": "RETAIL · FR", "lat": 48.8738, "lon": 2.3317},
+    ],
+    "consumer-staples": [
+        # US
+        {"name": "Kroger Cincinnati HQ OH", "tag": "GROCERY HQ · US", "lat": 39.1031, "lon": -84.5120},
+        {"name": "Albertsons Boise HQ ID", "tag": "GROCERY HQ · US", "lat": 43.6150, "lon": -116.2023},
+        {"name": "Publix Lakeland HQ FL", "tag": "GROCERY HQ · US", "lat": 28.0395, "lon": -81.9498},
+        {"name": "McDonald's Chicago HQ IL", "tag": "QSR HQ · US", "lat": 41.8827, "lon": -87.6233},
+        {"name": "Starbucks Seattle HQ WA", "tag": "QSR HQ · US", "lat": 47.5480, "lon": -122.3210},
+        {"name": "PepsiCo Purchase NY", "tag": "BEVERAGE HQ · US", "lat": 41.0534, "lon": -73.7162},
+        {"name": "Coca-Cola Atlanta HQ GA", "tag": "BEVERAGE HQ · US", "lat": 33.7937, "lon": -84.3863},
+        {"name": "Whole Foods Austin HQ TX", "tag": "GROCERY HQ · US", "lat": 30.2672, "lon": -97.7431},
+        {"name": "Trader Joe's Monrovia HQ CA", "tag": "GROCERY HQ · US", "lat": 34.1478, "lon": -117.9946},
+        {"name": "Costco Seattle Stores WA", "tag": "WAREHOUSE RETAIL · US", "lat": 47.5301, "lon": -122.0326},
+        # India
+        {"name": "Future Retail Mumbai HQ", "tag": "GROCERY HQ · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Spencer's Kolkata HQ", "tag": "GROCERY HQ · INDIA", "lat": 22.5726, "lon": 88.3639},
+        {"name": "More Retail Mumbai", "tag": "GROCERY · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "McDonald's Bandra Mumbai", "tag": "QSR · INDIA", "lat": 19.0596, "lon": 72.8295},
+        {"name": "Domino's Noida HQ", "tag": "QSR HQ · INDIA", "lat": 28.5355, "lon": 77.3910},
+        {"name": "KFC Bangalore Forum Mall", "tag": "QSR · INDIA", "lat": 12.9343, "lon": 77.6101},
+        {"name": "Haldiram Nagpur Factory", "tag": "FOOD MFG · INDIA", "lat": 21.1458, "lon": 79.0882},
+        {"name": "Amul Anand Gujarat", "tag": "DAIRY MFG · INDIA", "lat": 22.5560, "lon": 72.9500},
+        {"name": "Parle Mumbai Factory", "tag": "BISCUIT MFG · INDIA", "lat": 19.1636, "lon": 72.9455},
+        {"name": "Britannia Bangalore HQ", "tag": "FOOD MFG HQ · INDIA", "lat": 12.9716, "lon": 77.5946},
+        # Global
+        {"name": "Nestle Vevey HQ Switzerland", "tag": "CPG HQ · CH", "lat": 46.4620, "lon": 6.8420},
+        {"name": "Unilever London HQ UK", "tag": "CPG HQ · UK", "lat": 51.4988, "lon": -0.1272},
+        {"name": "P&G Cincinnati Plants OH", "tag": "CPG MFG · US", "lat": 39.0968, "lon": -84.5120},
+        {"name": "KFC Guangzhou China", "tag": "QSR · CN", "lat": 23.1291, "lon": 113.2644},
+        {"name": "Starbucks Tokyo Stores JP", "tag": "QSR · JP", "lat": 35.6762, "lon": 139.6503},
+        {"name": "7-Eleven Tokyo HQ JP", "tag": "CONVENIENCE HQ · JP", "lat": 35.6762, "lon": 139.6503},
+        {"name": "Carrefour Euralille France", "tag": "GROCERY · FR", "lat": 50.6292, "lon": 3.0701},
+        {"name": "Woolworths Sydney AUS", "tag": "GROCERY · AUS", "lat": -33.8688, "lon": 151.2093},
+        {"name": "Lotte Mart Seoul Korea", "tag": "GROCERY · KR", "lat": 37.5665, "lon": 126.9780},
+        {"name": "Aeon Mall Japan", "tag": "RETAIL · JP", "lat": 35.6837, "lon": 139.8107},
+    ],
+    "health-care": [
+        # US
+        {"name": "Pfizer New York HQ", "tag": "PHARMA HQ · US", "lat": 40.7580, "lon": -73.9855},
+        {"name": "J&J New Brunswick NJ", "tag": "PHARMA HQ · US", "lat": 40.4870, "lon": -74.4457},
+        {"name": "Moderna Norwood MA", "tag": "BIOPHARMA · US", "lat": 42.1918, "lon": -71.1995},
+        {"name": "Mayo Clinic Rochester MN", "tag": "MEDICAL CENTER · US", "lat": 44.0224, "lon": -92.4663},
+        {"name": "Cleveland Clinic OH", "tag": "MEDICAL CENTER · US", "lat": 41.5021, "lon": -81.6209},
+        {"name": "Johns Hopkins Baltimore MD", "tag": "MEDICAL CENTER · US", "lat": 39.2974, "lon": -76.5928},
+        {"name": "UCLA Medical Center CA", "tag": "MEDICAL CENTER · US", "lat": 34.0659, "lon": -118.4448},
+        {"name": "CVS Woonsocket HQ RI", "tag": "PHARMA RETAIL HQ · US", "lat": 41.9979, "lon": -71.5148},
+        {"name": "Walgreens Deerfield HQ IL", "tag": "PHARMA RETAIL HQ · US", "lat": 42.1716, "lon": -87.8437},
+        {"name": "HCA Nashville HQ TN", "tag": "HOSPITAL HQ · US", "lat": 36.1627, "lon": -86.7816},
+        # India
+        {"name": "Apollo Chennai HQ Hospital", "tag": "HOSPITAL · INDIA", "lat": 13.0827, "lon": 80.2707},
+        {"name": "Fortis Gurgaon Hospital", "tag": "HOSPITAL · INDIA", "lat": 28.4595, "lon": 77.0266},
+        {"name": "Max Delhi Saket Hospital", "tag": "HOSPITAL · INDIA", "lat": 28.5244, "lon": 77.2090},
+        {"name": "Sun Pharma Halol Gujarat", "tag": "PHARMA MFG · INDIA", "lat": 22.5000, "lon": 73.4700},
+        {"name": "Dr. Reddy's Hyderabad", "tag": "PHARMA MFG · INDIA", "lat": 17.3850, "lon": 78.4867},
+        {"name": "Cipla Patalganga Maharashtra", "tag": "PHARMA MFG · INDIA", "lat": 19.0550, "lon": 73.2000},
+        {"name": "Lupin Pune", "tag": "PHARMA MFG · INDIA", "lat": 18.5204, "lon": 73.8567},
+        {"name": "Aurobindo Hyderabad", "tag": "PHARMA MFG · INDIA", "lat": 17.3850, "lon": 78.4867},
+        {"name": "AIIMS Delhi OPD", "tag": "MEDICAL CENTER · INDIA", "lat": 28.5672, "lon": 77.2100},
+        {"name": "PGIMER Chandigarh", "tag": "MEDICAL CENTER · INDIA", "lat": 30.7630, "lon": 76.7784},
+        # Global
+        {"name": "Novartis Basel HQ Switzerland", "tag": "PHARMA HQ · CH", "lat": 47.5570, "lon": 7.5886},
+        {"name": "Roche Basel Campus CH", "tag": "PHARMA HQ · CH", "lat": 47.5700, "lon": 7.5800},
+        {"name": "AstraZeneca Cambridge UK", "tag": "BIOPHARMA · UK", "lat": 52.2053, "lon": 0.1218},
+        {"name": "Sanofi Gentilly France", "tag": "PHARMA HQ · FR", "lat": 48.8144, "lon": 2.3397},
+        {"name": "Takeda Tokyo HQ JP", "tag": "PHARMA HQ · JP", "lat": 35.6762, "lon": 139.6503},
+        {"name": "Toronto General Hospital CA", "tag": "MEDICAL CENTER · CA", "lat": 43.6581, "lon": -79.3877},
+        {"name": "Singapore General Hospital", "tag": "MEDICAL CENTER · SG", "lat": 1.2793, "lon": 103.8353},
+        {"name": "Shanghai Ruijin Hospital CN", "tag": "MEDICAL CENTER · CN", "lat": 31.2165, "lon": 121.4737},
+        {"name": "Seoul Asan Medical Center KR", "tag": "MEDICAL CENTER · KR", "lat": 37.5270, "lon": 127.1060},
+        {"name": "Sydney Royal Prince Alfred AUS", "tag": "MEDICAL CENTER · AUS", "lat": -33.8883, "lon": 151.1803},
+    ],
+    "financials": [
+        # US
+        {"name": "JPMorgan Columbus Campus OH", "tag": "MEGABANK · US", "lat": 39.9612, "lon": -82.9988},
+        {"name": "Bank of America Charlotte HQ", "tag": "MEGABANK · US", "lat": 35.2271, "lon": -80.8431},
+        {"name": "Wells Fargo San Francisco", "tag": "MEGABANK · US", "lat": 37.7929, "lon": -122.3969},
+        {"name": "Citi HQ Long Island NY", "tag": "MEGABANK · US", "lat": 40.7252, "lon": -73.6350},
+        {"name": "Goldman Sachs Jersey City NJ", "tag": "INVESTMENT BANK · US", "lat": 40.7282, "lon": -74.0776},
+        {"name": "NYSE 11 Wall St NY", "tag": "STOCK EXCHANGE · US", "lat": 40.7069, "lon": -74.0089},
+        {"name": "CME Chicago HQ IL", "tag": "FUTURES EXCHANGE · US", "lat": 41.8827, "lon": -87.6344},
+        {"name": "Visa Foster City CA", "tag": "PAYMENTS · US", "lat": 37.5541, "lon": -122.2760},
+        {"name": "Mastercard Purchase NY", "tag": "PAYMENTS · US", "lat": 41.0534, "lon": -73.7162},
+        {"name": "Fidelity Boston Campus MA", "tag": "ASSET MGMT · US", "lat": 42.3584, "lon": -71.0598},
+        # India
+        {"name": "HDFC Mumbai HQ", "tag": "BANK · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "ICICI Mumbai Campus", "tag": "BANK · INDIA", "lat": 19.0178, "lon": 72.8478},
+        {"name": "SBI Mumbai Local Office", "tag": "BANK · INDIA", "lat": 18.9220, "lon": 72.8347},
+        {"name": "Axis Bank Ahmedabad", "tag": "BANK · INDIA", "lat": 23.0225, "lon": 72.5714},
+        {"name": "Kotak Mumbai HQ", "tag": "BANK · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "NSE Mumbai BKC", "tag": "STOCK EXCHANGE · INDIA", "lat": 19.0653, "lon": 72.8680},
+        {"name": "BSE Pherozeshah Mehta Rd", "tag": "STOCK EXCHANGE · INDIA", "lat": 18.9322, "lon": 72.8337},
+        {"name": "Zerodha Bangalore Office", "tag": "FINTECH · INDIA", "lat": 12.9716, "lon": 77.5946},
+        {"name": "Paytm Noida Campus", "tag": "FINTECH · INDIA", "lat": 28.5355, "lon": 77.3910},
+        {"name": "PhonePe Bangalore HQ", "tag": "FINTECH · INDIA", "lat": 12.9716, "lon": 77.5946},
+        # Global
+        {"name": "HSBC London Canary Wharf", "tag": "MEGABANK · UK", "lat": 51.5054, "lon": -0.0235},
+        {"name": "Deutsche Bank Frankfurt DE", "tag": "INVESTMENT BANK · DE", "lat": 50.1109, "lon": 8.6821},
+        {"name": "UBS Zurich HQ CH", "tag": "BANK · CH", "lat": 47.3769, "lon": 8.5417},
+        {"name": "Tokyo Stock Exchange JP", "tag": "STOCK EXCHANGE · JP", "lat": 35.6839, "lon": 139.7744},
+        {"name": "HKEX Exchange Square HK", "tag": "STOCK EXCHANGE · HK", "lat": 22.2847, "lon": 114.1574},
+        {"name": "Shanghai Stock Exchange CN", "tag": "STOCK EXCHANGE · CN", "lat": 31.2304, "lon": 121.4737},
+        {"name": "Singapore Exchange SGX", "tag": "STOCK EXCHANGE · SG", "lat": 1.2800, "lon": 103.8500},
+        {"name": "ASX Sydney Australia", "tag": "STOCK EXCHANGE · AUS", "lat": -33.8688, "lon": 151.2093},
+        {"name": "Euronext Paris FR", "tag": "STOCK EXCHANGE · FR", "lat": 48.8674, "lon": 2.3453},
+        {"name": "Nasdaq Stockholm SE", "tag": "STOCK EXCHANGE · SE", "lat": 59.3293, "lon": 18.0686},
+    ],
+    "information-technology": [
+        # US
+        {"name": "Apple Cupertino Campus CA", "tag": "TECH HQ · US", "lat": 37.3346, "lon": -122.0090},
+        {"name": "Google Mountain View CA", "tag": "TECH HQ · US", "lat": 37.4220, "lon": -122.0841},
+        {"name": "Microsoft Redmond WA", "tag": "TECH HQ · US", "lat": 47.6423, "lon": -122.1391},
+        {"name": "Amazon Seattle Campus WA", "tag": "TECH HQ · US", "lat": 47.6204, "lon": -122.3491},
+        {"name": "Meta Menlo Park CA", "tag": "TECH HQ · US", "lat": 37.4845, "lon": -122.1477},
+        {"name": "Nvidia Santa Clara CA", "tag": "GPU DESIGN · US", "lat": 37.3688, "lon": -121.9689},
+        {"name": "Intel Hillsboro OR", "tag": "CHIP FAB · US", "lat": 45.5231, "lon": -122.9000},
+        {"name": "TSMC Arizona Fab AZ", "tag": "CHIP FAB · US", "lat": 33.4255, "lon": -112.0040},
+        {"name": "Equinix Ashburn DC VA", "tag": "DATA CENTER · US", "lat": 39.0437, "lon": -77.4875},
+        {"name": "Digital Realty Chicago IL", "tag": "DATA CENTER · US", "lat": 41.8827, "lon": -87.6233},
+        # India
+        {"name": "Infosys Bangalore EC2 Campus", "tag": "IT SERVICES · INDIA", "lat": 12.8344, "lon": 77.6637},
+        {"name": "TCS Hyderabad", "tag": "IT SERVICES · INDIA", "lat": 17.4399, "lon": 78.3489},
+        {"name": "Wipro Bangalore Campus", "tag": "IT SERVICES · INDIA", "lat": 12.9141, "lon": 77.6506},
+        {"name": "HCL Noida", "tag": "IT SERVICES · INDIA", "lat": 28.5355, "lon": 77.3910},
+        {"name": "Tech Mahindra Pune", "tag": "IT SERVICES · INDIA", "lat": 18.5204, "lon": 73.8567},
+        {"name": "CtrlS Hyderabad Data Center", "tag": "DATA CENTER · INDIA", "lat": 17.3850, "lon": 78.4867},
+        {"name": "NTT Mumbai DC", "tag": "DATA CENTER · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Sify Chennai DC", "tag": "DATA CENTER · INDIA", "lat": 13.0827, "lon": 80.2707},
+        {"name": "AWS Mumbai Region DC", "tag": "CLOUD DC · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Microsoft Hyderabad Campus", "tag": "TECH HQ · INDIA", "lat": 17.4850, "lon": 78.3700},
+        # Global
+        {"name": "Samsung Suwon Korea", "tag": "ELECTRONICS MFG · KR", "lat": 37.2636, "lon": 127.0286},
+        {"name": "TSMC Hsinchu Taiwan", "tag": "CHIP FAB · TW", "lat": 24.7891, "lon": 120.9965},
+        {"name": "Foxconn Shenzhen CN", "tag": "CONTRACT MFG · CN", "lat": 22.5450, "lon": 114.0543},
+        {"name": "Tencent Shenzhen Campus CN", "tag": "TECH HQ · CN", "lat": 22.5400, "lon": 113.9340},
+        {"name": "Alibaba Hangzhou CN", "tag": "TECH HQ · CN", "lat": 30.2741, "lon": 120.1551},
+        {"name": "Google Dublin DC Ireland", "tag": "CLOUD DC · IE", "lat": 53.3498, "lon": -6.2603},
+        {"name": "Microsoft Dublin DC Ireland", "tag": "CLOUD DC · IE", "lat": 53.3498, "lon": -6.2603},
+        {"name": "Equinix Singapore", "tag": "DATA CENTER · SG", "lat": 1.3521, "lon": 103.8198},
+        {"name": "Digital Realty Tokyo JP", "tag": "DATA CENTER · JP", "lat": 35.6762, "lon": 139.6503},
+        {"name": "Yandex Moscow Campus RU", "tag": "TECH HQ · RU", "lat": 55.7335, "lon": 37.5873},
+    ],
+    "communication-services": [
+        # US
+        {"name": "Verizon NYC HQ", "tag": "TELECOM HQ · US", "lat": 40.7580, "lon": -74.0027},
+        {"name": "AT&T Dallas Campus TX", "tag": "TELECOM HQ · US", "lat": 32.7813, "lon": -96.7974},
+        {"name": "T-Mobile Bellevue WA", "tag": "TELECOM HQ · US", "lat": 47.6152, "lon": -122.1944},
+        {"name": "Comcast Philly HQ PA", "tag": "CABLE/MEDIA HQ · US", "lat": 39.9526, "lon": -75.1652},
+        {"name": "Disney Burbank Lot CA", "tag": "MEDIA/CONTENT · US", "lat": 34.1575, "lon": -118.3267},
+        {"name": "Netflix Los Gatos CA", "tag": "STREAMING HQ · US", "lat": 37.2358, "lon": -121.9624},
+        {"name": "Warner Bros Burbank CA", "tag": "MEDIA/CONTENT · US", "lat": 34.1548, "lon": -118.3373},
+        {"name": "Alphabet NYC Chelsea", "tag": "TECH HQ · US", "lat": 40.7417, "lon": -74.0021},
+        {"name": "Meta NYC Offices", "tag": "SOCIAL MEDIA · US", "lat": 40.7374, "lon": -73.9931},
+        {"name": "Twitter SF HQ CA", "tag": "SOCIAL MEDIA · US", "lat": 37.7773, "lon": -122.4176},
+        # India
+        {"name": "Bharti Airtel Gurgaon HQ", "tag": "TELECOM HQ · INDIA", "lat": 28.4595, "lon": 77.0266},
+        {"name": "Reliance Jio Navi Mumbai", "tag": "TELECOM HQ · INDIA", "lat": 19.0330, "lon": 73.0297},
+        {"name": "Vodafone Idea Mumbai", "tag": "TELECOM · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Tata Comm Mumbai Campus", "tag": "TELECOM · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Zee Mumbai HQ", "tag": "MEDIA · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Sun TV Chennai", "tag": "MEDIA · INDIA", "lat": 13.0827, "lon": 80.2707},
+        {"name": "Network18 Noida", "tag": "MEDIA · INDIA", "lat": 28.5355, "lon": 77.3910},
+        {"name": "Sony Pictures Mumbai", "tag": "MEDIA · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Star India Mumbai", "tag": "MEDIA · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Viacom18 Mumbai", "tag": "MEDIA · INDIA", "lat": 19.0760, "lon": 72.8777},
+        # Global
+        {"name": "China Mobile Beijing CN", "tag": "TELECOM HQ · CN", "lat": 39.9042, "lon": 116.4074},
+        {"name": "SoftBank Tokyo JP", "tag": "TELECOM HQ · JP", "lat": 35.6762, "lon": 139.6503},
+        {"name": "NTT Docomo Tokyo JP", "tag": "TELECOM · JP", "lat": 35.6762, "lon": 139.6503},
+        {"name": "BBC London HQ UK", "tag": "MEDIA HQ · UK", "lat": 51.5183, "lon": -0.2241},
+        {"name": "Sky UK Osterley", "tag": "MEDIA HQ · UK", "lat": 51.4964, "lon": -0.3495},
+        {"name": "Vivendi Paris FR", "tag": "MEDIA HQ · FR", "lat": 48.8674, "lon": 2.3453},
+        {"name": "Tencent Guangzhou CN", "tag": "TECH/MEDIA · CN", "lat": 23.1291, "lon": 113.2644},
+        {"name": "Baidu Beijing CN", "tag": "TECH/MEDIA · CN", "lat": 39.9920, "lon": 116.3040},
+        {"name": "Sina Weibo Beijing CN", "tag": "SOCIAL MEDIA · CN", "lat": 39.9042, "lon": 116.4074},
+        {"name": "Kakao Seoul KR", "tag": "SOCIAL MEDIA · KR", "lat": 37.3945, "lon": 127.1117},
+    ],
+    "utilities": [
+        # US
+        {"name": "Palo Verde Nuclear AZ", "tag": "NUCLEAR POWER · US", "lat": 33.3889, "lon": -112.8625},
+        {"name": "Grand Coulee Dam WA", "tag": "HYDRO POWER · US", "lat": 47.9650, "lon": -118.9820},
+        {"name": "Hoover Dam NV", "tag": "HYDRO POWER · US", "lat": 36.0161, "lon": -114.7377},
+        {"name": "TVA Sequoyah Nuclear TN", "tag": "NUCLEAR POWER · US", "lat": 35.2246, "lon": -85.0945},
+        {"name": "Entergy Waterford LA", "tag": "NUCLEAR POWER · US", "lat": 29.9961, "lon": -90.4725},
+        {"name": "NextEra Juno Beach FL", "tag": "SOLAR/WIND HQ · US", "lat": 26.8690, "lon": -80.0540},
+        {"name": "Duke Raleigh HQ NC", "tag": "UTILITY HQ · US", "lat": 35.7796, "lon": -78.6382},
+        {"name": "Southern Co Atlanta GA", "tag": "UTILITY HQ · US", "lat": 33.7490, "lon": -84.3880},
+        {"name": "Dominion Richmond VA", "tag": "UTILITY HQ · US", "lat": 37.5407, "lon": -77.4360},
+        {"name": "Exelon Chicago IL", "tag": "UTILITY HQ · US", "lat": 41.8827, "lon": -87.6233},
+        # India
+        {"name": "Mundra Ultra Mega Power Gujarat", "tag": "THERMAL POWER · INDIA", "lat": 22.8380, "lon": 69.6980},
+        {"name": "Sipat Thermal Chhattisgarh", "tag": "THERMAL POWER · INDIA", "lat": 22.1660, "lon": 82.2640},
+        {"name": "Kudankulam Nuclear TN", "tag": "NUCLEAR POWER · INDIA", "lat": 8.1717, "lon": 77.7138},
+        {"name": "NTPC Vindhyachal UP", "tag": "THERMAL POWER · INDIA", "lat": 24.1190, "lon": 82.6680},
+        {"name": "Rihand Thermal UP", "tag": "THERMAL POWER · INDIA", "lat": 24.0220, "lon": 82.7430},
+        {"name": "Talcher Thermal Odisha", "tag": "THERMAL POWER · INDIA", "lat": 20.9500, "lon": 85.2300},
+        {"name": "Ramagundam Thermal Telangana", "tag": "THERMAL POWER · INDIA", "lat": 18.7700, "lon": 79.4740},
+        {"name": "Dadri Gas UP", "tag": "GAS POWER · INDIA", "lat": 28.5500, "lon": 77.5900},
+        {"name": "Simhadri Thermal AP", "tag": "THERMAL POWER · INDIA", "lat": 17.5900, "lon": 83.0700},
+        {"name": "Korba Thermal Chhattisgarh", "tag": "THERMAL POWER · INDIA", "lat": 22.3580, "lon": 82.6850},
+        # Global
+        {"name": "Three Gorges Dam China", "tag": "HYDRO POWER · CN", "lat": 30.8234, "lon": 111.0027},
+        {"name": "Kashiwazaki Nuclear Japan", "tag": "NUCLEAR POWER · JP", "lat": 37.4247, "lon": 138.5974},
+        {"name": "Sizewell Nuclear UK", "tag": "NUCLEAR POWER · UK", "lat": 52.2139, "lon": 1.6194},
+        {"name": "EDF Gravelines France", "tag": "NUCLEAR POWER · FR", "lat": 51.0070, "lon": 2.1290},
+        {"name": "RWE Neurath Coal Germany", "tag": "COAL POWER · DE", "lat": 51.0000, "lon": 6.6540},
+        {"name": "Enel Civitavecchia Italy", "tag": "POWER PLANT · IT", "lat": 42.1025, "lon": 11.7670},
+        {"name": "Iberdrola Nucier Spain", "tag": "NUCLEAR POWER · ES", "lat": 40.6830, "lon": -3.7492},
+        {"name": "KEPCO Ulchin Nuclear Korea", "tag": "NUCLEAR POWER · KR", "lat": 37.0980, "lon": 129.3800},
+        {"name": "Tokyo Electric Kashiwazaki JP", "tag": "NUCLEAR POWER · JP", "lat": 37.4247, "lon": 138.5974},
+        {"name": "Hydro-Quebec James Bay CA", "tag": "HYDRO POWER · CA", "lat": 53.8300, "lon": -77.4700},
+    ],
+    "real-estate": [
+        # US
+        {"name": "Mall of America Bloomington MN", "tag": "RETAIL REIT · US", "lat": 44.8549, "lon": -93.2422},
+        {"name": "King of Prussia Mall PA", "tag": "RETAIL REIT · US", "lat": 40.0854, "lon": -75.3824},
+        {"name": "Sawgrass Mills FL", "tag": "RETAIL REIT · US", "lat": 26.1434, "lon": -80.3302},
+        {"name": "Amazon SEA1 Seattle Warehouse", "tag": "INDUSTRIAL REIT · US", "lat": 47.5480, "lon": -122.3210},
+        {"name": "Prologis DC1 Chicago IL", "tag": "INDUSTRIAL REIT · US", "lat": 41.5250, "lon": -88.0817},
+        {"name": "Simon Property HQ IN", "tag": "REIT HQ · US", "lat": 39.7684, "lon": -86.1581},
+        {"name": "Kimco Realty Jericho NY", "tag": "RETAIL REIT · US", "lat": 40.7910, "lon": -73.5440},
+        {"name": "Equity Residential Chicago IL", "tag": "RESIDENTIAL REIT · US", "lat": 41.8827, "lon": -87.6233},
+        {"name": "AvalonBay Arlington VA", "tag": "RESIDENTIAL REIT · US", "lat": 38.8816, "lon": -77.0910},
+        {"name": "UDR Aurora CO", "tag": "RESIDENTIAL REIT · US", "lat": 39.7294, "lon": -104.8319},
+        # India
+        {"name": "Lulu Mall Kochi Kerala", "tag": "MALL · INDIA", "lat": 9.9981, "lon": 76.3018},
+        {"name": "VR Bengaluru Mall", "tag": "MALL · INDIA", "lat": 13.0100, "lon": 77.5500},
+        {"name": "Express Avenue Chennai", "tag": "MALL · INDIA", "lat": 13.0569, "lon": 80.2590},
+        {"name": "Inorbit Hyderabad Mall", "tag": "MALL · INDIA", "lat": 17.4570, "lon": 78.3640},
+        {"name": "Mantri Square Mall Bangalore", "tag": "MALL · INDIA", "lat": 13.0004, "lon": 77.5703},
+        {"name": "Ambience Mall Gurgaon", "tag": "MALL · INDIA", "lat": 28.5011, "lon": 77.0957},
+        {"name": "Elante Mall Chandigarh", "tag": "MALL · INDIA", "lat": 30.7333, "lon": 76.7794},
+        {"name": "South City Mall Kolkata", "tag": "MALL · INDIA", "lat": 22.4974, "lon": 88.3570},
+        {"name": "Reliance Retail Warehouses Mumbai", "tag": "LOGISTICS · INDIA", "lat": 19.0760, "lon": 72.8777},
+        {"name": "Flipkart Warehouses Bhiwandi", "tag": "LOGISTICS · INDIA", "lat": 19.2813, "lon": 73.0547},
+        # Global
+        {"name": "Dubai Mall UAE", "tag": "MALL · UAE", "lat": 25.1972, "lon": 55.2797},
+        {"name": "Westfield London UK", "tag": "MALL · UK", "lat": 51.5074, "lon": -0.2228},
+        {"name": "ION Orchard Singapore", "tag": "MALL · SG", "lat": 1.3041, "lon": 103.8318},
+        {"name": "Causeway Bay Sogo HK", "tag": "MALL · HK", "lat": 22.2799, "lon": 114.1860},
+        {"name": "Lotte World Mall Seoul KR", "tag": "MALL · KR", "lat": 37.5113, "lon": 127.0982},
+        {"name": "SM Megamall Manila PH", "tag": "MALL · PH", "lat": 14.5832, "lon": 121.0560},
+        {"name": "Plaza Indonesia Jakarta", "tag": "MALL · ID", "lat": -6.1944, "lon": 106.8229},
+        {"name": "Paragon Beijing CN", "tag": "MALL · CN", "lat": 39.9042, "lon": 116.4074},
+        {"name": "Times Square Sydney AUS", "tag": "MALL · AUS", "lat": -33.8688, "lon": 151.2093},
+        {"name": "Galeries Lafayette Paris FR", "tag": "RETAIL · FR", "lat": 48.8738, "lon": 2.3317},
+    ],
+}
+
  
  
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1338,6 +1731,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
     :root{{
@@ -1630,6 +2025,45 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .site-footer-sub{{font-size:.6rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#888;margin-bottom:12px}}
     .site-footer-name{{font-size:clamp(3rem,9vw,6rem);font-weight:800;letter-spacing:-.02em;text-transform:uppercase;color:#000;line-height:1}}
  
+    /* ── SATELLITE IMAGERY SECTION ── */
+    #sector-satellite{{margin-top:24px;display:none}}
+    .sat-section-divider{{display:flex;align-items:center;gap:14px;margin:24px 0 18px}}
+    .sat-section-divider-line{{flex:1;height:1px;background:#e5e5e5}}
+    .sat-label{{font-size:.6rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
+                color:#888;white-space:nowrap;display:flex;align-items:center;gap:8px}}
+    .sat-label .sat-dot{{width:5px;height:5px;border-radius:50%;background:#000}}
+    .sat-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}}
+    .sat-card{{background:#fff;border:1px solid #000;border-radius:4px;overflow:hidden;
+               transition:transform .18s,box-shadow .18s;animation:card-in .32s ease both}}
+    .sat-card:hover{{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.12)}}
+    .sat-map-wrap{{width:100%;height:180px;position:relative;background:#f0f0f0;overflow:hidden}}
+    .sat-map-leaf{{width:100%;height:100%}}
+    .sat-layer-btns{{position:absolute;top:6px;right:6px;z-index:500;display:flex;flex-direction:column;gap:3px}}
+    .sat-layer-btn{{background:rgba(255,255,255,.92);border:1px solid #000;color:#333;
+                    font-family:'DM Mono',monospace;font-size:.52rem;letter-spacing:.06em;
+                    padding:3px 7px;cursor:pointer;border-radius:3px;transition:all .15s;white-space:nowrap}}
+    .sat-layer-btn.active,.sat-layer-btn:hover{{background:#000;color:#fff;border-color:#000}}
+    .sat-map-crosshair{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+                         width:18px;height:18px;pointer-events:none;z-index:499}}
+    .sat-map-crosshair::before,.sat-map-crosshair::after{{content:'';position:absolute;background:rgba(0,0,0,.6)}}
+    .sat-map-crosshair::before{{width:1px;height:100%;left:50%;top:0}}
+    .sat-map-crosshair::after{{width:100%;height:1px;top:50%;left:0}}
+    .sat-body{{padding:10px 12px 12px}}
+    .sat-name{{font-size:.82rem;font-weight:600;line-height:1.4;color:#000;margin-bottom:4px}}
+    .sat-tag{{font-family:'DM Mono',monospace;font-size:.55rem;color:#333;background:#f0f0f0;
+               border:1px solid #000;padding:.12rem .45rem;border-radius:3px;display:inline-block;margin-bottom:6px}}
+    .sat-coords{{font-family:'DM Mono',monospace;font-size:.57rem;color:#888;margin-bottom:6px}}
+    .sat-sources{{display:flex;gap:4px;flex-wrap:wrap}}
+    .sat-src-badge{{font-family:'DM Mono',monospace;font-size:.54rem;letter-spacing:.05em;
+                    padding:2px 6px;border-radius:3px;border:1px solid #000;color:#333;background:#f8f7f4}}
+    .sat-loading-state{{display:flex;flex-direction:column;align-items:center;justify-content:center;
+                         padding:32px 20px;gap:10px;color:#888}}
+    .sat-spinner{{width:24px;height:24px;border-radius:50%;border:2px solid #e5e5e5;
+                  border-top-color:#000;animation:spin .75s linear infinite}}
+    .sat-count-badge{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.1em;
+                       text-transform:uppercase;color:#333;background:#f0f0f0;
+                       border:1px solid #000;padding:.18rem .6rem;border-radius:4px}}
+
     html,body{{max-width:100%;overflow-x:hidden}}
     *{{min-width:0}}
     @media(max-width:860px){{
@@ -1805,6 +2239,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   </div>
  
   <div id="sector-output"></div>
+  <div id="sector-satellite"></div>
 </div>
  
 <!-- ══════════════════════════════════════════
@@ -2103,6 +2538,124 @@ document.getElementById('ntabs').addEventListener('click',function(e){{
  
 loadCh('{fh}');
 setInterval(refreshRateLimits,8000);
+
+// ── Satellite Imagery ─────────────────────────────────────────────────────────
+var satMaps = {{}};
+
+function makeSatLayers() {{
+  return {{
+    esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:19}}),
+    clarity: L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:21}}),
+    osm: L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19}}),
+    toner: L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18}}),
+  }};
+}}
+
+function initSatMap(id, lat, lon) {{
+  if (satMaps[id]) return;
+  const el = document.getElementById(id);
+  if (!el) return;
+  const map = L.map(el, {{
+    center:[lat,lon], zoom:16, zoomControl:true, attributionControl:false,
+    dragging:true, scrollWheelZoom:false, doubleClickZoom:true,
+  }});
+  const layers = makeSatLayers();
+  layers.esri.addTo(map);
+  satMaps[id] = {{map, layers, current:'esri'}};
+  setTimeout(()=>map.invalidateSize(),80);
+}}
+
+function switchSatLayer(mapId, key) {{
+  const reg = satMaps[mapId];
+  if (!reg || reg.current===key) return;
+  reg.map.removeLayer(reg.layers[reg.current]);
+  reg.layers[key].addTo(reg.map);
+  reg.current = key;
+  document.querySelectorAll(`[data-satmapid="${{mapId}}"] .sat-layer-btn`).forEach(b=>{{
+    b.classList.toggle('active', b.dataset.layer===key);
+  }});
+}}
+
+async function loadSatelliteTargets(sectorId) {{
+  const satDiv = document.getElementById('sector-satellite');
+  satDiv.style.display = 'block';
+  satDiv.innerHTML = `
+    <div class="sat-section-divider">
+      <div class="sat-section-divider-line"></div>
+      <div class="sat-label"><span class="sat-dot"></span>Satellite Imagery</div>
+      <div class="sat-section-divider-line"></div>
+    </div>
+    <div class="sat-loading-state"><div class="sat-spinner"></div><span style="font-size:.78rem;color:#555">Loading satellite targets&hellip;</span></div>`;
+
+  // destroy old maps
+  Object.keys(satMaps).forEach(k=>{{ try{{satMaps[k].map.remove();}}catch(e){{}} delete satMaps[k]; }});
+
+  try {{
+    const resp = await fetch('/api/satellite?sector='+encodeURIComponent(sectorId));
+    if (!resp.ok) throw new Error('HTTP '+resp.status);
+    const data = await resp.json();
+    renderSatTargets(data.targets, data.sector);
+  }} catch(e) {{
+    satDiv.innerHTML += `<div style="color:#c00;font-size:.8rem;padding:12px 0">Satellite data unavailable: ${{esc(e.message)}}</div>`;
+  }}
+}}
+
+function renderSatTargets(targets, sectorId) {{
+  const satDiv = document.getElementById('sector-satellite');
+  const cards = targets.map((t,i) => {{
+    const mid = `sat-${{i}}`;
+    const delay = Math.min(i*0.025, 0.6);
+    return `
+      <div class="sat-card" data-satmapid="${{mid}}" style="animation-delay:${{delay}}s">
+        <div class="sat-map-wrap">
+          <div id="${{mid}}" class="sat-map-leaf"></div>
+          <div class="sat-map-crosshair"></div>
+          <div class="sat-layer-btns">
+            <button class="sat-layer-btn active" data-layer="esri" onclick="switchSatLayer('${{mid}}','esri')">&#128752; SAT</button>
+            <button class="sat-layer-btn" data-layer="clarity" onclick="switchSatLayer('${{mid}}','clarity')">&#10024; HD</button>
+            <button class="sat-layer-btn" data-layer="osm" onclick="switchSatLayer('${{mid}}','osm')">&#128506; MAP</button>
+            <button class="sat-layer-btn" data-layer="toner" onclick="switchSatLayer('${{mid}}','toner')">&#9632; B&amp;W</button>
+          </div>
+        </div>
+        <div class="sat-body">
+          <div class="sat-name">${{esc(t.name)}}</div>
+          ${{t.tag ? `<div class="sat-tag">${{esc(t.tag)}}</div>` : ''}}
+          <div class="sat-coords">LAT ${{t.lat.toFixed(4)}} &nbsp;/&nbsp; LON ${{t.lon.toFixed(4)}}</div>
+          <div class="sat-sources">
+            <span class="sat-src-badge">ESRI WORLD</span>
+            <span class="sat-src-badge">SENTINEL-2</span>
+            <span class="sat-src-badge">OSM</span>
+          </div>
+        </div>
+      </div>`;
+  }}).join('');
+
+  satDiv.innerHTML = `
+    <div class="sat-section-divider">
+      <div class="sat-section-divider-line"></div>
+      <div class="sat-label"><span class="sat-dot"></span>Satellite Imagery &mdash; ${{targets.length}} Targets <span class="sat-count-badge" style="margin-left:8px">${{targets.length}} targets</span></div>
+      <div class="sat-section-divider-line"></div>
+    </div>
+    <div class="sat-grid">${{cards}}</div>`;
+
+  requestAnimationFrame(()=>{{
+    targets.forEach((t,i)=>initSatMap(`sat-${{i}}`, t.lat, t.lon));
+  }});
+}}
+
+// Hook satellite loading into the existing fetchSectorNews flow
+const _origFetchSectorNews = fetchSectorNews;
+async function fetchSectorNews() {{
+  await _origFetchSectorNews();
+  const sector = document.getElementById('sector-sel').value;
+  if (sector) loadSatelliteTargets(sector);
+}}
+// Also hook into tile clicks
+const _origSelectAndFetch = selectAndFetch;
+function selectAndFetch(id) {{
+  document.getElementById('sector-sel').value = id;
+  fetchSectorNews();
+}}
 </script>
 </body>
 </html>"""
@@ -2274,6 +2827,18 @@ def api_trends():
     return jsonify({"trends": data, "query": query})
  
  
+@app.route("/api/satellite")
+def api_satellite():
+    """Return 30 satellite targets for a given sector id."""
+    sector_id = request.args.get("sector", "").strip()
+    if sector_id not in SECTOR_SATELLITE_TARGETS:
+        return jsonify({"error": "Invalid sector", "targets": []}), 400
+    return jsonify({
+        "sector": sector_id,
+        "targets": SECTOR_SATELLITE_TARGETS[sector_id],
+    })
+
+
 @app.route("/debug")
 def debug():
     out, color = [], "#7fff7f"
