@@ -2065,7 +2065,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                        border:1px solid #000;padding:.18rem .6rem;border-radius:4px}}
 
     html,body{{max-width:100%;overflow-x:hidden}}
-    *{{min-width:0}}
+    *{{min-width:0;box-sizing:border-box}}
+
+    /* ── TABLET ── */
     @media(max-width:860px){{
       form{{grid-template-columns:1fr 1fr;gap:12px}}
       .fg:first-child{{grid-column:span 2}}
@@ -2073,39 +2075,177 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-models-grid{{grid-template-columns:repeat(2,1fr)}}
       .ai-pts{{grid-template-columns:repeat(2,1fr)}}
       .sector-grid{{grid-template-columns:repeat(3,1fr)}}
+      .sat-grid{{grid-template-columns:repeat(2,1fr)}}
     }}
+
+    /* ── MOBILE ── */
     @media(max-width:600px){{
-      header{{padding:0 12px;height:50px}}
-      .logo-word{{font-size:.7rem;letter-spacing:.16em}}
-      .nav-link{{font-size:.58rem;padding:4px 8px;letter-spacing:.06em}}
-      main{{padding:14px 12px 48px;width:100%}}
-      .disclaimer-wrap{{padding:0 12px 24px}}
-      .panel,.sector-panel,.ai-panel,.news-panel{{padding:16px 14px}}
-      form{{grid-template-columns:1fr;gap:10px}}
+      /* Global overflow control */
+      html,body{{overflow-x:hidden;width:100%}}
+
+      /* Header */
+      header{{padding:0 10px;height:48px;gap:6px}}
+      .logo{{gap:7px}}
+      .logo-star img{{height:34px!important}}
+      .logo-word{{font-size:.65rem;letter-spacing:.12em}}
+      .logo-tagline{{font-size:.42rem;letter-spacing:.1em}}
+      .header-nav{{gap:3px;flex-shrink:0}}
+      .nav-link{{font-size:.52rem;padding:3px 6px;letter-spacing:.04em}}
+
+      /* Ticker strip */
+      .ticker-strip{{overflow:hidden;width:100%;height:28px}}
+      .ticker-badge{{font-size:.48rem;padding:0 .6rem;letter-spacing:.12em}}
+      .ticker-track{{padding-left:70px}}
+      .t-item{{font-size:.52rem;padding:0 1rem}}
+
+      /* Main content */
+      main{{padding:12px 10px 40px;width:100%;max-width:100%}}
+      .disclaimer-wrap{{padding:0 10px 20px}}
+      .panel,.sector-panel,.ai-panel,.news-panel{{padding:14px 12px}}
+
+      /* Section dividers */
+      .section-divider{{margin:20px 0 12px;gap:8px}}
+      .section-label{{font-size:.55rem;letter-spacing:.16em}}
+
+      /* Form */
+      form{{grid-template-columns:1fr;gap:8px}}
       .fg:first-child{{grid-column:span 1}}
-      .btn{{grid-column:span 1;width:100%}}
-      .chart-card{{padding:12px 8px 8px;min-height:260px}}
-      .chips{{gap:6px;margin-top:16px;padding-top:14px}}
-      .chip{{font-size:.68rem;padding:4px 12px}}
-      .ind-row{{gap:6px}}
-      .ind-chip{{font-size:.65rem;padding:3px 10px}}
-      .ai-models-grid{{grid-template-columns:1fr}}
+      .btn{{grid-column:span 1;width:100%;padding:10px 16px}}
+      .fg label{{font-size:.65rem;margin-bottom:6px}}
+      input,select{{padding:9px 12px;font-size:.82rem}}
+
+      /* Chips & indicators */
+      .chips{{gap:5px;margin-top:14px;padding-top:12px}}
+      .chip{{font-size:.64rem;padding:4px 10px}}
+      .ind-row{{gap:5px;margin-top:12px;padding-top:12px}}
+      .ind-label{{font-size:.56rem;margin-right:2px}}
+      .ind-chip{{font-size:.6rem;padding:3px 8px}}
+      .panel-label{{font-size:.56rem;margin-bottom:14px}}
+
+      /* Chart card */
+      .chart-card{{padding:8px 4px 6px;min-height:220px}}
+      .chart-card>div{{width:100%!important}}
+      .error-box{{font-size:.78rem;padding:12px 14px}}
+
+      /* Alt data badges */
+      .alt-data-row{{gap:4px;margin-bottom:14px;padding-bottom:14px;flex-wrap:wrap}}
+      .alt-data-badge{{font-size:.52rem;padding:2px 7px;letter-spacing:.06em}}
+
+      /* AI model cards */
+      .ai-models-grid{{grid-template-columns:1fr;gap:8px;margin-bottom:14px}}
+      .ai-model-card{{padding:12px}}
+      .ai-mname{{font-size:.74rem}}
+      .ai-mdesc{{font-size:.62rem;margin-bottom:8px}}
+      .ai-rl-lbl{{font-size:.52rem}}
+      .ai-rl-cnt{{font-size:.52rem}}
+
+      /* AI action row */
+      .ai-action-row{{gap:8px;margin-bottom:14px}}
+      .btn-ai{{padding:9px 18px;font-size:.72rem}}
+      .ai-sel-label{{font-size:.65rem}}
+      .ai-timer{{font-size:.6rem}}
+
+      /* AI result panel */
+      .ai-verdict-bar{{padding:12px 14px;gap:8px;flex-direction:column;align-items:flex-start}}
+      .ai-badge{{font-size:.82rem;padding:6px 16px}}
+      .ai-summary{{font-size:.78rem}}
+      .ai-meta-row{{gap:8px}}
+      .ai-mi{{font-size:.6rem}}
+      .ai-model-tag{{font-size:.54rem}}
       .ai-pts{{grid-template-columns:repeat(2,1fr)}}
-      .ai-verdict-bar{{padding:14px 16px;gap:8px}}
-      .ai-sec{{padding:14px 16px}}
-      .sector-grid{{grid-template-columns:repeat(2,1fr)}}
-      .sector-selector-row{{flex-direction:column}}
-      .btn-sector{{padding:.75rem;width:100%}}
-      .news-grid-sec{{grid-template-columns:1fr}}
-      .news-tabs{{gap:6px}}
-      .news-tab{{padding:5px 12px;font-size:.68rem}}
-      .ticker-strip{{overflow:hidden;width:100%}}
-      .ticker-track{{padding-left:80px}}
-      .site-footer{{padding:32px 16px 56px}}
-      .site-footer-name{{font-size:clamp(2.4rem,14vw,5rem)}}
-      .section-divider{{margin:24px 0 14px}}
-      .sector-res-header{{flex-direction:column;align-items:flex-start;gap:8px}}
-      .alt-data-row{{gap:5px}}
+      .ai-pt{{padding:10px 12px}}
+      .ai-pt-lbl{{font-size:.52rem}}
+      .ai-pt-val{{font-size:.82rem}}
+      .ai-sec{{padding:12px 14px}}
+      .ai-sec-hdr{{font-size:.54rem;margin-bottom:8px}}
+      .ai-sec-body{{font-size:.76rem;line-height:1.7}}
+      .ai-data-tags{{padding:10px 14px;gap:4px}}
+      .ai-data-tag{{font-size:.5rem;padding:2px 6px}}
+      .ai-loading{{padding:36px 16px;gap:10px}}
+      .ai-load-txt{{font-size:.72rem}}
+      .ai-load-sub{{font-size:.62rem;max-width:280px}}
+
+      /* Sector panel */
+      .sector-selector-row{{flex-direction:column;gap:8px}}
+      .sel-prefix{{font-size:.52rem;padding:0 .7rem}}
+      .sector-select{{font-size:.8rem;padding:.65rem 2rem .65rem .8rem}}
+      .btn-sector{{padding:.65rem;width:100%;font-size:.7rem}}
+      .sector-grid{{grid-template-columns:repeat(2,1fr);gap:6px}}
+      .s-tile{{padding:10px 10px}}
+      .s-tile-key{{font-size:.54rem;padding:.1rem .4rem}}
+      .s-tile-name{{font-size:.72rem}}
+      .s-tile-sub{{font-size:.58rem}}
+
+      /* Sector news output */
+      .sector-res-header{{flex-direction:column;align-items:flex-start;gap:6px;padding-bottom:10px;margin-bottom:12px}}
+      .sector-res-title{{font-size:.9rem}}
+      .res-count-badge{{font-size:.54rem}}
+      .res-time-badge{{font-size:.52rem}}
+      .filter-row{{gap:4px;margin-bottom:12px}}
+      .filter-label{{font-size:.52rem}}
+      .pill{{font-size:.62rem;padding:.22rem .6rem}}
+      .news-grid-sec{{grid-template-columns:1fr;gap:8px}}
+      .news-card{{padding:12px}}
+      .news-card-src{{font-size:.5rem}}
+      .news-card-num{{font-size:.54rem}}
+      .news-card-title{{font-size:.78rem}}
+      .news-card-date{{font-size:.52rem}}
+      .news-card-read{{font-size:.56rem;padding:.2rem .5rem}}
+
+      /* Sector state */
+      .sector-state{{padding:28px 14px;gap:8px}}
+      .sector-state-title{{font-size:.85rem}}
+      .sector-state-sub{{font-size:.72rem}}
+
+      /* Live news */
+      .news-tabs{{gap:5px;flex-wrap:wrap}}
+      .news-tab{{padding:4px 10px;font-size:.62rem}}
+      .news-tag{{font-size:.48rem;padding:1px 4px}}
+      .news-iframe-wrap{{border-width:2px}}
+      .nsb{{font-size:.56rem;padding:2px 8px}}
+
+      /* Satellite section */
+      .sat-grid{{grid-template-columns:1fr;gap:8px}}
+      .sat-card{{overflow:hidden}}
+      .sat-map-wrap{{height:160px}}
+      .sat-layer-btns{{gap:2px}}
+      .sat-layer-btn{{font-size:.48rem;padding:2px 5px}}
+      .sat-body{{padding:8px 10px 10px}}
+      .sat-name{{font-size:.76rem;margin-bottom:3px}}
+      .sat-tag{{font-size:.5rem;padding:.1rem .35rem}}
+      .sat-coords{{font-size:.52rem;margin-bottom:4px}}
+      .sat-src-badge{{font-size:.48rem;padding:1px 5px}}
+      .sat-section-divider{{margin:18px 0 14px}}
+      .sat-label{{font-size:.54rem;letter-spacing:.16em}}
+      .sat-count-badge{{font-size:.54rem;padding:.14rem .5rem}}
+
+      /* Disclaimer */
+      .disclaimer-box{{padding:10px 12px;gap:8px}}
+      .disclaimer-body{{font-size:.58rem;line-height:1.7}}
+      .disclaimer-label{{font-size:.48rem;padding:1px 5px}}
+      .disclaimer-icon svg{{width:12px;height:12px}}
+
+      /* Footer */
+      .site-footer{{padding:28px 14px 48px}}
+      .site-footer-sub{{font-size:.54rem;letter-spacing:.18em;margin-bottom:8px}}
+      .site-footer-name{{font-size:clamp(2rem,12vw,4.5rem)}}
+    }}
+
+    /* ── VERY SMALL SCREENS ── */
+    @media(max-width:380px){{
+      header{{padding:0 8px;height:44px}}
+      .logo-word{{font-size:.58rem}}
+      .logo-tagline{{display:none}}
+      .nav-link{{font-size:.48rem;padding:2px 5px}}
+      main{{padding:10px 8px 36px}}
+      .panel,.sector-panel,.ai-panel,.news-panel{{padding:12px 10px}}
+      .sector-grid{{grid-template-columns:1fr;gap:5px}}
+      .chips{{gap:4px}}
+      .chip{{font-size:.6rem;padding:3px 8px}}
+      form input,form select{{font-size:.78rem;padding:8px 10px}}
+      .ai-badge{{font-size:.72rem;padding:5px 12px}}
+      .ai-pts{{grid-template-columns:1fr 1fr}}
+      .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
     }}
   </style>
 </head>
