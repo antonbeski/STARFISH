@@ -2998,6 +2998,9 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
 .fbtn{font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 9px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#6b7fa3;cursor:pointer;transition:all .15s;font-family:inherit}
 .fbtn:hover{border-color:#00c8ff;color:#00c8ff}
 .fbtn.on{background:rgba(0,200,255,.1);border-color:#00c8ff;color:#00c8ff}
+#limit-btn{font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:2px 10px;border-radius:20px;border:1px solid rgba(255,170,50,.35);background:rgba(255,170,50,.07);color:#ffaa33;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap;flex-shrink:0}
+#limit-btn:hover{border-color:#ffaa33;background:rgba(255,170,50,.18);color:#ffc866}
+#limit-btn:active{transform:scale(.95)}
 #debugbar{position:fixed;bottom:0;left:0;right:0;height:60px;z-index:1000;background:rgba(7,9,15,.97);border-top:1px solid rgba(255,255,255,.06);padding:6px 14px;display:flex;flex-direction:column;gap:3px;overflow:hidden}
 #debug-line1{font-size:9px;letter-spacing:.05em;color:#4a6a9a;font-family:'DM Mono',monospace}
 #debug-line2{font-size:9px;letter-spacing:.04em;color:#3a5070;font-family:'DM Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -3008,6 +3011,7 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
   #filter-bar{gap:3px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-shrink:1;min-width:0;scrollbar-width:none}
   #filter-bar::-webkit-scrollbar{display:none}
   .fbtn{font-size:8px;padding:2px 6px;white-space:nowrap;flex-shrink:0}
+  #limit-btn{font-size:8px;padding:2px 7px}
   #debugbar{height:44px;padding:4px 10px}
   #debug-line2{display:none}
 }
@@ -3017,7 +3021,8 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
 <div id="topbar">
   <div id="status-led"></div>
   <span id="status-text">Initialising…</span>
-  <span id="vessel-counter">0 vessels</span>
+  <span id="vessel-counter">0 / 3,000</span>
+  <button id="limit-btn" title="Increase vessel limit by 500">+500</button>
   <div id="filter-bar">
     <button class="fbtn on" data-type="all">All</button>
     <button class="fbtn" data-type="cargo">Cargo</button>
@@ -3054,6 +3059,7 @@ function dbg(line1, line2) {
 var vessels    = {};  // mmsi -> {marker, data, lastSeen, shown}
 var typeCache  = {};  // mmsi -> ship type int (from ShipStaticData)
 var activeFilter = 'all';
+var vesselLimit  = 3000;  // default cap; user can raise with +500 button
 var msgCount = 0;
 
 function classify(t) {
@@ -3110,6 +3116,9 @@ function upsertVessel(d) {
   var lat = parseFloat(d.lat), lon = parseFloat(d.lon);
   if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
 
+  // Block new additions once cap is reached; existing vessels always update
+  if (!vessels[mmsi] && Object.keys(vessels).length >= vesselLimit) return;
+
   var cls  = classify(d.type || typeCache[mmsi]);
   d.cls = cls;
   var meta = TYPE_META[cls] || TYPE_META.other;
@@ -3135,11 +3144,28 @@ function upsertVessel(d) {
   updateCounter();
 }
 
+function fmtLimit(n) {
+  return n >= 10000 ? (n/1000).toFixed(0)+'K' : n.toLocaleString();
+}
+
 function updateCounter() {
   var n = Object.keys(vessels).length;
-  document.getElementById('vessel-counter').textContent = n.toLocaleString() + ' vessels';
+  var atCap = n >= vesselLimit;
+  var el = document.getElementById('vessel-counter');
+  el.textContent = n.toLocaleString() + ' / ' + fmtLimit(vesselLimit);
+  el.style.borderColor = atCap ? 'rgba(255,170,50,.5)' : 'rgba(0,200,255,.15)';
+  el.style.color = atCap ? '#ffaa33' : '#00c8ff';
+  el.style.background = atCap ? 'rgba(255,170,50,.07)' : 'rgba(0,200,255,.07)';
+  var btn = document.getElementById('limit-btn');
+  if (btn) btn.textContent = atCap ? '⚡ +500' : '+500';
   try { var b=window.parent.document.getElementById('ais-vessel-badge'); if(b) b.textContent=n.toLocaleString()+' live'; } catch(e){}
 }
+
+document.getElementById('limit-btn').addEventListener('click', function() {
+  vesselLimit += 500;
+  this.title = 'Limit: ' + fmtLimit(vesselLimit) + ' · Click to add 500 more';
+  updateCounter();
+});
 
 setInterval(function(){
   var cutoff = Date.now() - 1200000;
