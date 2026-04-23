@@ -1764,17 +1764,17 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .ticker-badge{{position:absolute;left:0;height:100%;z-index:3;display:flex;align-items:center;
                    padding:0 .9rem;background:#fff;white-space:nowrap;
                    font-size:.56rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#000}}
-    .ticker-track{{display:flex;animation:ticker-run 40s linear infinite;white-space:nowrap;width:max-content}}
+    .ticker-track{{display:flex;animation:ticker-run 40s linear infinite;white-space:nowrap;width:max-content;will-change:transform}}
     .ticker-track:hover{{animation-play-state:paused}}
     .t-item{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:400;letter-spacing:.08em;
              color:rgba(255,255,255,.55);padding:0 1.5rem;white-space:nowrap;flex-shrink:0}}
     .t-item strong{{color:rgba(255,255,255,.9);font-weight:500}}
     .t-sep{{color:rgba(255,255,255,.3)}}
-    @keyframes ticker-run{{from{{transform:translateX(0)}}to{{transform:translateX(-50%)}}}}
+    @keyframes ticker-run{{from{{transform:translate3d(0,0,0)}}to{{transform:translate3d(-50%,0,0)}}}}
  
     /* ── LAYOUT ── */
     main{{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:30px 20px 64px}}
-    .glass{{background:#f8f7f4;border:2px solid #000;border-radius:var(--r)}}
+    .glass{{background:#f8f7f4;border:2px solid #000;border-radius:var(--r);contain:layout style}}
     .panel{{padding:26px 30px;margin-bottom:18px}}
     .section-divider{{display:flex;align-items:center;gap:14px;margin:36px 0 20px}}
     .section-divider-line{{flex:1;height:1px;background:#e5e5e5}}
@@ -2211,7 +2211,14 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .disclaimer-icon svg{{width:12px;height:12px}}
 
       /* Vessel tracker */
-      #vessel-iframe{{height:420px}}
+      #vessel-iframe{{height:260px;min-height:0}}
+      .vessel-wrap{{overflow:hidden;border-radius:0 0 10px 10px}}
+      /* Disable hover animations on touch to prevent jank */
+      .news-card{{animation:none;transition:none}}
+      .news-card:hover{{transform:none;box-shadow:none}}
+      .sat-card{{animation:none;transition:none}}
+      .sat-card:hover{{transform:none;box-shadow:none}}
+      .btn,.btn-ai,.btn-sector{{transition:none}}
 
       /* Footer */
       .site-footer{{padding:28px 14px 48px}}
@@ -2234,7 +2241,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-badge{{font-size:.72rem;padding:5px 12px}}
       .ai-pts{{grid-template-columns:1fr 1fr}}
       .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
-      #vessel-iframe{{height:340px}}
+      #vessel-iframe{{height:200px;min-height:0}}
     }}
   </style>
 </head>
@@ -2402,8 +2409,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div class="section-divider-line"></div>
 </div>
 
-<div class="glass" style="padding:0;overflow:hidden;border-radius:12px;">
-  <div style="padding:12px 20px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+<div class="glass" style="padding:0;overflow:hidden;border-radius:12px;content-visibility:auto;contain-intrinsic-size:0 700px;">
+  <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span class="panel-label" style="margin:0;">AIS Live Map</span>
     <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#0077aa;background:#e8f6ff;border:1px solid #b8ddf5;border-radius:20px;padding:3px 10px;">AISStream WebSocket</span>
     <span id="ais-vessel-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Connecting…</span>
