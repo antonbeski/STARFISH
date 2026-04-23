@@ -2992,8 +2992,9 @@ def api_satellite():
 
 @app.route("/vessels")
 def vessels():
-    import os
     api_key = os.environ.get("AISSTREAM_API_KEY", "")
+    # Safely inject the key — use json.dumps so any character is escaped properly
+    api_key_js = json.dumps(api_key)
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3059,7 +3060,7 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
   <p style="margin-top:8px">Get a free key at <a href="https://aisstream.io" style="color:#00c8ff">aisstream.io</a></p>
 </div>
 <script>
-var API_KEY = """ + repr(api_key) + """;
+var API_KEY = """ + api_key_js + """;
 
 // ── MAP ───────────────────────────────────────────────────────────────────
 var map = L.map('map', {center:[20,10],zoom:2,zoomControl:true,attributionControl:true});
@@ -3075,6 +3076,7 @@ L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',{
 
 // ── VESSEL STATE ──────────────────────────────────────────────────────────
 var vessels = {};      // mmsi -> {marker, data, lastSeen}
+var vesselTypes = {};  // mmsi -> ship type int (cached from ShipStaticData)
 var activeFilter = 'all';
 
 // Type classification from AIS ship type integer
@@ -3188,6 +3190,7 @@ setInterval(function(){
     if (vessels[mmsi].lastSeen < cutoff) {
       map.removeLayer(vessels[mmsi].marker);
       delete vessels[mmsi];
+      delete vesselTypes[mmsi];
     }
   });
   updateCounter();
@@ -3259,22 +3262,24 @@ function connect() {
         lon:  pr.Longitude,
         sog:  pr.Sog,
         cog:  pr.Cog,
-        type: pr.Type || undefined,
-        flag: meta.flag || undefined
+        type: vesselTypes[mmsi],   // use cached type from ShipStaticData
+        flag: meta.Flag || undefined
       });
     } else if (mtype === 'ShipStaticData') {
       var sd = (msg.Message||{}).ShipStaticData || {};
       var dim = sd.Dimension || {};
       var len = (dim.A||0)+(dim.B||0);
+      // Cache ship type by MMSI so PositionReport messages can use it
+      if (sd.Type) vesselTypes[mmsi] = sd.Type;
       upsertVessel({
         mmsi: mmsi,
         name: (sd.Name||'').trim() || (meta.ShipName||'').trim() || undefined,
-        lat:  meta.latitude  || meta.Latitude,
+        lat:  meta.latitude || meta.Latitude,
         lon:  meta.longitude || meta.Longitude,
         sog:  undefined,
         cog:  undefined,
         type: sd.Type,
-        flag: sd.Flag || undefined,
+        flag: sd.Flag || meta.Flag || undefined,
         dest: (sd.Destination||'').trim() || undefined,
         eta:  sd.Eta || undefined,
         length: len > 0 ? len : undefined
