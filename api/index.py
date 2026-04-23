@@ -3235,14 +3235,26 @@ function connect(apiKey) {
     dbg('Connected · Subscription sent · Waiting for vessels…', JSON.stringify(sub).slice(0,120));
   };
 
+  ws.binaryType = 'blob';  // AISStream sends binary Blob frames
+
   ws.onmessage = function(evt) {
+    // AISStream sends data as Blob — must read it as text first
+    if (evt.data instanceof Blob) {
+      var reader = new FileReader();
+      reader.onload = function() { handleMsg(reader.result); };
+      reader.readAsText(evt.data);
+    } else {
+      handleMsg(evt.data);
+    }
+  };
+
+  function handleMsg(raw) {
     msgCount++;
     var msg;
-    try { msg = JSON.parse(evt.data); } catch(e) { dbg('JSON parse error: '+e.message); return; }
+    try { msg = JSON.parse(raw); } catch(e) { dbg('JSON parse error: '+e.message, raw.slice(0,120)); return; }
 
-    // Show first few raw messages for debugging
-    if (msgCount <= 3) dbg('MSG #'+msgCount+': '+msg.MessageType, JSON.stringify(msg).slice(0,140));
-    if (msgCount % 100 === 0) dbg('Messages received: '+msgCount+' · Vessels: '+Object.keys(vessels).length);
+    if (msgCount <= 5) dbg('MSG #'+msgCount+': '+msg.MessageType, raw.slice(0,140));
+    if (msgCount % 100 === 0) dbg('Msgs: '+msgCount+' · Vessels: '+Object.keys(vessels).length);
 
     var mtype = msg.MessageType;
     var meta  = msg.MetaData || {};
@@ -3266,7 +3278,6 @@ function connect(apiKey) {
       var dim = sd.Dimension || {};
       var len = (dim.A||0) + (dim.B||0);
       if (sd.Type) typeCache[mmsi] = sd.Type;
-      // ShipStaticData often has no position — only upsert if we have coords
       var lat = parseFloat(meta.latitude || meta.Latitude || 0);
       var lon = parseFloat(meta.longitude || meta.Longitude || 0);
       if (lat !== 0 || lon !== 0) {
@@ -3286,7 +3297,7 @@ function connect(apiKey) {
       var errMsg = (msg.Message || msg.Error || JSON.stringify(msg)).slice(0,200);
       setStatus('error', 'Server error: ' + errMsg);
     }
-  };
+  }
 
   ws.onerror = function(e) {
     setStatus('error', 'WebSocket error — check browser console for details');
