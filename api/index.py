@@ -1724,9 +1724,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" defer></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
   <style>
     *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
     :root{{
@@ -2210,6 +2210,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .disclaimer-label{{font-size:.48rem;padding:1px 5px}}
       .disclaimer-icon svg{{width:12px;height:12px}}
 
+      /* Vessel tracker */
+      #vessel-iframe{{height:420px}}
+
       /* Footer */
       .site-footer{{padding:28px 14px 48px}}
       .site-footer-sub{{font-size:.54rem;letter-spacing:.18em;margin-bottom:8px}}
@@ -2231,6 +2234,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-badge{{font-size:.72rem;padding:5px 12px}}
       .ai-pts{{grid-template-columns:1fr 1fr}}
       .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
+      #vessel-iframe{{height:340px}}
     }}
   </style>
 </head>
@@ -2646,7 +2650,7 @@ function loadCh(h){{
     .then(d=>{{
       if(h!==curHandle)return;
       if(d.error||!d.video_id){{nSetErr('Stream unavailable.');return;}}
-      nframe.src='https://www.youtube.com/embed/'+d.video_id+'?autoplay=1&rel=0&modestbranding=1';
+      nframe.src='https://www.youtube.com/embed/'+d.video_id+'?autoplay=0&rel=0&modestbranding=1';
       nframe.style.display='block';nload.style.display='none';
       nbadge.style.display='inline-flex';
       nbadge.className=d.is_live?'nsb live':'nsb latest';
@@ -2997,6 +3001,16 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
 #debugbar{position:fixed;bottom:0;left:0;right:0;height:60px;z-index:1000;background:rgba(7,9,15,.97);border-top:1px solid rgba(255,255,255,.06);padding:6px 14px;display:flex;flex-direction:column;gap:3px;overflow:hidden}
 #debug-line1{font-size:9px;letter-spacing:.05em;color:#4a6a9a;font-family:'DM Mono',monospace}
 #debug-line2{font-size:9px;letter-spacing:.04em;color:#3a5070;font-family:'DM Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:600px){
+  #topbar{height:38px;padding:0 8px;gap:5px;overflow:hidden}
+  #status-text{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:72px;flex-shrink:1}
+  #vessel-counter{font-size:8px;padding:2px 6px;white-space:nowrap;flex-shrink:0}
+  #filter-bar{gap:3px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-shrink:1;min-width:0;scrollbar-width:none}
+  #filter-bar::-webkit-scrollbar{display:none}
+  .fbtn{font-size:8px;padding:2px 6px;white-space:nowrap;flex-shrink:0}
+  #debugbar{height:44px;padding:4px 10px}
+  #debug-line2{display:none}
+}
 </style>
 </head>
 <body>
