@@ -1680,16 +1680,10 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     ai_cards = ""
     for m in AI_MODELS:
         rl = rl_check(m["key"])
-        pm  = int((rl["rpm_used"]/rl["rpm_max"])*100)
-        pd_ = int((rl["rpd_used"]/rl["rpd_max"])*100)
         ex  = " exhausted" if not rl["available"] else ""
         ai_cards += f"""<div class="ai-model-card{ex}" data-model="{m['id']}" data-key="{m['key']}" data-color="{m['color']}" data-label="{m['label']}" onclick="selectModel(this)">
   <div class="ai-model-hdr"><span class="ai-dot" style="background:{m['color']}"></span><span class="ai-mname">{m['label']}</span>{"" if rl['available'] else '<span class="ai-rl-badge">Rate Limited</span>'}</div>
   <div class="ai-mdesc">{m['desc']}</div>
-    <div class="ai-rl-bars">
-    <div class="ai-rl-row"><span class="ai-rl-lbl">RPM</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpm-{m['key']}" style="width:{pm}%;background:#000"></div></div><span class="ai-rl-cnt" id="rpm-{m['key']}">{rl['rpm_used']}/{rl['rpm_max']}</span></div>
-    <div class="ai-rl-row"><span class="ai-rl-lbl">RPD</span><div class="ai-bar-wrap"><div class="ai-bar" id="bar-rpd-{m['key']}" style="width:{pd_}%;background:#888"></div></div><span class="ai-rl-cnt" id="rpd-{m['key']}">{rl['rpd_used']}/{rl['rpd_max']}</span></div>
-  </div>
 </div>"""
  
     # Alt data badges
@@ -1837,19 +1831,12 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .ai-model-card.selected{{background:#000;color:#fff;box-shadow:none}}
     .ai-model-card.selected .ai-mname{{color:#fff}}
     .ai-model-card.selected .ai-mdesc{{color:#aaa}}
-    .ai-model-card.selected .ai-rl-lbl{{color:#aaa}}
-    .ai-model-card.selected .ai-rl-cnt{{color:#aaa}}
     .ai-model-card.exhausted{{opacity:.45;cursor:not-allowed}}
     .ai-model-hdr{{display:flex;align-items:center;gap:8px;margin-bottom:4px}}
     .ai-dot{{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:#000}}
     .ai-mname{{font-size:.8rem;font-weight:600;color:#000}}
     .ai-mdesc{{font-size:.67rem;color:#555;margin-bottom:12px}}
-    .ai-rl-bars{{display:flex;flex-direction:column;gap:5px}}
-    .ai-rl-row{{display:flex;align-items:center;gap:6px}}
-    .ai-rl-lbl{{font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#888;width:26px}}
-    .ai-bar-wrap{{flex:1;height:4px;background:#e5e5e5;border-radius:2px;overflow:hidden}}
-    .ai-bar{{height:100%;border-radius:2px;transition:width .5s ease;background:#000}}
-    .ai-rl-cnt{{font-size:.58rem;font-family:'DM Mono',monospace;color:#555;width:34px;text-align:right}}
+
     .ai-rl-badge{{font-size:.55rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
                   padding:2px 7px;border-radius:4px;margin-left:auto;
                   background:#f0f0f0;border:1px solid #aaa;color:#555}}
@@ -2136,8 +2123,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-model-card{{padding:12px}}
       .ai-mname{{font-size:.74rem}}
       .ai-mdesc{{font-size:.62rem;margin-bottom:8px}}
-      .ai-rl-lbl{{font-size:.52rem}}
-      .ai-rl-cnt{{font-size:.52rem}}
 
       /* AI action row */
       .ai-action-row{{gap:8px;margin-bottom:14px}}
@@ -2473,36 +2458,9 @@ function selectModel(card){{
   document.getElementById('ai-sel-lbl').textContent='Model: '+card.dataset.label;
   document.getElementById('btn-ai').disabled=false;
   if(timerIv)clearInterval(timerIv);
-  refreshRateLimits();
-  timerIv=setInterval(refreshRateLimits,4000);
 }}
  
-function refreshRateLimits(){{
-  fetch('/api/rate-limits').then(r=>r.json()).then(data=>{{
-    MODELS.forEach(m=>{{
-      var d=data[m.key]; if(!d)return;
-      var rpmEl=document.getElementById('rpm-'+m.key);
-      var rpdEl=document.getElementById('rpd-'+m.key);
-      var barRpm=document.getElementById('bar-rpm-'+m.key);
-      var barRpd=document.getElementById('bar-rpd-'+m.key);
-      if(rpmEl)rpmEl.textContent=d.rpm_used+'/'+d.rpm_max;
-      if(rpdEl)rpdEl.textContent=d.rpd_used+'/'+d.rpd_max;
-      if(barRpm)barRpm.style.width=Math.round((d.rpm_used/d.rpm_max)*100)+'%';
-      if(barRpd)barRpd.style.width=Math.round((d.rpd_used/d.rpd_max)*100)+'%';
-    }});
-    if(selModelKey&&data[selModelKey]){{
-      var sd=data[selModelKey];
-      var timerEl=document.getElementById('ai-timer');
-      if(sd.rpm_used>=sd.rpm_max){{
-        timerEl.textContent='RPM full \u2014 resets in '+sd.rpm_reset_secs+'s';
-        document.getElementById('btn-ai').disabled=true;
-      }}else{{
-        timerEl.textContent='RPM: '+sd.rpm_used+'/'+sd.rpm_max+' used  \u00b7  RPD: '+sd.rpd_used+'/'+sd.rpd_max+' used';
-        document.getElementById('btn-ai').disabled=false;
-      }}
-    }}
-  }}).catch(()=>{{}});
-}}
+
  
 function runAnalysis(){{
   if(!selModelId)return;
@@ -2522,7 +2480,7 @@ function runAnalysis(){{
   }}).then(r=>r.json()).then(data=>{{
     btn.disabled=false; btn.textContent='Analyse '+TICKER;
     if(data.error){{res.innerHTML='<div class="ai-err">'+esc(data.error)+'</div>';return;}}
-    renderAIResult(data); refreshRateLimits();
+    renderAIResult(data);
   }}).catch(err=>{{
     btn.disabled=false; btn.textContent='Analyse '+TICKER;
     res.innerHTML='<div class="ai-err">Network error: '+esc(String(err))+'</div>';
@@ -2703,7 +2661,6 @@ document.getElementById('ntabs').addEventListener('click',function(e){{
 }});
  
 loadCh('{fh}');
-setInterval(refreshRateLimits,8000);
 
 // ── Satellite Imagery ─────────────────────────────────────────────────────────
 var satMaps = {{}};
