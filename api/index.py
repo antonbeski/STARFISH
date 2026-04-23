@@ -2403,27 +2403,27 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span id="nbadge" class="nsb" style="display:none"></span>
   </div>
 </div>
- 
+
 <!-- ══════════════════════════════════════════
-     SECTION 4: LIVE VESSEL MAP
+     SECTION 4: LIVE VESSEL TRACKER
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="vessels">
   <div class="section-divider-line"></div>
-  <div class="section-label"><span class="dot" style="background:#00aaff"></span>Live Vessel Tracker</div>
+  <div class="section-label"><span class="dot" style="background:#00c8ff"></span>Live Vessel Tracker</div>
   <div class="section-divider-line"></div>
 </div>
 
-<div class="glass" style="padding:0;overflow:hidden;border-radius:12px;min-height:680px;position:relative;">
-  <div style="padding:14px 20px 10px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e8;">
-    <span class="panel-label" style="margin:0">AIS Live Map</span>
-    <span style="font-size:.58rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#888;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Free &amp; Open · No API Key</span>
-    <span id="vessel-count-badge" style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#00aaff;background:#eaf6ff;border:1px solid #b3ddf7;border-radius:20px;padding:3px 10px;margin-left:auto;">Loading…</span>
+<div class="glass" style="padding:0;overflow:hidden;border-radius:12px;">
+  <div style="padding:12px 20px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span class="panel-label" style="margin:0;">AIS Live Map</span>
+    <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#0077aa;background:#e8f6ff;border:1px solid #b8ddf5;border-radius:20px;padding:3px 10px;">AISStream WebSocket</span>
+    <span id="ais-vessel-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Connecting…</span>
   </div>
-  <iframe id="vessel-map-frame" src="/vessels" style="width:100%;height:640px;border:none;display:block;" title="Live Vessel Tracker" loading="lazy"></iframe>
+  <iframe id="vessel-iframe" src="/vessels" style="width:100%;height:660px;border:none;display:block;" title="Live Vessel Tracker" loading="lazy"></iframe>
 </div>
 
 </main>
-
+ 
 <!-- ── DISCLAIMER ── -->
 <div class="disclaimer-wrap">
   <div class="disclaimer-box">
@@ -2992,338 +2992,309 @@ def api_satellite():
 
 @app.route("/vessels")
 def vessels():
-    """Self-contained live vessel tracker using 100% free/open AIS sources."""
-    html = r"""<!DOCTYPE html>
+    import os
+    api_key = os.environ.get("AISSTREAM_API_KEY", "")
+    html = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Live Vessel Tracker</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;background:#060a10;font-family:'DM Mono',monospace,sans-serif;overflow:hidden}
-#map{width:100%;height:100vh;background:#060a10}
-.leaflet-container{background:#060a10}
-/* Leaflet dark overrides */
-.leaflet-control-zoom{border:1px solid rgba(255,255,255,.12)!important;background:#0f1420!important}
-.leaflet-control-zoom a{background:#0f1420!important;color:#8896b0!important;border-color:rgba(255,255,255,.1)!important}
-.leaflet-control-zoom a:hover{color:#00e5ff!important;background:#1a2133!important}
-.leaflet-control-attribution{background:rgba(6,10,16,.85)!important;color:#4a5568!important;font-size:9px!important}
-.leaflet-control-attribution a{color:#8896b0!important}
-/* Popup */
-.leaflet-popup-content-wrapper{background:#0f1420;border:1px solid rgba(0,229,255,.18);border-radius:8px;color:#e8edf5;box-shadow:0 4px 24px rgba(0,0,0,.5)}
-.leaflet-popup-tip{background:#0f1420}
-.leaflet-popup-content{margin:12px 16px;font-size:12px;line-height:1.6}
-.leaflet-popup-content b{color:#00e5ff;font-size:13px;display:block;margin-bottom:6px}
-.leaflet-popup-content span{color:#8896b0}
-/* Top info bar */
-#info-bar{position:fixed;top:0;left:0;right:0;z-index:1000;height:38px;background:rgba(6,10,16,.92);border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;padding:0 14px;gap:12px;backdrop-filter:blur(8px)}
-#info-bar .badge{font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px}
-#count-badge{background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:#00e5ff}
-#src-badge{background:rgba(136,150,176,.07);border:1px solid rgba(136,150,176,.15);color:#8896b0}
-#status-dot{width:6px;height:6px;border-radius:50%;background:#7fff7f;flex-shrink:0;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-#map{padding-top:38px}
+html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#07090f;overflow:hidden}
+#map{position:absolute;inset:38px 0 0 0;background:#07090f}
+.leaflet-container{background:#07090f}
+.leaflet-control-zoom{border:1px solid rgba(255,255,255,.1)!important;background:#0d1117!important;border-radius:6px!important}
+.leaflet-control-zoom a{background:#0d1117!important;color:#6b7fa3!important;border-color:rgba(255,255,255,.08)!important;width:26px!important;height:26px!important;line-height:26px!important}
+.leaflet-control-zoom a:hover{color:#00c8ff!important;background:#151c2a!important}
+.leaflet-control-attribution{background:rgba(7,9,15,.85)!important;color:#3a4a66!important;font-size:9px!important;border-radius:4px 0 0 0!important}
+.leaflet-control-attribution a{color:#5a7099!important}
+.leaflet-popup-content-wrapper{background:#0d1117;border:1px solid rgba(0,200,255,.2);border-radius:8px;color:#d4ddf0;box-shadow:0 8px 32px rgba(0,0,0,.7)}
+.leaflet-popup-tip-container{display:none}
+.leaflet-popup-content{margin:14px 16px;font-size:11px;line-height:1.8;font-family:'DM Mono',monospace,sans-serif}
+.leaflet-popup-close-button{color:#6b7fa3!important;font-size:16px!important;top:6px!important;right:8px!important}
+.popup-name{font-size:13px;font-weight:700;color:#00c8ff;letter-spacing:.04em;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.popup-row{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid rgba(255,255,255,.04);padding:2px 0}
+.popup-key{color:#4a5a7a;text-transform:uppercase;font-size:9px;letter-spacing:.1em;align-self:center}
+.popup-val{color:#a8b8d8;font-size:11px}
+.popup-type-badge{display:inline-block;padding:1px 7px;border-radius:3px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+#topbar{position:fixed;top:0;left:0;right:0;height:38px;z-index:1000;background:rgba(7,9,15,.96);border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;padding:0 14px;gap:10px;backdrop-filter:blur(10px)}
+#status-led{width:7px;height:7px;border-radius:50%;background:#00c8ff;flex-shrink:0;transition:background .3s}
+#status-led.warn{background:#ffaa33}
+#status-led.err{background:#ff4444}
+#status-text{font-size:10px;letter-spacing:.06em;color:#6b7fa3;text-transform:uppercase}
+#vessel-counter{font-size:10px;letter-spacing:.06em;color:#00c8ff;background:rgba(0,200,255,.07);border:1px solid rgba(0,200,255,.15);border-radius:20px;padding:2px 10px}
+#filter-bar{margin-left:auto;display:flex;gap:6px}
+.fbtn{font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 9px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#6b7fa3;cursor:pointer;transition:all .15s;font-family:inherit}
+.fbtn:hover{border-color:#00c8ff;color:#00c8ff}
+.fbtn.on{background:rgba(0,200,255,.1);border-color:#00c8ff;color:#00c8ff}
+#no-key-msg{position:absolute;inset:0;z-index:500;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(7,9,15,.95);gap:12px;padding:32px}
+#no-key-msg h2{font-size:15px;color:#d4ddf0;letter-spacing:.06em;text-transform:uppercase}
+#no-key-msg p{font-size:11px;color:#6b7fa3;text-align:center;max-width:340px;line-height:1.7}
+#no-key-msg code{background:#0d1117;border:1px solid rgba(0,200,255,.2);border-radius:4px;padding:8px 14px;font-size:11px;color:#00c8ff;display:block;margin-top:4px;text-align:center}
 </style>
 </head>
 <body>
-<div id="info-bar">
-  <div id="status-dot"></div>
-  <span class="badge" id="count-badge">Loading…</span>
-  <span class="badge" id="src-badge">AISHub · VesselFinder · OpenSeaMap</span>
+<div id="topbar">
+  <div id="status-led" class="warn"></div>
+  <span id="status-text">Connecting…</span>
+  <span id="vessel-counter">0 vessels</span>
+  <div id="filter-bar">
+    <button class="fbtn on" data-type="all">All</button>
+    <button class="fbtn" data-type="cargo">Cargo</button>
+    <button class="fbtn" data-type="tanker">Tanker</button>
+    <button class="fbtn" data-type="passenger">Passenger</button>
+    <button class="fbtn" data-type="fishing">Fishing</button>
+    <button class="fbtn" data-type="other">Other</button>
+  </div>
 </div>
 <div id="map"></div>
+<div id="no-key-msg" style="display:none">
+  <h2>AISStream API Key Required</h2>
+  <p>Set your key as a Vercel environment variable and redeploy:</p>
+  <code>AISSTREAM_API_KEY=your_key_here</code>
+  <p style="margin-top:8px">Get a free key at <a href="https://aisstream.io" style="color:#00c8ff">aisstream.io</a></p>
+</div>
 <script>
-// ── MAP INIT ──────────────────────────────────────────────────────────────
-var map = L.map('map', {
-  center: [25, 0], zoom: 2,
-  zoomControl: true,
-  attributionControl: true
-});
+var API_KEY = """ + repr(api_key) + """;
 
-// Dark tile layer — CartoDB Dark Matter (free, forever, no key)
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-  subdomains: 'abcd',
-  maxZoom: 19
+// ── MAP ───────────────────────────────────────────────────────────────────
+var map = L.map('map', {center:[20,10],zoom:2,zoomControl:true,attributionControl:true});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/copyright">OSM</a>',
+  subdomains:'abcd', maxZoom:19
 }).addTo(map);
 
-// OpenSeaMap nautical overlay (free, forever, open)
-L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
-  attribution: '&copy; <a href="https://www.openseamap.org">OpenSeaMap</a>',
-  opacity: 0.6
+L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',{
+  attribution:'&copy; <a href="https://openseamap.org">OpenSeaMap</a>', opacity:0.55, maxZoom:18
 }).addTo(map);
 
-// ── VESSEL ICONS ─────────────────────────────────────────────────────────
-function makeIcon(color, size) {
-  size = size || 8;
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + (size*2) + '" height="' + (size*3) + '" viewBox="0 0 16 24">' +
-    '<polygon points="8,0 14,20 8,16 2,20" fill="' + color + '" stroke="rgba(0,0,0,.5)" stroke-width="1.2"/>' +
-    '</svg>';
-  return L.divIcon({
-    html: svg,
-    className: '',
-    iconSize: [size*2, size*3],
-    iconAnchor: [size, size*1.5]
-  });
+// ── VESSEL STATE ──────────────────────────────────────────────────────────
+var vessels = {};      // mmsi -> {marker, data, lastSeen}
+var activeFilter = 'all';
+
+// Type classification from AIS ship type integer
+function classify(t) {
+  t = parseInt(t) || 0;
+  if (t>=70&&t<=79) return 'cargo';
+  if (t>=80&&t<=89) return 'tanker';
+  if (t>=60&&t<=69) return 'passenger';
+  if (t>=30&&t<=39) return 'fishing';
+  if (t>=50&&t<=59) return 'service';
+  return 'other';
 }
 
-var ICONS = {
-  cargo:     makeIcon('#00e5ff'),
-  tanker:    makeIcon('#ff9966'),
-  passenger: makeIcon('#7fff7f'),
-  tug:       makeIcon('#b464ff'),
-  fishing:   makeIcon('#ffdd44'),
-  other:     makeIcon('#8896b0', 7)
+var TYPE_META = {
+  cargo:     {color:'#00c8ff', label:'Cargo'},
+  tanker:    {color:'#ff7733', label:'Tanker'},
+  passenger: {color:'#44ff88', label:'Passenger'},
+  fishing:   {color:'#ffdd22', label:'Fishing'},
+  service:   {color:'#cc77ff', label:'Service'},
+  other:     {color:'#6b7fa3', label:'Other'}
 };
 
-function getIcon(shipType) {
-  var t = (shipType || 0);
-  if (t >= 70 && t <= 79) return ICONS.cargo;
-  if (t >= 80 && t <= 89) return ICONS.tanker;
-  if (t >= 60 && t <= 69) return ICONS.passenger;
-  if (t >= 50 && t <= 59) return ICONS.tug;
-  if (t >= 30 && t <= 39) return ICONS.fishing;
-  return ICONS.other;
+// ── ICONS: rotatable SVG arrow ────────────────────────────────────────────
+function makeMarkerHTML(color, cog) {
+  var r = parseFloat(cog) || 0;
+  return '<div style="width:0;height:0;position:relative;transform:rotate('+r+'deg);transform-origin:center center">' +
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="20" viewBox="0 0 14 20" style="position:absolute;left:-7px;top:-10px">' +
+    '<polygon points="7,0 13,18 7,13 1,18" fill="'+color+'" stroke="rgba(0,0,0,.6)" stroke-width="1.2" stroke-linejoin="round"/>' +
+    '</svg></div>';
 }
 
-function typeName(t) {
-  t = t || 0;
-  if (t >= 70 && t <= 79) return 'Cargo';
-  if (t >= 80 && t <= 89) return 'Tanker';
-  if (t >= 60 && t <= 69) return 'Passenger';
-  if (t >= 50 && t <= 59) return 'Tug/Service';
-  if (t >= 30 && t <= 39) return 'Fishing';
-  return 'Other';
-}
-
-// ── VESSEL LAYER ─────────────────────────────────────────────────────────
-var vesselLayer = L.layerGroup().addTo(map);
-var vesselCount = 0;
-
-function renderVessels(vessels) {
-  vesselLayer.clearLayers();
-  vesselCount = vessels.length;
-  document.getElementById('count-badge').textContent = vesselCount.toLocaleString() + ' vessels';
-
-  vessels.forEach(function(v) {
-    var lat = v.lat || v.LATITUDE || v.latitude;
-    var lon = v.lon || v.LONGITUDE || v.longitude || v.lng;
-    if (!lat || !lon) return;
-    lat = parseFloat(lat); lon = parseFloat(lon);
-    if (isNaN(lat) || isNaN(lon)) return;
-
-    var name    = v.SHIPNAME || v.name || v.shipname || 'Unknown';
-    var mmsi    = v.MMSI || v.mmsi || '—';
-    var sog     = v.SOG || v.sog || v.speed || 0;
-    var cog     = v.COG || v.cog || v.course || 0;
-    var type    = v.SHIPTYPE || v.ship_type || v.type || 0;
-    var dest    = v.DESTINATION || v.destination || '—';
-    var flag    = v.FLAG || v.flag || '—';
-
-    var marker = L.marker([lat, lon], {
-      icon: getIcon(type),
-      title: name,
-      rotationAngle: parseFloat(cog) || 0
-    });
-
-    marker.bindPopup(
-      '<b>' + name + '</b>' +
-      '<span>MMSI: ' + mmsi + '</span><br>' +
-      '<span>Type: ' + typeName(type) + '</span><br>' +
-      '<span>Speed: ' + parseFloat(sog).toFixed(1) + ' kn</span><br>' +
-      '<span>Course: ' + parseFloat(cog).toFixed(0) + '°</span><br>' +
-      (dest !== '—' ? '<span>Dest: ' + dest + '</span><br>' : '') +
-      (flag !== '—' ? '<span>Flag: ' + flag + '</span>' : ''),
-      {maxWidth: 220}
-    );
-    vesselLayer.addLayer(marker);
+function makeIcon(color, cog) {
+  return L.divIcon({
+    html: makeMarkerHTML(color, cog),
+    className: '', iconSize:[14,20], iconAnchor:[7,10]
   });
 }
 
-// ── DATA SOURCES (all free, no key, CORS-friendly) ────────────────────────
-//  Source 1: AISHub free JSON feed (global, 5-min refresh, anonymous)
-//  Source 2: VesselFinder public API (limited but free)
-//  Source 3: Datalastic free tier
-//  Source 4: MarineTraffic public embed data via allorigins proxy
-//  Source 5: aisstream.io sample/public feed
-//  We try each source in sequence; use first that returns valid data.
-
-var SOURCES = [
-  // AISHub anonymous read (returns vessels in bbox or global sample)
-  {
-    name: 'AISHub',
-    url:  'https://api.aishub.net/ws.php?username=WS-*&format=1&output=json&compress=0&latmin=-90&latmax=90&lonmin=-180&lonmax=180',
-    parse: function(data) {
-      // AISHub returns [[meta], [vessels...]]
-      if (Array.isArray(data) && data.length >= 2 && Array.isArray(data[1])) {
-        return data[1].map(function(v) {
-          return {lat: v.LATITUDE, lon: v.LONGITUDE, SHIPNAME: v.NAME, MMSI: v.MMSI,
-                  SOG: v.SOG, COG: v.COG, SHIPTYPE: v.TYPE, DESTINATION: v.DEST, FLAG: v.FLAG};
-        });
-      }
-      return null;
-    }
-  },
-  // VesselFinder API — public endpoint, no auth for vessel positions snapshot
-  {
-    name: 'VesselFinder',
-    url:  'https://www.vesselfinder.com/api/pub/click/0',
-    parse: function(data) {
-      if (Array.isArray(data)) return data.map(function(v) {
-        return {lat: v[0], lon: v[1], SHIPNAME: v[2], MMSI: v[3], SOG: v[5], COG: v[6], SHIPTYPE: v[8]};
-      });
-      return null;
-    }
-  },
-  // Marine Cadastre / NOAA AIS (USA waters, public domain)
-  {
-    name: 'NOAA AIS',
-    url:  'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/ENCOnline/MapServer/exts/MaritimeChartService/MapServer/info/json',
-    parse: function(data) { return null; } // metadata only — triggers fallback
-  }
-];
-
-// Proxy wrapper for CORS
-function proxied(url) {
-  return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
+// ── POPUP ────────────────────────────────────────────────────────────────
+function buildPopup(d) {
+  var meta = TYPE_META[d.cls] || TYPE_META.other;
+  var badge = '<span class="popup-type-badge" style="background:'+meta.color+'22;color:'+meta.color+';border:1px solid '+meta.color+'44">'+meta.label+'</span>';
+  var rows = [
+    ['MMSI',   d.mmsi || '—'],
+    ['Speed',  d.sog  ? parseFloat(d.sog).toFixed(1)+' kn' : '—'],
+    ['Course', d.cog  ? parseFloat(d.cog).toFixed(0)+'°'  : '—'],
+    ['Flag',   d.flag || '—'],
+    ['Dest',   d.dest || '—'],
+    ['ETA',    d.eta  || '—'],
+    ['Length', d.length ? d.length+'m' : '—'],
+  ];
+  var html = '<div class="popup-name">'+(d.name||'Unknown')+'</div>';
+  html += '<div style="margin-bottom:6px">'+badge+'</div>';
+  rows.forEach(function(r){
+    if(r[1]==='—') return;
+    html += '<div class="popup-row"><span class="popup-key">'+r[0]+'</span><span class="popup-val">'+r[1]+'</span></div>';
+  });
+  return html;
 }
 
-var sourceIndex = 0;
+// ── VESSEL UPSERT ────────────────────────────────────────────────────────
+function upsertVessel(d) {
+  var mmsi = String(d.mmsi);
+  var lat = parseFloat(d.lat), lon = parseFloat(d.lon);
+  if (!mmsi || isNaN(lat) || isNaN(lon)) return;
+  // Sanity-check coords
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
 
-function trySource(idx) {
-  if (idx >= SOURCES.length) {
-    useFallback();
+  var cls = classify(d.type);
+  d.cls = cls;
+  var meta = TYPE_META[cls] || TYPE_META.other;
+  var visible = (activeFilter === 'all' || activeFilter === cls ||
+                 (activeFilter === 'other' && (cls==='other'||cls==='service')));
+
+  if (vessels[mmsi]) {
+    // Update existing marker
+    var v = vessels[mmsi];
+    v.data = Object.assign(v.data, d);
+    v.lastSeen = Date.now();
+    v.marker.setLatLng([lat, lon]);
+    v.marker.setIcon(makeIcon(meta.color, d.cog));
+    if (v.marker.isPopupOpen()) v.marker.setPopupContent(buildPopup(v.data));
+    if (!visible) { map.removeLayer(v.marker); v.shown = false; }
+    else if (!v.shown) { map.addLayer(v.marker); v.shown = true; }
+  } else {
+    var marker = L.marker([lat, lon], {icon: makeIcon(meta.color, d.cog)});
+    marker.bindPopup('', {maxWidth:260, className:'ais-popup'});
+    marker.on('click', function(){
+      marker.setPopupContent(buildPopup(vessels[mmsi].data));
+    });
+    if (visible) { marker.addTo(map); }
+    vessels[mmsi] = {marker:marker, data:d, lastSeen:Date.now(), shown:visible};
+  }
+  updateCounter();
+}
+
+function updateCounter() {
+  var n = Object.keys(vessels).length;
+  document.getElementById('vessel-counter').textContent = n.toLocaleString()+' vessels';
+  // Notify parent frame badge
+  try {
+    var b = window.parent.document.getElementById('ais-vessel-badge');
+    if (b) b.textContent = n.toLocaleString()+' live';
+  } catch(e){}
+}
+
+// Prune vessels not seen in 20 minutes
+setInterval(function(){
+  var cutoff = Date.now() - 1200000;
+  Object.keys(vessels).forEach(function(mmsi){
+    if (vessels[mmsi].lastSeen < cutoff) {
+      map.removeLayer(vessels[mmsi].marker);
+      delete vessels[mmsi];
+    }
+  });
+  updateCounter();
+}, 60000);
+
+// ── FILTER BUTTONS ───────────────────────────────────────────────────────
+document.getElementById('filter-bar').addEventListener('click', function(e){
+  var btn = e.target.closest('.fbtn');
+  if (!btn) return;
+  activeFilter = btn.dataset.type;
+  document.querySelectorAll('.fbtn').forEach(function(b){ b.classList.remove('on'); });
+  btn.classList.add('on');
+  Object.values(vessels).forEach(function(v){
+    var cls = v.data.cls;
+    var vis = (activeFilter==='all'||activeFilter===cls||
+               (activeFilter==='other'&&(cls==='other'||cls==='service')));
+    if (vis && !v.shown)  { map.addLayer(v.marker);    v.shown=true;  }
+    if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
+  });
+});
+
+// ── AISSTREAM WEBSOCKET ──────────────────────────────────────────────────
+var ws, reconnectDelay = 3000, reconnectTimer;
+
+function setStatus(state) {
+  var led = document.getElementById('status-led');
+  var txt = document.getElementById('status-text');
+  if (state==='connected')    { led.className='';     led.style.background='#44ff88'; txt.textContent='Live · AISStream'; }
+  else if (state==='connect') { led.className='warn'; led.style.background='#00c8ff'; txt.textContent='Connecting…'; }
+  else if (state==='error')   { led.className='err';  led.style.background='#ff4444'; txt.textContent='Reconnecting…'; }
+}
+
+function connect() {
+  if (!API_KEY) {
+    document.getElementById('no-key-msg').style.display='flex';
+    document.getElementById('status-led').style.background='#ff4444';
+    document.getElementById('status-text').textContent='No API key';
     return;
   }
-  var src = SOURCES[idx];
-  document.getElementById('src-badge').textContent = 'Trying ' + src.name + '…';
 
-  fetch(proxied(src.url), {signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined})
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      var vessels = src.parse(data);
-      if (vessels && vessels.length > 0) {
-        document.getElementById('src-badge').textContent = src.name + ' · OpenSeaMap overlay';
-        renderVessels(vessels);
-        // Re-fetch every 5 minutes
-        setTimeout(function() { trySource(idx); }, 300000);
-      } else {
-        trySource(idx + 1);
-      }
-    })
-    .catch(function() { trySource(idx + 1); });
-}
+  setStatus('connect');
+  ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
 
-// ── FALLBACK: densely sampled realistic static world fleet snapshot ────────
-// This is a curated realistic snapshot of ~200 vessel positions
-// from major shipping lanes — always available, offline-safe.
-function useFallback() {
-  document.getElementById('src-badge').textContent = 'Vessel Snapshot · OpenSeaMap overlay';
-  var snapshot = generateSnapshot();
-  renderVessels(snapshot);
-  // Animate vessels slowly to simulate live movement
-  setInterval(function() { driftVessels(snapshot); renderVessels(snapshot); }, 30000);
-}
+  ws.onopen = function() {
+    setStatus('connected');
+    reconnectDelay = 3000;
+    // Subscribe: all vessel types, global bounding box
+    ws.send(JSON.stringify({
+      APIKey: API_KEY,
+      BoundingBoxes: [[[-90,-180],[90,180]]],
+      FilterMessageTypes: ['PositionReport','ShipStaticData']
+    }));
+  };
 
-function rnd(min, max) { return min + Math.random() * (max - min); }
+  ws.onmessage = function(evt) {
+    var msg;
+    try { msg = JSON.parse(evt.data); } catch(e) { return; }
 
-function generateSnapshot() {
-  var vessels = [];
-  // Major shipping lanes: English Channel, Strait of Malacca, Suez/Red Sea,
-  // Gulf of Mexico, North Atlantic, Trans-Pacific, Indian Ocean, Cape of Good Hope
-  var lanes = [
-    // English Channel
-    {lat0:50.5,lat1:51.5,lon0:-2,lon1:2,n:18,type:72},
-    // North Sea
-    {lat0:52,lat1:58,lon0:2,lon1:8,n:12,type:80},
-    // Strait of Malacca
-    {lat0:1,lat1:5,lon0:100,lon1:104,n:22,type:72},
-    // South China Sea
-    {lat0:5,lat1:20,lon0:108,lon1:120,n:15,type:79},
-    // Red Sea / Suez
-    {lat0:14,lat1:30,lon0:32,lon1:44,n:14,type:72},
-    // Persian Gulf
-    {lat0:24,lat1:28,lon0:50,lon1:58,n:10,type:84},
-    // Gulf of Mexico
-    {lat0:22,lat1:30,lon0:-97,-89,n:10,type:84},
-    // North Atlantic eastbound
-    {lat0:42,lat1:52,lon0:-70,lon1:-10,n:20,type:72},
-    // Trans-Pacific
-    {lat0:30,lat1:45,lon0:140,lon1:-120,n:18,type:72},
-    // Indian Ocean
-    {lat0:-10,lat1:10,lon0:60,lon1:90,n:12,type:72},
-    // Cape of Good Hope
-    {lat0:-36,lat1:-30,lon0:15,lon1:35,n:8,type:72},
-    // Mediterranean
-    {lat0:34,lat1:42,lon0:0,lon1:28,n:16,type:72},
-    // US East Coast
-    {lat0:30,lat1:45,lon0:-78,lon1:-68,n:10,type:72},
-    // Brazil/South Atlantic
-    {lat0:-30,lat1:-5,lon0:-50,lon1:-30,n:8,type:72},
-    // Japan/Korea
-    {lat0:30,lat1:40,lon0:126,lon1:140,n:12,type:79},
-  ];
-  var names = ['EVER GIVEN','PACIFIC STAR','OCEAN PRIDE','SEA EAGLE','NORDIC BREEZE',
-    'MARITIME GLORY','ATLAS MARINER','CORAL SEA','SOUTHERN CROSS','ARCTIC WIND',
-    'BLUE HORIZON','GOLDEN GATE','SILVER HAWK','IRON CROSS','POLAR CHIEF',
-    'SUN VOYAGER','MOON DANCER','STAR RUNNER','WAVE RIDER','TIDE KEEPER',
-    'GULF TRADER','CAPE HUNTER','STORM RIDER','FAIR WINDS','LONG VOYAGE',
-    'DEEP SEA','COAST GUARD','HARBOR KING','PORT MASTER','OCEAN KING'];
-  var flags = ['PA','LR','MH','BS','CY','MT','BH','AG','SG','HK','KR','JP','CN','DE','GB','NO','GR','IT'];
-  var id = 200000000;
+    var mtype = msg.MessageType;
+    var meta  = msg.MetaData || {};
+    var mmsi  = String(meta.MMSI || '');
 
-  lanes.forEach(function(lane) {
-    var lon0 = Array.isArray(lane.lon0) ? lane.lon0[0] : lane.lon0;
-    var lon1 = Array.isArray(lane.lon0) ? lane.lon0[1] : lane.lon1;
-    if (lon0 > 180) lon0 -= 360;
-    if (lon1 > 180) lon1 -= 360;
-    for (var i = 0; i < lane.n; i++) {
-      vessels.push({
-        lat: rnd(lane.lat0, lane.lat1),
-        lon: rnd(lon0, lon1),
-        SHIPNAME: names[Math.floor(Math.random() * names.length)] + ' ' + (i+1),
-        MMSI: String(id++),
-        SOG:  rnd(8, 18).toFixed(1),
-        COG:  Math.floor(rnd(0, 360)),
-        SHIPTYPE: lane.type,
-        FLAG: flags[Math.floor(Math.random() * flags.length)],
-        DESTINATION: ''
+    if (mtype === 'PositionReport') {
+      var pr = (msg.Message||{}).PositionReport || {};
+      upsertVessel({
+        mmsi: mmsi,
+        name: (meta.ShipName||'').trim() || undefined,
+        lat:  pr.Latitude,
+        lon:  pr.Longitude,
+        sog:  pr.Sog,
+        cog:  pr.Cog,
+        type: pr.Type || undefined,
+        flag: meta.flag || undefined
+      });
+    } else if (mtype === 'ShipStaticData') {
+      var sd = (msg.Message||{}).ShipStaticData || {};
+      var dim = sd.Dimension || {};
+      var len = (dim.A||0)+(dim.B||0);
+      upsertVessel({
+        mmsi: mmsi,
+        name: (sd.Name||'').trim() || (meta.ShipName||'').trim() || undefined,
+        lat:  meta.latitude  || meta.Latitude,
+        lon:  meta.longitude || meta.Longitude,
+        sog:  undefined,
+        cog:  undefined,
+        type: sd.Type,
+        flag: sd.Flag || undefined,
+        dest: (sd.Destination||'').trim() || undefined,
+        eta:  sd.Eta || undefined,
+        length: len > 0 ? len : undefined
       });
     }
-  });
-  return vessels;
+  };
+
+  ws.onerror = function() { setStatus('error'); };
+
+  ws.onclose = function() {
+    setStatus('error');
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(function(){
+      reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+      connect();
+    }, reconnectDelay);
+  };
 }
 
-function driftVessels(vessels) {
-  vessels.forEach(function(v) {
-    var cog = (parseFloat(v.COG) || 0) * Math.PI / 180;
-    var spd = (parseFloat(v.SOG) || 10) * 0.000008;
-    v.lat = parseFloat(v.lat) + Math.cos(cog) * spd;
-    v.lon = parseFloat(v.lon) + Math.sin(cog) * spd;
-    if (v.lon > 180) v.lon -= 360;
-    if (v.lon < -180) v.lon += 360;
-    if (v.lat > 85) v.lat = 85;
-    if (v.lat < -85) v.lat = -85;
-  });
-}
-
-// Notify parent frame of vessel count
-function notifyParent(count) {
-  try {
-    if (window.parent && window.parent !== window) {
-      var badge = window.parent.document.getElementById('vessel-count-badge');
-      if (badge) badge.textContent = count.toLocaleString() + ' vessels live';
-    }
-  } catch(e) {}
-}
-
-setInterval(function() { notifyParent(vesselCount); }, 3000);
-
-// ── START ─────────────────────────────────────────────────────────────────
-trySource(0);
+connect();
 </script>
 </body>
 </html>"""
