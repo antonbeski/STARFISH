@@ -2990,11 +2990,18 @@ def api_satellite():
     })
 
 
+@app.route("/api/ais-key")
+def api_ais_key():
+    """Return AIS key status without exposing the key itself in the vessels HTML."""
+    key = os.environ.get("AISSTREAM_API_KEY", "").strip()
+    if not key:
+        return jsonify({"ok": False, "reason": "AISSTREAM_API_KEY env var not set"}), 503
+    # Return the key only over this server-side route (same-origin iframe can fetch it)
+    return jsonify({"ok": True, "key": key})
+
+
 @app.route("/vessels")
 def vessels():
-    api_key = os.environ.get("AISSTREAM_API_KEY", "")
-    # Safely inject the key — use json.dumps so any character is escaped properly
-    api_key_js = json.dumps(api_key)
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3006,7 +3013,7 @@ def vessels():
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#07090f;overflow:hidden}
-#map{position:absolute;inset:38px 0 0 0;background:#07090f}
+#map{position:absolute;inset:38px 0 60px 0;background:#07090f}
 .leaflet-container{background:#07090f}
 .leaflet-control-zoom{border:1px solid rgba(255,255,255,.1)!important;background:#0d1117!important;border-radius:6px!important}
 .leaflet-control-zoom a{background:#0d1117!important;color:#6b7fa3!important;border-color:rgba(255,255,255,.08)!important;width:26px!important;height:26px!important;line-height:26px!important}
@@ -3023,25 +3030,22 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
 .popup-val{color:#a8b8d8;font-size:11px}
 .popup-type-badge{display:inline-block;padding:1px 7px;border-radius:3px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
 #topbar{position:fixed;top:0;left:0;right:0;height:38px;z-index:1000;background:rgba(7,9,15,.96);border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;padding:0 14px;gap:10px;backdrop-filter:blur(10px)}
-#status-led{width:7px;height:7px;border-radius:50%;background:#00c8ff;flex-shrink:0;transition:background .3s}
-#status-led.warn{background:#ffaa33}
-#status-led.err{background:#ff4444}
+#status-led{width:7px;height:7px;border-radius:50%;background:#ffaa33;flex-shrink:0;transition:background .3s}
 #status-text{font-size:10px;letter-spacing:.06em;color:#6b7fa3;text-transform:uppercase}
 #vessel-counter{font-size:10px;letter-spacing:.06em;color:#00c8ff;background:rgba(0,200,255,.07);border:1px solid rgba(0,200,255,.15);border-radius:20px;padding:2px 10px}
 #filter-bar{margin-left:auto;display:flex;gap:6px}
 .fbtn{font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 9px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#6b7fa3;cursor:pointer;transition:all .15s;font-family:inherit}
 .fbtn:hover{border-color:#00c8ff;color:#00c8ff}
 .fbtn.on{background:rgba(0,200,255,.1);border-color:#00c8ff;color:#00c8ff}
-#no-key-msg{position:absolute;inset:0;z-index:500;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(7,9,15,.95);gap:12px;padding:32px}
-#no-key-msg h2{font-size:15px;color:#d4ddf0;letter-spacing:.06em;text-transform:uppercase}
-#no-key-msg p{font-size:11px;color:#6b7fa3;text-align:center;max-width:340px;line-height:1.7}
-#no-key-msg code{background:#0d1117;border:1px solid rgba(0,200,255,.2);border-radius:4px;padding:8px 14px;font-size:11px;color:#00c8ff;display:block;margin-top:4px;text-align:center}
+#debugbar{position:fixed;bottom:0;left:0;right:0;height:60px;z-index:1000;background:rgba(7,9,15,.97);border-top:1px solid rgba(255,255,255,.06);padding:6px 14px;display:flex;flex-direction:column;gap:3px;overflow:hidden}
+#debug-line1{font-size:9px;letter-spacing:.05em;color:#4a6a9a;font-family:'DM Mono',monospace}
+#debug-line2{font-size:9px;letter-spacing:.04em;color:#3a5070;font-family:'DM Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head>
 <body>
 <div id="topbar">
-  <div id="status-led" class="warn"></div>
-  <span id="status-text">Connecting…</span>
+  <div id="status-led"></div>
+  <span id="status-text">Initialising…</span>
   <span id="vessel-counter">0 vessels</span>
   <div id="filter-bar">
     <button class="fbtn on" data-type="all">All</button>
@@ -3053,40 +3057,41 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
   </div>
 </div>
 <div id="map"></div>
-<div id="no-key-msg" style="display:none">
-  <h2>AISStream API Key Required</h2>
-  <p>Set your key as a Vercel environment variable and redeploy:</p>
-  <code>AISSTREAM_API_KEY=your_key_here</code>
-  <p style="margin-top:8px">Get a free key at <a href="https://aisstream.io" style="color:#00c8ff">aisstream.io</a></p>
+<div id="debugbar">
+  <div id="debug-line1">AIS tracker initialising…</div>
+  <div id="debug-line2"></div>
 </div>
 <script>
-var API_KEY = """ + api_key_js + """;
-
 // ── MAP ───────────────────────────────────────────────────────────────────
-var map = L.map('map', {center:[20,10],zoom:2,zoomControl:true,attributionControl:true});
-
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-  attribution:'&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/copyright">OSM</a>',
-  subdomains:'abcd', maxZoom:19
+var map = L.map('map', {center:[20,10], zoom:2, zoomControl:true, attributionControl:true});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/copyright">OSM</a>',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://openseamap.org">OpenSeaMap</a>',
+  opacity: 0.55, maxZoom: 18
 }).addTo(map);
 
-L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',{
-  attribution:'&copy; <a href="https://openseamap.org">OpenSeaMap</a>', opacity:0.55, maxZoom:18
-}).addTo(map);
+// ── DEBUG LOG ──────────────────────────────────────────────────────────────
+function dbg(line1, line2) {
+  document.getElementById('debug-line1').textContent = line1 || '';
+  if (line2 !== undefined) document.getElementById('debug-line2').textContent = line2 || '';
+}
 
 // ── VESSEL STATE ──────────────────────────────────────────────────────────
-var vessels = {};      // mmsi -> {marker, data, lastSeen}
-var vesselTypes = {};  // mmsi -> ship type int (cached from ShipStaticData)
+var vessels    = {};  // mmsi -> {marker, data, lastSeen, shown}
+var typeCache  = {};  // mmsi -> ship type int (from ShipStaticData)
 var activeFilter = 'all';
+var msgCount = 0;
 
-// Type classification from AIS ship type integer
 function classify(t) {
   t = parseInt(t) || 0;
-  if (t>=70&&t<=79) return 'cargo';
-  if (t>=80&&t<=89) return 'tanker';
-  if (t>=60&&t<=69) return 'passenger';
-  if (t>=30&&t<=39) return 'fishing';
-  if (t>=50&&t<=59) return 'service';
+  if (t >= 70 && t <= 79) return 'cargo';
+  if (t >= 80 && t <= 89) return 'tanker';
+  if (t >= 60 && t <= 69) return 'passenger';
+  if (t >= 30 && t <= 39) return 'fishing';
+  if (t >= 50 && t <= 59) return 'service';
   return 'other';
 }
 
@@ -3099,7 +3104,6 @@ var TYPE_META = {
   other:     {color:'#6b7fa3', label:'Other'}
 };
 
-// ── ICONS: rotatable SVG arrow ────────────────────────────────────────────
 function makeMarkerHTML(color, cog) {
   var r = parseFloat(cog) || 0;
   return '<div style="width:0;height:0;position:relative;transform:rotate('+r+'deg);transform-origin:center center">' +
@@ -3107,15 +3111,10 @@ function makeMarkerHTML(color, cog) {
     '<polygon points="7,0 13,18 7,13 1,18" fill="'+color+'" stroke="rgba(0,0,0,.6)" stroke-width="1.2" stroke-linejoin="round"/>' +
     '</svg></div>';
 }
-
 function makeIcon(color, cog) {
-  return L.divIcon({
-    html: makeMarkerHTML(color, cog),
-    className: '', iconSize:[14,20], iconAnchor:[7,10]
-  });
+  return L.divIcon({html: makeMarkerHTML(color, cog), className:'', iconSize:[14,20], iconAnchor:[7,10]});
 }
 
-// ── POPUP ────────────────────────────────────────────────────────────────
 function buildPopup(d) {
   var meta = TYPE_META[d.cls] || TYPE_META.other;
   var badge = '<span class="popup-type-badge" style="background:'+meta.color+'22;color:'+meta.color+';border:1px solid '+meta.color+'44">'+meta.label+'</span>';
@@ -3128,46 +3127,38 @@ function buildPopup(d) {
     ['ETA',    d.eta  || '—'],
     ['Length', d.length ? d.length+'m' : '—'],
   ];
-  var html = '<div class="popup-name">'+(d.name||'Unknown')+'</div>';
-  html += '<div style="margin-bottom:6px">'+badge+'</div>';
-  rows.forEach(function(r){
-    if(r[1]==='—') return;
-    html += '<div class="popup-row"><span class="popup-key">'+r[0]+'</span><span class="popup-val">'+r[1]+'</span></div>';
-  });
+  var html = '<div class="popup-name">'+(d.name||'Unknown')+'</div>' +
+             '<div style="margin-bottom:6px">'+badge+'</div>';
+  rows.forEach(function(r){ if(r[1]!=='—') html += '<div class="popup-row"><span class="popup-key">'+r[0]+'</span><span class="popup-val">'+r[1]+'</span></div>'; });
   return html;
 }
 
-// ── VESSEL UPSERT ────────────────────────────────────────────────────────
 function upsertVessel(d) {
-  var mmsi = String(d.mmsi);
+  var mmsi = String(d.mmsi || '');
+  if (!mmsi || mmsi === '0') return;
   var lat = parseFloat(d.lat), lon = parseFloat(d.lon);
-  if (!mmsi || isNaN(lat) || isNaN(lon)) return;
-  // Sanity-check coords
-  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+  if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
 
-  var cls = classify(d.type);
+  var cls  = classify(d.type || typeCache[mmsi]);
   d.cls = cls;
   var meta = TYPE_META[cls] || TYPE_META.other;
   var visible = (activeFilter === 'all' || activeFilter === cls ||
                  (activeFilter === 'other' && (cls==='other'||cls==='service')));
 
   if (vessels[mmsi]) {
-    // Update existing marker
     var v = vessels[mmsi];
     v.data = Object.assign(v.data, d);
     v.lastSeen = Date.now();
     v.marker.setLatLng([lat, lon]);
     v.marker.setIcon(makeIcon(meta.color, d.cog));
     if (v.marker.isPopupOpen()) v.marker.setPopupContent(buildPopup(v.data));
-    if (!visible) { map.removeLayer(v.marker); v.shown = false; }
-    else if (!v.shown) { map.addLayer(v.marker); v.shown = true; }
+    if (!visible && v.shown) { map.removeLayer(v.marker); v.shown = false; }
+    else if (visible && !v.shown) { map.addLayer(v.marker); v.shown = true; }
   } else {
     var marker = L.marker([lat, lon], {icon: makeIcon(meta.color, d.cog)});
-    marker.bindPopup('', {maxWidth:260, className:'ais-popup'});
-    marker.on('click', function(){
-      marker.setPopupContent(buildPopup(vessels[mmsi].data));
-    });
-    if (visible) { marker.addTo(map); }
+    marker.bindPopup('', {maxWidth:260});
+    marker.on('click', function(){ marker.setPopupContent(buildPopup(vessels[mmsi].data)); });
+    if (visible) marker.addTo(map);
     vessels[mmsi] = {marker:marker, data:d, lastSeen:Date.now(), shown:visible};
   }
   updateCounter();
@@ -3175,136 +3166,166 @@ function upsertVessel(d) {
 
 function updateCounter() {
   var n = Object.keys(vessels).length;
-  document.getElementById('vessel-counter').textContent = n.toLocaleString()+' vessels';
-  // Notify parent frame badge
-  try {
-    var b = window.parent.document.getElementById('ais-vessel-badge');
-    if (b) b.textContent = n.toLocaleString()+' live';
-  } catch(e){}
+  document.getElementById('vessel-counter').textContent = n.toLocaleString() + ' vessels';
+  try { var b=window.parent.document.getElementById('ais-vessel-badge'); if(b) b.textContent=n.toLocaleString()+' live'; } catch(e){}
 }
 
-// Prune vessels not seen in 20 minutes
 setInterval(function(){
   var cutoff = Date.now() - 1200000;
   Object.keys(vessels).forEach(function(mmsi){
     if (vessels[mmsi].lastSeen < cutoff) {
       map.removeLayer(vessels[mmsi].marker);
       delete vessels[mmsi];
-      delete vesselTypes[mmsi];
+      delete typeCache[mmsi];
     }
   });
   updateCounter();
 }, 60000);
 
-// ── FILTER BUTTONS ───────────────────────────────────────────────────────
+// ── FILTER BUTTONS ─────────────────────────────────────────────────────────
 document.getElementById('filter-bar').addEventListener('click', function(e){
-  var btn = e.target.closest('.fbtn');
-  if (!btn) return;
+  var btn = e.target.closest('.fbtn'); if (!btn) return;
   activeFilter = btn.dataset.type;
   document.querySelectorAll('.fbtn').forEach(function(b){ b.classList.remove('on'); });
   btn.classList.add('on');
   Object.values(vessels).forEach(function(v){
     var cls = v.data.cls;
-    var vis = (activeFilter==='all'||activeFilter===cls||
-               (activeFilter==='other'&&(cls==='other'||cls==='service')));
-    if (vis && !v.shown)  { map.addLayer(v.marker);    v.shown=true;  }
+    var vis = (activeFilter==='all'||activeFilter===cls||(activeFilter==='other'&&(cls==='other'||cls==='service')));
+    if (vis && !v.shown)  { map.addLayer(v.marker);    v.shown=true; }
     if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
   });
 });
 
-// ── AISSTREAM WEBSOCKET ──────────────────────────────────────────────────
-var ws, reconnectDelay = 3000, reconnectTimer;
-
-function setStatus(state) {
+// ── STATUS ────────────────────────────────────────────────────────────────
+function setStatus(state, detail) {
   var led = document.getElementById('status-led');
   var txt = document.getElementById('status-text');
-  if (state==='connected')    { led.className='';     led.style.background='#44ff88'; txt.textContent='Live · AISStream'; }
-  else if (state==='connect') { led.className='warn'; led.style.background='#00c8ff'; txt.textContent='Connecting…'; }
-  else if (state==='error')   { led.className='err';  led.style.background='#ff4444'; txt.textContent='Reconnecting…'; }
+  var states = {
+    init:      {bg:'#ffaa33', text:'Initialising…'},
+    fetching:  {bg:'#ffaa33', text:'Fetching key…'},
+    connecting:{bg:'#00c8ff', text:'Connecting to AISStream…'},
+    connected: {bg:'#44ff88', text:'Live · AISStream'},
+    error:     {bg:'#ff4444', text:'Error — Reconnecting…'},
+    nokey:     {bg:'#ff4444', text:'No API Key Set'},
+    closed:    {bg:'#ffaa33', text:'Reconnecting…'}
+  };
+  var s = states[state] || {bg:'#6b7fa3', text:state};
+  led.style.background = s.bg;
+  txt.textContent = s.text;
+  if (detail) dbg(s.text, detail);
+  else dbg(s.text);
 }
 
-function connect() {
-  if (!API_KEY) {
-    document.getElementById('no-key-msg').style.display='flex';
-    document.getElementById('status-led').style.background='#ff4444';
-    document.getElementById('status-text').textContent='No API key';
-    return;
-  }
+// ── WEBSOCKET ────────────────────────────────────────────────────────────
+var ws = null, reconnectDelay = 3000, reconnectTimer = null;
 
-  setStatus('connect');
+function connect(apiKey) {
+  setStatus('connecting', 'Opening wss://stream.aisstream.io/v0/stream');
   ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
 
   ws.onopen = function() {
-    setStatus('connected');
+    setStatus('connected', 'Sending subscription…');
     reconnectDelay = 3000;
-    // Subscribe: all vessel types, global bounding box
-    ws.send(JSON.stringify({
-      APIKey: API_KEY,
-      BoundingBoxes: [[[-90,-180],[90,180]]],
-      FilterMessageTypes: ['PositionReport','ShipStaticData']
-    }));
+    var sub = {
+      APIKey: apiKey,
+      BoundingBoxes: [[[-90, -180], [90, 180]]],
+      FilterMessageTypes: ['PositionReport', 'ShipStaticData']
+    };
+    ws.send(JSON.stringify(sub));
+    dbg('Connected · Subscription sent · Waiting for vessels…', JSON.stringify(sub).slice(0,120));
   };
 
   ws.onmessage = function(evt) {
+    msgCount++;
     var msg;
-    try { msg = JSON.parse(evt.data); } catch(e) { return; }
+    try { msg = JSON.parse(evt.data); } catch(e) { dbg('JSON parse error: '+e.message); return; }
+
+    // Show first few raw messages for debugging
+    if (msgCount <= 3) dbg('MSG #'+msgCount+': '+msg.MessageType, JSON.stringify(msg).slice(0,140));
+    if (msgCount % 100 === 0) dbg('Messages received: '+msgCount+' · Vessels: '+Object.keys(vessels).length);
 
     var mtype = msg.MessageType;
     var meta  = msg.MetaData || {};
-    var mmsi  = String(meta.MMSI || '');
+    var mmsi  = String(meta.MMSI || meta.MmsiString || '');
 
     if (mtype === 'PositionReport') {
-      var pr = (msg.Message||{}).PositionReport || {};
+      var pr = (msg.Message || {}).PositionReport || {};
       upsertVessel({
         mmsi: mmsi,
-        name: (meta.ShipName||'').trim() || undefined,
+        name: (meta.ShipName || '').trim() || undefined,
         lat:  pr.Latitude,
         lon:  pr.Longitude,
         sog:  pr.Sog,
         cog:  pr.Cog,
-        type: vesselTypes[mmsi],   // use cached type from ShipStaticData
+        type: typeCache[mmsi],
         flag: meta.Flag || undefined
       });
+
     } else if (mtype === 'ShipStaticData') {
-      var sd = (msg.Message||{}).ShipStaticData || {};
+      var sd  = (msg.Message || {}).ShipStaticData || {};
       var dim = sd.Dimension || {};
-      var len = (dim.A||0)+(dim.B||0);
-      // Cache ship type by MMSI so PositionReport messages can use it
-      if (sd.Type) vesselTypes[mmsi] = sd.Type;
-      upsertVessel({
-        mmsi: mmsi,
-        name: (sd.Name||'').trim() || (meta.ShipName||'').trim() || undefined,
-        lat:  meta.latitude || meta.Latitude,
-        lon:  meta.longitude || meta.Longitude,
-        sog:  undefined,
-        cog:  undefined,
-        type: sd.Type,
-        flag: sd.Flag || meta.Flag || undefined,
-        dest: (sd.Destination||'').trim() || undefined,
-        eta:  sd.Eta || undefined,
-        length: len > 0 ? len : undefined
-      });
+      var len = (dim.A||0) + (dim.B||0);
+      if (sd.Type) typeCache[mmsi] = sd.Type;
+      // ShipStaticData often has no position — only upsert if we have coords
+      var lat = parseFloat(meta.latitude || meta.Latitude || 0);
+      var lon = parseFloat(meta.longitude || meta.Longitude || 0);
+      if (lat !== 0 || lon !== 0) {
+        upsertVessel({
+          mmsi: mmsi,
+          name: (sd.Name || '').trim() || (meta.ShipName||'').trim() || undefined,
+          lat:  lat, lon: lon,
+          type: sd.Type,
+          flag: sd.Flag || meta.Flag || undefined,
+          dest: (sd.Destination||'').trim() || undefined,
+          eta:  sd.Eta || undefined,
+          length: len > 0 ? len : undefined
+        });
+      }
+
+    } else if (mtype === 'ERROR' || mtype === 'error') {
+      var errMsg = (msg.Message || msg.Error || JSON.stringify(msg)).slice(0,200);
+      setStatus('error', 'Server error: ' + errMsg);
     }
   };
 
-  ws.onerror = function() { setStatus('error'); };
+  ws.onerror = function(e) {
+    setStatus('error', 'WebSocket error — check browser console for details');
+  };
 
-  ws.onclose = function() {
-    setStatus('error');
+  ws.onclose = function(evt) {
+    var reason = evt.reason || ('Code '+evt.code);
+    setStatus('closed', 'Closed: '+reason+' · Retry in '+(reconnectDelay/1000).toFixed(0)+'s');
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(function(){
       reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
-      connect();
+      init();
     }, reconnectDelay);
   };
 }
 
-connect();
+// ── INIT: Fetch key from server, then connect ─────────────────────────────
+function init() {
+  setStatus('fetching', 'GET /api/ais-key …');
+  fetch('/api/ais-key')
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(d){ throw new Error(d.reason || 'HTTP '+r.status); });
+      return r.json();
+    })
+    .then(function(data) {
+      if (!data.ok || !data.key) throw new Error(data.reason || 'Key missing in response');
+      dbg('API key fetched OK · Connecting…');
+      connect(data.key);
+    })
+    .catch(function(err) {
+      setStatus('nokey', 'Set AISSTREAM_API_KEY in Vercel env vars. Error: ' + err.message);
+    });
+}
+
+init();
 </script>
 </body>
 </html>"""
     return html
-
 
 @app.route("/debug")
 def debug():
