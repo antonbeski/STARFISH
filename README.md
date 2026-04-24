@@ -1,3 +1,5 @@
+<img width="1202" height="328" alt="Screenshot 2026-04-24 170405" src="https://github.com/user-attachments/assets/1901aa96-2494-4d01-b6fb-3f51217059a4" />
+<img width="1202" height="328" alt="Screenshot 2026-04-24 170405" src="https://github.com/user-attachments/assets/835f190f-eaf1-408a-a4f6-d7ac70e47d6f" />
 #  STARFISH — Market dynamics
 <img width="100" height="100" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />
 
@@ -36,6 +38,8 @@ The entire platform ships as a **single Python file** (`index.py`), requiring no
 - **Time range selector**: 1M · 3M · 6M · 1Y · 2Y · 5Y
 - Fully responsive, drag-to-pan, hover-unified tooltips
 - **USD and INR currency detection** — appends `.NS` for NSE / `.BO` for BSE stocks
+<img width="1202" height="328" alt="Screenshot 2026-04-24 170405" src="https://github.com/user-attachments/assets/8caec4c4-b0d8-4d58-89a4-56a2a8b517e1" />
+<img width="1175" height="582" alt="Screenshot 2026-04-24 170433" src="https://github.com/user-attachments/assets/306b4438-4bf9-43ce-abe6-76546630a146" />
 
 ###  Multi-Model AI Analysis
 Three LLMs available via [OpenRouter](https://openrouter.ai), selectable per analysis request:
@@ -47,6 +51,10 @@ Three LLMs available via [OpenRouter](https://openrouter.ai), selectable per ana
 | Qwen3 Coder | `qwen/qwen3-coder` | Quantitative focus |
 
 The AI prompt is constructed from **12 technical indicators**, OHLCV data, FRED macro, Google Trends, shipping context, and company fundamentals — giving each model a rich, structured financial brief.
+<img width="1170" height="314" alt="Screenshot 2026-04-24 170455" src="https://github.com/user-attachments/assets/367a2c83-9b74-4e8b-ae01-9d00b349f8ee" />
+<img width="1145" height="594" alt="Screenshot 2026-04-24 170823" src="https://github.com/user-attachments/assets/6cd35ac7-d4d3-4343-92f1-6ced164af853" />
+<img width="1096" height="563" alt="Screenshot 2026-04-24 170852" src="https://github.com/user-attachments/assets/9bdce4a1-acc3-484c-a6cd-c8f741441e67" />
+<img width="1092" height="153" alt="Screenshot 2026-04-24 170925" src="https://github.com/user-attachments/assets/49386133-689e-4061-851c-2f165837fd26" />
 
 ###  Real-Time Macro Data (FRED)
 Pulls 9 key macroeconomic series from the St. Louis Fed public API:
@@ -70,18 +78,21 @@ Multi-source financial RSS scraper fetching from **7 outlets** concurrently:
 - Yahoo Finance, CNBC, MarketWatch, Benzinga, Financial Times, Wall Street Journal, Reuters, Seeking Alpha
 
 News is filtered by **sector-specific keywords** across 11 GICS-aligned sectors.
+<img width="1191" height="415" alt="Screenshot 2026-04-24 171100" src="https://github.com/user-attachments/assets/05966d7f-238c-4472-9ceb-4677106606bf" />
 
 ###  Shipping & Macro Context
 - **Baltic Dry Index (BDI)** — scraped from public sources as a global trade proxy
 - **AIS vessel tracking** — integrates `aisstream.io` WebSocket API for live ship positions
 - **Major port monitoring**: Houston, Los Angeles, Rotterdam, Singapore, Shanghai
 - `/vessels` page renders a full-screen Leaflet.js map with real-time AIS vessel overlays
+  <img width="1157" height="620" alt="Screenshot 2026-04-24 172451" src="https://github.com/user-attachments/assets/3fcca1f8-b975-4083-b654-160642d00b71" />
+
 
 ###  Satellite Intelligence Layer
 Each of the 11 sectors includes **30 curated latitude/longitude targets** of key global industrial sites — refineries, steel mills, auto plants, airports, ports — enabling overlay with commercial satellite imagery tools.
 
 Sectors covered: Energy, Materials, Industrials, Consumer Discretionary, Consumer Staples, Health Care, Financials, IT, Communication Services, Real Estate, Utilities.
-
+<img width="1110" height="609" alt="Screenshot 2026-04-24 171142" src="https://github.com/user-attachments/assets/c94f0001-815c-4bc9-a5a0-698b72555bb6" />
 
 
 ---
