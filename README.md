@@ -212,14 +212,6 @@ docker run -p 5000:5000 \
 | `OPEN_ROUTER_API_KEY` | **Yes** (for AI) | Your [OpenRouter](https://openrouter.ai) API key |
 | `AISSTREAM_API_KEY` | No | [AISStream.io](https://aisstream.io) key for live vessel tracking |
 
-### Rate Limit Tuning
-
-Edit these constants at the top of `index.py`:
-
-```python
-RL_RPM = 20    # Requests per minute per AI model
-RL_RPD = 200   # Requests per day per AI model
-```
 
 ### Cache TTLs
 
