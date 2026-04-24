@@ -2211,7 +2211,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .disclaimer-icon svg{{width:12px;height:12px}}
 
       /* Vessel tracker — match Live News frame aspect ratio on mobile */
-      .vessel-iframe-wrap{{position:relative;width:100%;padding-top:56.25%;overflow:hidden;background:#000}}
+      .vessel-iframe-wrap{{position:relative;width:100%;padding-top:75%;overflow:hidden;background:#000}}
       .vessel-iframe-wrap iframe{{position:absolute;inset:0;width:100%;height:100%;border:none;display:block}}
       #vessel-iframe{{height:100%!important;min-height:0}}
       .vessel-wrap{{overflow:hidden;border-radius:0 0 10px 10px}}
