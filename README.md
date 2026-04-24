@@ -14,7 +14,7 @@
 
 *A full-stack, single-file market intelligence dashboard with dark premium UI, multi-model AI analysis, real-time FRED macroeconomic data, Google Trends sentiment, live AIS vessel tracking, and satellite target mapping across 11 global sectors.*
 
-[Features](#-features) · [Architecture](#-architecture) · [Installation](#-installation) · [Configuration](#-configuration) · [API Reference](#-api-reference) · [Screenshots](#-screenshots)
+[Features](#-features) · [Architecture](#-architecture) · [Installation](#-installation) · [Configuration](#-configuration) · [API Reference](#-api-reference) 
 
 </div>
 
