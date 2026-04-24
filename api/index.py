@@ -2210,10 +2210,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .disclaimer-label{{font-size:.48rem;padding:1px 5px}}
       .disclaimer-icon svg{{width:12px;height:12px}}
 
-      /* Vessel tracker — match Live News frame aspect ratio on mobile */
-      .vessel-iframe-wrap{{position:relative;width:100%;padding-top:75%;overflow:hidden;background:#000}}
-      .vessel-iframe-wrap iframe{{position:absolute;inset:0;width:100%;height:100%;border:none;display:block}}
-      #vessel-iframe{{height:100%!important;min-height:0}}
+      /* Vessel tracker */
+      #vessel-iframe{{height:260px;min-height:0}}
       .vessel-wrap{{overflow:hidden;border-radius:0 0 10px 10px}}
       /* Disable hover animations on touch to prevent jank */
       .news-card{{animation:none;transition:none}}
@@ -2243,7 +2241,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-badge{{font-size:.72rem;padding:5px 12px}}
       .ai-pts{{grid-template-columns:1fr 1fr}}
       .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
-      #vessel-iframe{{height:100%!important;min-height:0}}
+      #vessel-iframe{{height:200px;min-height:0}}
     }}
   </style>
 </head>
@@ -2417,9 +2415,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#0077aa;background:#e8f6ff;border:1px solid #b8ddf5;border-radius:20px;padding:3px 10px;">AISStream WebSocket</span>
     <span id="ais-vessel-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Connecting…</span>
   </div>
-  <div class="vessel-iframe-wrap" style="position:static;padding-top:0;overflow:visible;background:transparent">
-    <iframe id="vessel-iframe" src="/vessels" style="width:100%;height:660px;border:none;display:block;" title="Live Vessel Tracker" loading="lazy"></iframe>
-  </div>
+  <iframe id="vessel-iframe" src="/vessels" style="width:100%;height:660px;border:none;display:block;" title="Live Vessel Tracker" loading="lazy"></iframe>
 </div>
 
 </main>
