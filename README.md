@@ -1,4 +1,4 @@
-#  STARFISH — Market dynamics <img width="10" height="10" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />
+#  STARFISH — Market dynamics <img width="50" height="50" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />
 
 
 
