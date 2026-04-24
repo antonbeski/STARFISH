@@ -1,5 +1,3 @@
-<img width="1202" height="328" alt="Screenshot 2026-04-24 170405" src="https://github.com/user-attachments/assets/1901aa96-2494-4d01-b6fb-3f51217059a4" />
-<img width="1202" height="328" alt="Screenshot 2026-04-24 170405" src="https://github.com/user-attachments/assets/835f190f-eaf1-408a-a4f6-d7ac70e47d6f" />
 #  STARFISH — Market dynamics
 <img width="100" height="100" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />
 
