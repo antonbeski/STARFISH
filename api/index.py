@@ -1211,78 +1211,118 @@ def _sf(v, d=4):
  
  
 def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None):
-    c  = df["Close"].squeeze().dropna()
-    h  = df["High"].squeeze()
-    lo = df["Low"].squeeze()
-    op = df["Open"].squeeze()
+    # ── DATA HYGIENE: drop NaN rows, deduplicate index, enforce numeric types ──
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    for col in ["Open", "High", "Low", "Close"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["Close"])
+
+    c   = df["Close"].squeeze()
+    h   = df["High"].squeeze()
+    lo  = df["Low"].squeeze()
+    op  = df["Open"].squeeze()
     vol = df["Volume"].squeeze() if "Volume" in df.columns else None
-    n = len(c)
+    n   = len(c)
+
+    if n < 2:
+        raise ValueError(f"Insufficient data for {ticker}: only {n} valid bars after cleaning.")
+
     cur  = _sf(c.iloc[-1])
-    prev = _sf(c.iloc[-2]) if n > 1 else cur
-    currency = "INR" if ticker.upper().endswith((".NS",".BO")) else "USD"
- 
-    hi52 = _sf(c.tail(252).max()); lo52 = _sf(c.tail(252).min())
- 
+    prev = _sf(c.iloc[-2])
+    currency = "INR" if ticker.upper().endswith((".NS", ".BO")) else "USD"
+
+    hi52 = _sf(c.tail(252).max())
+    lo52 = _sf(c.tail(252).min())
+
     # ── MACD ──
     macd_d = {}
     if n >= 27:
         ml, sl, hl = calc_macd(c)
-        macd_d = {"macd": _sf(ml.iloc[-1]), "signal": _sf(sl.iloc[-1]),
-                  "histogram": _sf(hl.iloc[-1]), "hist_prev": _sf(hl.iloc[-2]) if n > 27 else None,
-                  "crossover": "bullish" if (hl.iloc[-1] > 0 and hl.iloc[-2] < 0) else
-                               "bearish" if (hl.iloc[-1] < 0 and hl.iloc[-2] > 0) else "none"}
- 
+        macd_d = {
+            "macd": _sf(ml.iloc[-1]), "signal": _sf(sl.iloc[-1]),
+            "histogram": _sf(hl.iloc[-1]), "hist_prev": _sf(hl.iloc[-2]) if n > 27 else None,
+            "crossover": "bullish" if (hl.iloc[-1] > 0 and hl.iloc[-2] < 0) else
+                         "bearish" if (hl.iloc[-1] < 0 and hl.iloc[-2] > 0) else "none",
+        }
+
     # ── Bollinger Bands ──
     bb_d = {}
     if n >= 20:
         bbu, bbm, bbl = calc_bb(c)
-        bb_d = {"upper": _sf(bbu.iloc[-1]), "mid": _sf(bbm.iloc[-1]), "lower": _sf(bbl.iloc[-1]),
-                "percent_b": _sf((cur - _sf(bbl.iloc[-1])) / (_sf(bbu.iloc[-1]) - _sf(bbl.iloc[-1]))) if _sf(bbu.iloc[-1]) != _sf(bbl.iloc[-1]) else None,
-                "bandwidth": _sf(((bbu.iloc[-1]-bbl.iloc[-1])/bbm.iloc[-1])*100)}
- 
+        bbu_v, bbl_v = _sf(bbu.iloc[-1]), _sf(bbl.iloc[-1])
+        bb_width = (bbu_v - bbl_v) if (bbu_v and bbl_v) else None
+        bb_d = {
+            "upper": bbu_v, "mid": _sf(bbm.iloc[-1]), "lower": bbl_v,
+            "percent_b": _sf((cur - bbl_v) / bb_width) if bb_width else None,
+            "bandwidth": _sf((bb_width / _sf(bbm.iloc[-1])) * 100) if (bb_width and bbm.iloc[-1]) else None,
+        }
+
     # ── Moving Averages ──
-    sma20  = _sf(calc_sma(c,20).iloc[-1])  if n>=20  else None
-    sma50  = _sf(calc_sma(c,50).iloc[-1])  if n>=50  else None
-    sma200 = _sf(calc_sma(c,200).iloc[-1]) if n>=200 else None
-    rsi_v  = _sf(calc_rsi(c).iloc[-1])     if n>=15  else None
-    atr_v  = _sf(calc_atr(h,lo,c).iloc[-1]) if n>=15 else None
- 
+    sma20  = _sf(calc_sma(c, 20).iloc[-1]) if n >= 20  else None
+    sma50  = _sf(calc_sma(c, 50).iloc[-1]) if n >= 50  else None
+    sma200 = _sf(calc_sma(c, 200).iloc[-1]) if n >= 200 else None
+    rsi_v  = _sf(calc_rsi(c).iloc[-1])      if n >= 15  else None
+    atr_v  = _sf(calc_atr(h, lo, c).iloc[-1]) if n >= 15 else None
+
     # ── Advanced Indicators ──
     adv = {}
     if vol is not None and n >= 20:
-        obv = calc_obv(c, vol)
-        adv["obv_trend"] = "rising" if obv.iloc[-1] > obv.iloc[-5] else "falling" if len(obv) > 5 else "flat"
+        # Sanitize volume: replace zeros/negatives with NaN before OBV/CMF
+        vol_clean = vol.where(vol > 0)
+        obv  = calc_obv(c, vol_clean.fillna(0))
+        cmf  = calc_cmf(h, lo, c, vol_clean.fillna(0))
+        vwap = calc_vwap(h, lo, c, vol_clean.fillna(0))
+
+        obv_chg = obv.iloc[-1] - obv.iloc[-5] if len(obv) >= 5 else 0
+        adv["obv_trend"]   = "rising" if obv_chg > 0 else "falling" if obv_chg < 0 else "flat"
         adv["obv_current"] = _sf(obv.iloc[-1])
-        cmf = calc_cmf(h, lo, c, vol)
-        adv["cmf"] = _sf(cmf.iloc[-1])
-        adv["cmf_signal"] = "buying_pressure" if cmf.iloc[-1] > 0.05 else "selling_pressure" if cmf.iloc[-1] < -0.05 else "neutral"
-        vwap = calc_vwap(h, lo, c, vol)
-        adv["vwap"] = _sf(vwap.iloc[-1])
-        adv["vs_vwap"] = "above" if cur and vwap.iloc[-1] and cur > vwap.iloc[-1] else "below"
- 
+        adv["obv_5d_chg"]  = _sf(obv_chg)
+
+        cmf_v = cmf.iloc[-1]
+        adv["cmf"] = _sf(cmf_v)
+        adv["cmf_signal"] = "buying_pressure" if cmf_v > 0.05 else "selling_pressure" if cmf_v < -0.05 else "neutral"
+
+        adv["vwap"]     = _sf(vwap.iloc[-1])
+        adv["vs_vwap"]  = "above" if (cur and vwap.iloc[-1] and cur > vwap.iloc[-1]) else "below"
+        adv["vwap_gap_pct"] = _sf(((cur - vwap.iloc[-1]) / vwap.iloc[-1]) * 100) if vwap.iloc[-1] else None
+
+        # Volume spike detection: flag if today > 2× 20d avg
+        avg20_vol = vol_clean.tail(20).mean()
+        adv["vol_spike"] = bool(vol_clean.iloc[-1] > 2 * avg20_vol) if (pd.notna(avg20_vol) and avg20_vol > 0) else False
+
     if n >= 14:
         stk, stk_d = calc_stoch(h, lo, c)
-        adv["stoch_k"] = _sf(stk.iloc[-1])
-        adv["stoch_d"] = _sf(stk_d.iloc[-1])
+        adv["stoch_k"]    = _sf(stk.iloc[-1])
+        adv["stoch_d"]    = _sf(stk_d.iloc[-1])
         adv["stoch_zone"] = "overbought" if stk.iloc[-1] > 80 else "oversold" if stk.iloc[-1] < 20 else "neutral"
+        # Stoch divergence: price higher but stoch lower (bearish) or vice versa
+        if n >= 19:
+            price_dir = c.iloc[-1] - c.iloc[-5]
+            stoch_dir = stk.iloc[-1] - stk.iloc[-5]
+            adv["stoch_divergence"] = (
+                "bearish" if price_dir > 0 and stoch_dir < 0 else
+                "bullish" if price_dir < 0 and stoch_dir > 0 else "none"
+            )
         wr = calc_williams_r(h, lo, c)
         adv["williams_r"] = _sf(wr.iloc[-1])
- 
+
     if n >= 14:
         adx = calc_adx(h, lo, c)
-        adv["adx"] = _sf(adx.iloc[-1])
-        adv["trend_strength"] = "strong" if adx.iloc[-1] > 25 else "weak" if adx.iloc[-1] < 20 else "moderate"
- 
+        adx_v = adx.iloc[-1]
+        adv["adx"]            = _sf(adx_v)
+        adv["trend_strength"] = "strong" if adx_v > 25 else "weak" if adx_v < 20 else "moderate"
+
     if n >= 52:
         ten, kij, sen_a, sen_b = calc_ichimoku(h, lo)
         adv["ichimoku_tenkan"] = _sf(ten.iloc[-1])
         adv["ichimoku_kijun"]  = _sf(kij.iloc[-1])
         adv["ichimoku_signal"] = (
-            "bullish_cloud" if cur and ten.iloc[-1] and kij.iloc[-1] and cur > ten.iloc[-1] > kij.iloc[-1] else
-            "bearish_cloud" if cur and ten.iloc[-1] and kij.iloc[-1] and cur < ten.iloc[-1] < kij.iloc[-1] else
+            "bullish_cloud" if (cur and ten.iloc[-1] and kij.iloc[-1] and cur > ten.iloc[-1] > kij.iloc[-1]) else
+            "bearish_cloud" if (cur and ten.iloc[-1] and kij.iloc[-1] and cur < ten.iloc[-1] < kij.iloc[-1]) else
             "neutral"
         )
- 
+
     # ── Support / Resistance ──
     support, resistance = calc_support_resistance(c)
     adv["support"]    = _sf(support)
@@ -1290,85 +1330,161 @@ def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_dat
     if cur and support and resistance:
         rng = resistance - support
         adv["sr_position"] = round((cur - support) / rng * 100, 1) if rng > 0 else 50
- 
-    # ── Volume ──
+
+    # ── Volume summary ──
     vol_d = {}
     if vol is not None:
-        avg20 = _sf(vol.tail(20).mean()); cv = _sf(vol.iloc[-1])
-        vol_d = {"latest": cv, "avg_20d": avg20, "ratio_vs_avg": _sf(cv/avg20) if avg20 else None,
-                 "avg_5d": _sf(vol.tail(5).mean())}
- 
+        vol_clean2 = vol.where(vol > 0)
+        avg20v = _sf(vol_clean2.tail(20).mean())
+        cv     = _sf(vol_clean2.iloc[-1])
+        vol_d  = {
+            "latest": cv, "avg_20d": avg20v,
+            "ratio_vs_avg": _sf(cv / avg20v) if avg20v else None,
+            "avg_5d": _sf(vol_clean2.tail(5).mean()),
+        }
+
     # ── Trend signals ──
     trend = []
-    if sma20  and cur: trend.append("above_sma20"  if cur>sma20  else "below_sma20")
-    if sma50  and cur: trend.append("above_sma50"  if cur>sma50  else "below_sma50")
-    if sma200 and cur: trend.append("above_sma200" if cur>sma200 else "below_sma200")
-    if sma20  and sma50: trend.append("golden_cross" if sma20>sma50 else "death_cross")
- 
-    # ── Price patterns (simple) ──
+    if sma20  and cur: trend.append("above_sma20"  if cur > sma20  else "below_sma20")
+    if sma50  and cur: trend.append("above_sma50"  if cur > sma50  else "below_sma50")
+    if sma200 and cur: trend.append("above_sma200" if cur > sma200 else "below_sma200")
+    if sma20  and sma50: trend.append("golden_cross" if sma20 > sma50 else "death_cross")
+    # MA compression: all three SMAs within 2% of each other → potential breakout
+    if sma20 and sma50 and sma200:
+        ma_spread = (max(sma20, sma50, sma200) - min(sma20, sma50, sma200)) / sma200 * 100
+        if ma_spread < 2.0:
+            trend.append("ma_compression")
+
+    # ── RSI divergence detection ──
+    rsi_divergence = "none"
+    if n >= 20 and rsi_v is not None:
+        rsi_series = calc_rsi(c)
+        price_chg  = c.iloc[-1] - c.iloc[-5]
+        rsi_chg    = rsi_series.iloc[-1] - rsi_series.iloc[-5]
+        if price_chg > 0 and rsi_chg < 0:
+            rsi_divergence = "bearish"
+        elif price_chg < 0 and rsi_chg > 0:
+            rsi_divergence = "bullish"
+
+    # ── Price patterns ──
     patterns = []
     if n >= 10:
         last10 = c.tail(10)
         if last10.is_monotonic_increasing: patterns.append("uptrend_10d")
         elif last10.is_monotonic_decreasing: patterns.append("downtrend_10d")
-        # Doji candle detection
-        body_size = abs(c.iloc[-1] - op.iloc[-1])
+        body_size    = abs(c.iloc[-1] - op.iloc[-1])
         candle_range = h.iloc[-1] - lo.iloc[-1]
         if candle_range > 0 and body_size / candle_range < 0.1:
             patterns.append("doji_candle")
-        # Gap detection
         if n >= 2:
             gap_pct = abs(op.iloc[-1] - c.iloc[-2]) / (c.iloc[-2] + 1e-10) * 100
             if gap_pct > 1.5:
-                patterns.append(f"gap_{'up' if op.iloc[-1] > c.iloc[-2] else 'down'}_{round(gap_pct,1)}pct")
- 
-    recent = df.tail(30).copy(); recent.index = recent.index.astype(str)
-    ohlcv = [{"date": d[:10], "open": _sf(r.get("Open")), "high": _sf(r.get("High")),
-               "low": _sf(r.get("Low")), "close": _sf(r.get("Close")),
-               "volume": int(r["Volume"]) if "Volume" in r and pd.notna(r["Volume"]) else None}
-              for d, r in recent.iterrows()]
- 
+                patterns.append(f"gap_{'up' if op.iloc[-1] > c.iloc[-2] else 'down'}_{round(gap_pct, 1)}pct")
+        # Hammer / shooting star
+        upper_wick = h.iloc[-1] - max(c.iloc[-1], op.iloc[-1])
+        lower_wick = min(c.iloc[-1], op.iloc[-1]) - lo.iloc[-1]
+        if candle_range > 0:
+            if lower_wick > 2 * body_size and upper_wick < body_size:
+                patterns.append("hammer")
+            elif upper_wick > 2 * body_size and lower_wick < body_size:
+                patterns.append("shooting_star")
+        # Engulfing (2-bar pattern)
+        if n >= 2:
+            prev_body = abs(c.iloc[-2] - op.iloc[-2])
+            if (body_size > prev_body and
+                    c.iloc[-1] > op.iloc[-1] and c.iloc[-2] < op.iloc[-2] and
+                    op.iloc[-1] < c.iloc[-2] and c.iloc[-1] > op.iloc[-2]):
+                patterns.append("bullish_engulfing")
+            elif (body_size > prev_body and
+                      c.iloc[-1] < op.iloc[-1] and c.iloc[-2] > op.iloc[-2] and
+                      op.iloc[-1] > c.iloc[-2] and c.iloc[-1] < op.iloc[-2]):
+                patterns.append("bearish_engulfing")
+
+    # ── OHLCV table: last 20 rows only (token efficiency) ──
+    recent = df.tail(20).copy()
+    recent.index = recent.index.astype(str)
+    ohlcv = [
+        {"date": d[:10], "open": _sf(r.get("Open")), "high": _sf(r.get("High")),
+         "low": _sf(r.get("Low")), "close": _sf(r.get("Close")),
+         "volume": int(r["Volume"]) if "Volume" in r and pd.notna(r["Volume"]) else None}
+        for d, r in recent.iterrows()
+    ]
+
     # ── Performance stats ──
     perf = {}
-    for days, label in [(5,"5d"),(21,"1mo"),(63,"3mo"),(126,"6mo"),(252,"1y")]:
+    for days, label in [(5, "5d"), (21, "1mo"), (63, "3mo"), (126, "6mo"), (252, "1y")]:
         if n > days:
-            start_price = c.iloc[-min(days+1, n)]
-            perf[label] = _sf(((c.iloc[-1] - start_price) / start_price) * 100)
- 
-    # ── Correlation with SPY (market beta proxy) ──
+            start_price = c.iloc[-min(days + 1, n)]
+            if start_price and start_price != 0:
+                perf[label] = _sf(((c.iloc[-1] - start_price) / start_price) * 100)
+
+    # ── SPY correlation ──
     market_corr = None
     if n >= 60:
         try:
             spy_data, _ = fetch_yfinance_data("SPY", period)
             if spy_data is not None and not spy_data.empty:
-                spy_c = spy_data["Close"].squeeze().dropna()
+                spy_c     = spy_data["Close"].squeeze().dropna()
                 stock_ret = c.pct_change().dropna()
                 spy_ret   = spy_c.pct_change().dropna()
-                aligned = pd.concat([stock_ret, spy_ret], axis=1).dropna()
+                aligned   = pd.concat([stock_ret, spy_ret], axis=1).dropna()
                 if len(aligned) > 30:
-                    corr = aligned.corr().iloc[0, 1]
-                    market_corr = _sf(corr)
+                    market_corr = _sf(aligned.corr().iloc[0, 1])
         except Exception:
             pass
- 
+
+    # ── Indicator confluence score (0-10) ──
+    # Count bullish signals across independent sources for a quick credibility gauge
+    bull_signals = 0
+    bear_signals = 0
+    if cur and sma20 and cur > sma20: bull_signals += 1
+    else: bear_signals += 1
+    if cur and sma50 and cur > sma50: bull_signals += 1
+    else: bear_signals += 1
+    if rsi_v and rsi_v < 70: bull_signals += 1
+    if rsi_v and rsi_v > 30: bull_signals += 1
+    if macd_d.get("crossover") == "bullish": bull_signals += 2
+    elif macd_d.get("crossover") == "bearish": bear_signals += 2
+    if adv.get("obv_trend") == "rising": bull_signals += 1
+    elif adv.get("obv_trend") == "falling": bear_signals += 1
+    if adv.get("cmf_signal") == "buying_pressure": bull_signals += 1
+    elif adv.get("cmf_signal") == "selling_pressure": bear_signals += 1
+    if rsi_divergence == "bullish": bull_signals += 1
+    elif rsi_divergence == "bearish": bear_signals += 1
+    confluence = {"bull": bull_signals, "bear": bear_signals,
+                  "net_bias": "bullish" if bull_signals > bear_signals else
+                               "bearish" if bear_signals > bull_signals else "neutral"}
+
     return {
         "ticker": ticker, "name": name, "currency": currency, "period": period, "bars": n,
-        "price": {"current": cur, "prev": prev, "change": _sf(cur-prev) if cur and prev else None,
-                  "change_pct": _sf(((cur-prev)/prev)*100) if cur and prev else None,
-                  "52w_high": hi52, "52w_low": lo52,
-                  "pct_from_52h": _sf(((cur-hi52)/hi52)*100) if cur and hi52 else None},
+        "price": {
+            "current": cur, "prev": prev,
+            "change": _sf(cur - prev) if (cur and prev) else None,
+            "change_pct": _sf(((cur - prev) / prev) * 100) if (cur and prev) else None,
+            "52w_high": hi52, "52w_low": lo52,
+            "pct_from_52h": _sf(((cur - hi52) / hi52) * 100) if (cur and hi52) else None,
+        },
         "performance": perf,
-        "ma": {"sma20": sma20, "sma50": sma50, "sma200": sma200,
-               "ema9": _sf(calc_ema(c,9).iloc[-1]), "ema21": _sf(calc_ema(c,21).iloc[-1]),
-               "ema50": _sf(calc_ema(c,50).iloc[-1])},
+        "ma": {
+            "sma20": sma20, "sma50": sma50, "sma200": sma200,
+            "ema9":  _sf(calc_ema(c, 9).iloc[-1]),
+            "ema21": _sf(calc_ema(c, 21).iloc[-1]),
+            "ema50": _sf(calc_ema(c, 50).iloc[-1]),
+        },
         "bb": bb_d,
-        "rsi": {"value": rsi_v, "last5": [_sf(v) for v in calc_rsi(c).tail(5).tolist()] if n>=20 else []},
+        "rsi": {
+            "value": rsi_v,
+            "last5": [_sf(v) for v in calc_rsi(c).tail(5).tolist()] if n >= 20 else [],
+            "divergence": rsi_divergence,
+        },
         "macd": macd_d,
-        "atr": {"value": atr_v, "pct": _sf((atr_v/cur)*100) if atr_v and cur else None},
-        "volume": vol_d, "trend": trend,
+        "atr": {"value": atr_v, "pct": _sf((atr_v / cur) * 100) if (atr_v and cur) else None},
+        "volume": vol_d,
+        "trend": trend,
         "advanced": adv,
         "patterns": patterns,
         "market_corr": market_corr,
+        "confluence": confluence,
         "ohlcv": ohlcv,
         "macro": macro_data or {},
         "trends": trends_data or {},
@@ -1378,27 +1494,44 @@ def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_dat
  
  
 def build_prompt(payload):
-    p   = payload
-    px  = p["price"]
-    ma  = p["ma"]
-    bb  = p.get("bb", {})
-    rsi = p.get("rsi", {})
-    macd  = p.get("macd", {})
-    atr   = p.get("atr", {})
-    vol   = p.get("volume", {})
-    adv   = p.get("advanced", {})
-    perf  = p.get("performance", {})
-    macro = p.get("macro", {})
-    trends = p.get("trends", {})
-    fund  = p.get("fundamentals", {})
+    p        = payload
+    px       = p["price"]
+    ma       = p["ma"]
+    bb       = p.get("bb", {})
+    rsi      = p.get("rsi", {})
+    macd     = p.get("macd", {})
+    atr      = p.get("atr", {})
+    vol      = p.get("volume", {})
+    adv      = p.get("advanced", {})
+    perf     = p.get("performance", {})
+    macro    = p.get("macro", {})
+    trends   = p.get("trends", {})
+    fund     = p.get("fundamentals", {})
     shipping = p.get("shipping", {})
-    pats  = p.get("patterns", [])
- 
+    pats     = p.get("patterns", [])
+    conf     = p.get("confluence", {})
+
     f  = lambda v, d=2: f"{v:.{d}f}" if v is not None else "N/A"
     fp = lambda v: (f"+{v:.2f}" if v > 0 else f"{v:.2f}") if v is not None else "N/A"
-    up = lambda v: ("↑ above" if px["current"] and v and px["current"] > v else "↓ below") if v else "N/A"
- 
-    # ── Fundamental section ──
+    up = lambda v: (("above" if px["current"] and v and px["current"] > v else "below") if v else "N/A")
+
+    # ── DATA QUALITY REPORT ──
+    missing_data = []
+    if not fund:     missing_data.append("fundamentals (Yahoo unavailable)")
+    if not macro:    missing_data.append("FRED macro data")
+    if not trends:   missing_data.append("Google Trends")
+    if not shipping: missing_data.append("AIS shipping context")
+    data_quality_lines = [
+        "## DATA QUALITY REPORT",
+        f"- Bars loaded: {p['bars']}  |  Period: {p['period']}  |  Currency: {p['currency']}",
+        f"- Missing sources: {', '.join(missing_data) if missing_data else 'none — all sources live'}",
+        f"- Confluence score: {conf.get('bull', 0)} bullish signals vs {conf.get('bear', 0)} bearish "
+        f"signals -> net bias: {conf.get('net_bias', 'N/A').upper()}",
+        "NOTE: Where data is N/A, do not fabricate values. Acknowledge the gap and weight surviving signals accordingly.",
+        "",
+    ]
+
+    # ── FUNDAMENTALS ──
     fund_lines = []
     if fund:
         def fmt_cap(v):
@@ -1413,7 +1546,7 @@ def build_prompt(payload):
             f"- Market Cap: {fmt_cap(fund.get('market_cap'))}  |  EV: {fmt_cap(fund.get('enterprise_value'))}",
             f"- P/E (TTM): {f(fund.get('pe_ratio'))}  |  Forward P/E: {f(fund.get('forward_pe'))}",
             f"- P/B: {f(fund.get('pb_ratio'))}  |  P/S: {f(fund.get('ps_ratio'))}",
-            f"- Revenue Growth: {f(fund.get('revenue_growth'), 1) if fund.get('revenue_growth') else 'N/A'}%  |  Earnings Growth: {f(fund.get('earnings_growth'), 1) if fund.get('earnings_growth') else 'N/A'}%",
+            f"- Revenue Growth: {f(fund.get('revenue_growth'),1) if fund.get('revenue_growth') else 'N/A'}%  |  Earnings Growth: {f(fund.get('earnings_growth'),1) if fund.get('earnings_growth') else 'N/A'}%",
             f"- Profit Margin: {f(fund.get('profit_margin'),1) if fund.get('profit_margin') else 'N/A'}%  |  ROE: {f(fund.get('roe'),1) if fund.get('roe') else 'N/A'}%",
             f"- Debt/Equity: {f(fund.get('debt_to_equity'))}  |  Current Ratio: {f(fund.get('current_ratio'))}",
             f"- Free Cash Flow: {fmt_cap(fund.get('free_cashflow'))}",
@@ -1421,64 +1554,75 @@ def build_prompt(payload):
             f"- Analyst Target: {f(fund.get('analyst_target'))}  |  Rating: {fund.get('analyst_rating','N/A').upper()}  |  # Analysts: {fund.get('num_analysts','N/A')}",
             f"- Short Ratio: {f(fund.get('short_ratio'))}  |  Inst. Ownership: {f(fund.get('inst_ownership'),1) if fund.get('inst_ownership') else 'N/A'}%",
             f"- Insider Ownership: {f(fund.get('insider_ownership'),1) if fund.get('insider_ownership') else 'N/A'}%",
+            "",
         ]
- 
-    # ── Macro section ──
+
+    # ── MACRO ──
     macro_lines = []
     if macro:
-        macro_lines = ["## MACRO ENVIRONMENT (FRED Data — Live)"]
+        macro_lines = ["## MACRO ENVIRONMENT (FRED Live)"]
         for sid, md in macro.items():
-            chg = f" (Δ{fp(md.get('change'))})" if md.get('change') is not None else ""
+            chg = f" (delta{fp(md.get('change'))})" if md.get("change") is not None else ""
             macro_lines.append(f"- {md['label']}: {f(md['value'])}{chg} [{md.get('date','')}]")
- 
-    # ── Google Trends section ──
+        macro_lines.append("")
+
+    # ── GOOGLE TRENDS ──
     trends_lines = []
     if trends:
-        trends_lines = ["## SEARCH INTEREST (Google Trends — Real-Time)"]
+        trends_lines = ["## SEARCH INTEREST (Google Trends)"]
         for kw, td in trends.items():
             trends_lines.append(
-                f"- '{kw}': score {td.get('current')}/100  |  30d avg: {td.get('avg_30d')}  |  Trend: {td.get('trend','N/A').upper()}"
+                f"- '{kw}': {td.get('current')}/100  |  30d avg: {td.get('avg_30d')}  |  {td.get('trend','N/A').upper()}"
             )
- 
-    # ── Shipping context section ──
+        trends_lines.append("")
+
+    # ── SHIPPING ──
     shipping_lines = []
     if shipping:
-        shipping_lines = ["## SHIPPING & SUPPLY CHAIN CONTEXT (AIS/Marine Data)"]
+        shipping_lines = ["## SHIPPING & SUPPLY CHAIN (AIS)"]
         if shipping.get("vessel_count"):
-            shipping_lines.append(f"- Active vessels tracked: {shipping['vessel_count']:,}")
-        if shipping.get("live_map_vessels"):
-            shipping_lines.append(f"- Vessels on live map: {shipping['live_map_vessels']:,}")
+            shipping_lines.append(f"- Active vessels: {shipping['vessel_count']:,}")
         for note in shipping.get("notes", []):
             shipping_lines.append(f"- {note}")
-        congestion = shipping.get("congestion_signal", "neutral")
-        shipping_lines.append(f"- Congestion signal: {congestion.upper()}")
+        shipping_lines.append(f"- Congestion signal: {shipping.get('congestion_signal','neutral').upper()}")
+        shipping_lines.append("")
 
-    # ── Advanced technicals ──
+    # ── ADVANCED TECHNICALS ──
     adv_lines = [
         "## ADVANCED TECHNICAL INDICATORS",
-        f"- OBV Trend: {adv.get('obv_trend','N/A').upper()}  |  CMF: {f(adv.get('cmf'),3)} ({adv.get('cmf_signal','N/A')})",
-        f"- Stochastic K: {f(adv.get('stoch_k'))}  |  D: {f(adv.get('stoch_d'))}  |  Zone: {adv.get('stoch_zone','N/A').upper()}",
-        f"- Williams %R: {f(adv.get('williams_r'))}  |  ADX: {f(adv.get('adx'))} (Trend: {adv.get('trend_strength','N/A').upper()})",
-        f"- VWAP: {f(adv.get('vwap'))}  |  Price vs VWAP: {adv.get('vs_vwap','N/A').upper()}",
+        f"- OBV: {adv.get('obv_trend','N/A').upper()}  |  5d OBV delta: {f(adv.get('obv_5d_chg'))}  |  CMF: {f(adv.get('cmf'),3)} -> {adv.get('cmf_signal','N/A')}",
+        f"- Vol spike today: {'YES' if adv.get('vol_spike') else 'no'}  |  VWAP: {f(adv.get('vwap'))}  |  Price vs VWAP: {adv.get('vs_vwap','N/A').upper()} ({f(adv.get('vwap_gap_pct'))}%)",
+        f"- Stochastic K: {f(adv.get('stoch_k'))}  |  D: {f(adv.get('stoch_d'))}  |  Zone: {adv.get('stoch_zone','N/A').upper()}  |  Divergence: {adv.get('stoch_divergence','N/A').upper()}",
+        f"- Williams %R: {f(adv.get('williams_r'))}  |  ADX: {f(adv.get('adx'))} -> {adv.get('trend_strength','N/A').upper()}",
         f"- Support: {f(adv.get('support'))}  |  Resistance: {f(adv.get('resistance'))}  |  S/R Position: {f(adv.get('sr_position'),0) if adv.get('sr_position') is not None else 'N/A'}%",
-        f"- Ichimoku: Tenkan={f(adv.get('ichimoku_tenkan'))}  Kijun={f(adv.get('ichimoku_kijun'))}  Signal={adv.get('ichimoku_signal','N/A').upper()}",
-        f"- Market Correlation (vs SPY): {f(p.get('market_corr'))}",
-        f"- Price Patterns Detected: {', '.join(pats) if pats else 'none'}",
+        f"- Ichimoku: Tenkan={f(adv.get('ichimoku_tenkan'))}  Kijun={f(adv.get('ichimoku_kijun'))}  -> {adv.get('ichimoku_signal','N/A').upper()}",
+        f"- SPY Correlation: {f(p.get('market_corr'))}  |  Patterns: {', '.join(pats) if pats else 'none'}",
+        f"- RSI Divergence (5-bar): {rsi.get('divergence','none').upper()}",
+        "",
     ]
- 
-    # ── Performance ──
-    perf_lines = ["## PRICE PERFORMANCE (Returns)"]
-    for lbl in ["5d","1mo","3mo","6mo","1y"]:
+
+    # ── PERFORMANCE ──
+    perf_lines = ["## PRICE PERFORMANCE"]
+    for lbl in ["5d", "1mo", "3mo", "6mo", "1y"]:
         if lbl in perf:
             perf_lines.append(f"- {lbl}: {fp(perf[lbl])}%")
- 
+    perf_lines.append("")
+
     lines = [
-        f"You are a world-class quantitative analyst and portfolio manager with deep expertise in price chart reading, technical analysis, fundamental analysis, macroeconomics, and alternative data interpretation.",
-        f"Perform a COMPREHENSIVE, INSTITUTIONAL-GRADE analysis of **{p['name']} ({p['ticker']})** over the {p['period']} period.",
-        f"You have access to: OHLCV PRICE DATA (30 candles), ALL TECHNICAL INDICATORS, FUNDAMENTALS, LIVE MACRO DATA (FRED), GOOGLE TRENDS, and SHIPPING CONTEXT.",
-        f"READ THE OHLCV TABLE CAREFULLY — analyze every candle: body size, wicks, open/close relationships, volume spikes, gap-ups/gap-downs, consolidation zones, breakouts.",
-        f"Be specific, cite exact numbers, identify confluences and divergences across ALL data sources.",
+        "[ROLE]",
+        "You are a Senior Quantitative Portfolio Manager at a top-tier hedge fund.",
+        "You specialize in cross-asset confluence analysis: combining price action, technical indicators,",
+        "fundamental valuation, macroeconomic regime, and alternative data into a single decisive trade thesis.",
+        "Write with a precise, evidence-first, action-oriented tone. Never use vague language (could/might/possibly).",
+        "If data is missing (marked N/A), acknowledge it explicitly — never fabricate values.",
         "",
+        "[GOAL]",
+        f"Produce an institutional-grade trade decision for {p['name']} ({p['ticker']}) over the {p['period']} period.",
+        "Objective: identify the highest-conviction entry or exit signal by finding where the most independent",
+        "data sources agree — or flag the contradiction if they conflict.",
+        "",
+        "[INPUT DATA]",
+    ] + data_quality_lines + [
         "## PRICE SNAPSHOT",
         f"- Current: {p['currency']} {f(px['current'])}  |  Prev Close: {p['currency']} {f(px['prev'])}",
         f"- Change: {fp(px['change'])} ({fp(px['change_pct'])}%)",
@@ -1486,55 +1630,80 @@ def build_prompt(payload):
         f"- Distance from 52W High: {f(px['pct_from_52h'])}%",
         "",
     ] + perf_lines + [
-        "",
         "## MOVING AVERAGES",
-        f"- SMA 20:  {p['currency']} {f(ma['sma20'])}  ({up(ma['sma20'])} SMA20)",
-        f"- SMA 50:  {p['currency']} {f(ma['sma50'])}  ({up(ma['sma50'])} SMA50)",
+        f"- SMA 20: {p['currency']} {f(ma['sma20'])}  ({up(ma['sma20'])} SMA20)",
+        f"- SMA 50: {p['currency']} {f(ma['sma50'])}  ({up(ma['sma50'])} SMA50)",
         f"- SMA 200: {p['currency']} {f(ma['sma200'])}  ({up(ma['sma200'])} SMA200)",
-        f"- EMA 9:   {p['currency']} {f(ma['ema9'])}  |  EMA 21: {p['currency']} {f(ma['ema21'])}  |  EMA 50: {p['currency']} {f(ma['ema50'])}",
-        f"- Trend signals: {', '.join(p['trend']) or 'none'}",
+        f"- EMA 9: {f(ma['ema9'])}  |  EMA 21: {f(ma['ema21'])}  |  EMA 50: {f(ma['ema50'])}",
+        f"- MA signals: {', '.join(p['trend']) if p['trend'] else 'none'}",
         "",
-        "## BOLLINGER BANDS (20,2σ)",
-        f"- Upper: {f(bb.get('upper'))}  Mid: {f(bb.get('mid'))}  Lower: {f(bb.get('lower'))}",
-        f"- %B: {f(bb.get('percent_b'),3)} (>1=overbought, <0=oversold)  |  Bandwidth: {f(bb.get('bandwidth'))}%",
+        "## BOLLINGER BANDS (20, 2sigma)",
+        f"- Upper: {f(bb.get('upper'))}  |  Mid: {f(bb.get('mid'))}  |  Lower: {f(bb.get('lower'))}",
+        f"- %B: {f(bb.get('percent_b'),3)} (>1 overbought, <0 oversold)  |  Bandwidth: {f(bb.get('bandwidth'))}%",
         "",
         "## RSI (14)",
         f"- Current: {f(rsi.get('value'))}  Zone: {'OVERBOUGHT' if rsi.get('value') and rsi['value']>70 else 'OVERSOLD' if rsi.get('value') and rsi['value']<30 else 'NEUTRAL'}",
-        f"- Last 5: {', '.join(f(v) for v in rsi.get('last5',[]))}",
+        f"- Last 5 values: {', '.join(f(v) for v in rsi.get('last5',[]))}",
+        f"- RSI Divergence vs price (5-bar): {rsi.get('divergence','none').upper()}",
         "",
-        "## MACD (12,26,9)",
-        f"- MACD: {f(macd.get('macd'))}  Signal: {f(macd.get('signal'))}  Histogram: {f(macd.get('histogram'))} (prev: {f(macd.get('hist_prev'))})",
-        f"- Crossover: {(macd.get('crossover') or 'none').upper()}",
+        "## MACD (12, 26, 9)",
+        f"- MACD: {f(macd.get('macd'))}  |  Signal: {f(macd.get('signal'))}  |  Histogram: {f(macd.get('histogram'))} (prev: {f(macd.get('hist_prev'))})",
+        f"- Crossover event: {(macd.get('crossover') or 'none').upper()}",
         "",
         "## VOLATILITY & VOLUME",
         f"- ATR(14): {p['currency']} {f(atr.get('value'))} ({f(atr.get('pct'))}% of price)",
         f"- Latest Vol: {int(vol['latest']) if vol.get('latest') else 'N/A'}  |  20D Avg: {int(vol['avg_20d']) if vol.get('avg_20d') else 'N/A'}  |  Ratio: {f(vol.get('ratio_vs_avg'))}x",
         "",
-    ] + adv_lines + [
-        "",
-    ] + (fund_lines + [""]) + (macro_lines + [""]) + (trends_lines + [""]) + (shipping_lines + [""]) + [
-        "## RECENT OHLCV (last 30 trading days — READ EVERY ROW)",
+    ] + adv_lines + fund_lines + macro_lines + trends_lines + shipping_lines + [
+        "## RECENT OHLCV (last 20 trading days)",
         "date,open,high,low,close,volume",
-    ] + [f"{r['date']},{r['open']},{r['high']},{r['low']},{r['close']},{r['volume']}" for r in p["ohlcv"]] + [
+    ] + [
+        f"{r['date']},{r['open']},{r['high']},{r['low']},{r['close']},{r['volume']}"
+        for r in p["ohlcv"]
+    ] + [
         "",
-        "---",
-        "## ANALYSIS INSTRUCTIONS",
-        "Using ALL data above (OHLCV candles, technical indicators, fundamentals, macro, trends, shipping), provide an INSTITUTIONAL-GRADE analysis.",
-        "CHART READING IS MANDATORY: scan all 30 OHLCV rows — identify swing highs/lows, trend direction, volume-price confirmation, candlestick patterns (doji, engulfing, hammer, shooting star, inside bars, etc.), gap events, consolidation ranges, and breakout/breakdown levels.",
-        "Be SPECIFIC: cite exact price levels and indicator values. Identify multi-indicator confluences. Flag divergences (e.g., price rising but OBV/RSI diverging).",
-        "Factor in: macro environment (interest rates, inflation, USD strength), search trends (retail sentiment proxy), fundamental valuation vs. technical setup, shipping/supply-chain context.",
-        "Identify whether fundamentals and technicals AGREE or DIVERGE — this is critical.",
+        "[INSTRUCTIONS]",
+        "1. CHART READING: Scan all OHLCV rows. Identify dominant price structure (uptrend/downtrend/range),",
+        "   swing highs/lows with exact prices, volume-price confirmation, candlestick patterns by date",
+        "   (e.g., hammer on DATE at PRICE), gap events, and micro-structure of the last 5 candles.",
+        "2. TECHNICAL CONFLUENCE: Find where 3+ independent indicators agree on the same direction.",
+        "   Cite exact values. A setup with RSI oversold + MACD bullish crossover + OBV rising + price",
+        "   above VWAP = high-conviction. Fewer agreeing signals = lower confidence.",
+        "3. DIVERGENCE AUDIT: Explicitly check — does price disagree with OBV? RSI? MACD histogram?",
+        "   Each divergence reduces confidence. Name each one and explain its implication.",
+        "4. FUNDAMENTAL VS TECHNICAL VERDICT: State explicitly whether fundamentals and technicals agree",
+        "   or conflict. If P/E is stretched but price is breaking out, say so and explain the tension.",
+        "5. MACRO IMPACT: Map each FRED data point to a direct mechanism for this specific ticker",
+        "   (e.g., 'rising DFF compresses P/E multiples for this growth stock by X% historically').",
+        "6. EDGE-CASE ANALYSIS (MANDATORY): Give exactly 3 ways your analysis could be wrong, each with",
+        "   a specific early-warning signal (e.g., 'If volume fails to follow a breakout above RESISTANCE,",
+        "   the move is a false breakout — exit immediately').",
         "",
-        "Respond with a single valid JSON object. No markdown. No extra text. Exact structure:",
-        '{"verdict":"BUY|SELL|HOLD","confidence":"Low|Medium|High","time_horizon":"Short|Mid|Long",',
-        '"price_targets":{"entry":0.0,"stop_loss":0.0,"target_1":0.0,"target_2":0.0},',
-        '"chart_pattern_analysis":"Comprehensive reading of the 30-day OHLCV chart: identify the dominant price structure (uptrend/downtrend/range), key swing highs and lows with exact prices, volume-price relationships on significant moves, candlestick patterns by date (e.g., doji on DATE at PRICE, bullish engulfing on DATE), gap events, support/resistance zones formed by price action, and the most recent 5-candle micro-structure. Minimum 3 paragraphs.",',
-        '"technical_analysis":"DETAILED multi-paragraph breakdown: trend structure across all timeframes, MA alignment (SMA20/50/200, EMA9/21/50), momentum indicators (RSI trajectory, MACD histogram evolution, Stochastic %K/%D, Williams %R), volume analysis (OBV trend, CMF money flow, VWAP position), volatility regime (ATR%, BB bandwidth and squeeze), Ichimoku cloud analysis, support/resistance levels from S/R calculator, confluence zones where multiple indicators align. Minimum 5 paragraphs.",',
-        '"fundamental_analysis":"Valuation assessment (P/E, P/B, P/S, EV ratios vs. sector norms), revenue/earnings growth trajectory, profit margin and ROE quality, balance sheet health (D/E, current ratio, FCF), analyst consensus and target vs. current price, institutional and insider ownership trends. State explicitly if stock is overvalued/undervalued/fairly valued and by how much.",',
-        '"macro_and_altdata":"How current macro environment (Fed Funds Rate, CPI trend, yield curve spread, USD index, HY credit spreads, mortgage rates) specifically impacts this stock\'s valuation and earnings. Google Trends search interest as retail sentiment signal — rising/falling and what it implies. Shipping/supply-chain context if relevant to sector.",',
-        '"risk_factors":"Minimum 5 specific, quantified risks with exact thresholds: e.g., RSI > 70 with negative divergence signals pullback to PRICE, macro risk if Fed Funds rises above X%, key support at PRICE where stop-loss triggers, etc.",',
-        '"action_plan":"Precise step-by-step action: exact entry price level and indicator conditions required (e.g., wait for RSI < X and price above SMA20), position sizing guidance (% portfolio), scaling-in strategy with price triggers, stop-loss level with methodology (ATR-based / support-based), take-profit at Target 1 and Target 2 with rationale.",',
-        '"summary":"Two sentences: core thesis referencing the most critical technical + fundamental confluence, and the single biggest risk."}',
+        "[OUTPUT FORMAT]",
+        "Return a single valid JSON object. No markdown fences. No preamble. No trailing text.",
+        "All string fields must be substantive prose with exact numbers. No placeholder text.",
+        "",
+        '{',
+        '  "verdict": "BUY|SELL|HOLD",',
+        '  "confidence": "Low|Medium|High",',
+        '  "time_horizon": "Short (days)|Mid (weeks)|Long (months)",',
+        '  "price_targets": {"entry": 0.0, "stop_loss": 0.0, "target_1": 0.0, "target_2": 0.0},',
+        '  "confluence_summary": "2-3 sentences: which independent signals agree, with exact values. This is the core thesis.",',
+        '  "chart_pattern_analysis": "Dominant structure + swing highs/lows with prices + volume-price confirmation + candlestick patterns by date + last-5-candle micro-structure. Min 3 paragraphs.",',
+        '  "technical_analysis": "MA alignment + RSI trajectory + MACD histogram evolution + Stochastic/Williams + OBV/CMF/VWAP + ATR + BB + Ichimoku + S/R + ADX. Cite exact values. Min 5 paragraphs.",',
+        '  "fundamental_analysis": "P/E, P/B, P/S vs sector norms (state over/undervalued by X%) + growth quality + margins/ROE + balance sheet + analyst gap + short interest as contrarian signal.",',
+        '  "macro_and_altdata": "Map each FRED series to a direct mechanism for this ticker. Google Trends as retail sentiment — rising/falling and near-term demand implication. Shipping context if sector-relevant.",',
+        '  "risk_factors": "Exactly 3 risks: Risk: [scenario + exact threshold]. Early warning: [what to watch]. Mitigation: [action].",',
+        '  "action_plan": "Step 1: entry condition (price + indicator confirmation). Step 2: position size (% portfolio, ATR-justified). Step 3: scale-in trigger. Step 4: stop-loss (show ATR or S/R calculation). Step 5: exit at T1 (partial) and T2 (remainder).",',
+        '  "summary": "Sentence 1: core thesis — the single most critical technical+fundamental confluence. Sentence 2: the biggest risk with its specific threshold."',
+        '}',
+        "",
+        "[CONSTRAINTS]",
+        "- Do NOT fabricate values. If a field is N/A in the data, say so explicitly.",
+        "- Do NOT use vague language. Every claim must reference a specific number from the data above.",
+        "- Do NOT exceed 3,200 tokens total in the JSON output.",
+        "- Price targets must be internally consistent: stop_loss < entry < target_1 < target_2 for BUY,",
+        "  reversed for SELL. If impossible to achieve, set confidence to Low and explain why.",
     ]
     return "\n".join(lines)
  
@@ -1542,23 +1711,69 @@ def build_prompt(payload):
 def call_openrouter(model_id, prompt):
     if not OPEN_ROUTER_API_KEY:
         raise ValueError("OPEN_ROUTER_API_KEY environment variable is not set.")
+
+    # temperature=0 → deterministic, fact-grounded output (no creative drift)
+    # max_tokens=3800 → matches prompt constraint of 3,200 JSON + overhead
+    # response_format enforces JSON-only output where the model supports it
     r = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
-                 "Content-Type": "application/json",
-                 "HTTP-Referer": "https://starfish.finance",
-                 "X-Title": "Starfish Stock Analyzer"},
-        json={"model": model_id, "messages": [{"role": "user", "content": prompt}],
-              "temperature": 0.10, "max_tokens": 3500},
+        headers={
+            "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://starfish.finance",
+            "X-Title": "Starfish Stock Analyzer",
+        },
+        json={
+            "model": model_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,          # deterministic: removes hallucination drift
+            "max_tokens": 3800,        # matched to output schema constraint
+            "top_p": 1,
+            "frequency_penalty": 0,
+        },
         timeout=120,
     )
     r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"].strip()
-    content = re.sub(r"^```(?:json)?\s*", "", content)
-    content = re.sub(r"\s*```$", "", content)
-    m = re.search(r'\{.*\}', content, re.DOTALL)
-    if m: content = m.group(0)
-    return json.loads(content)
+
+    raw = r.json()["choices"][0]["message"]["content"].strip()
+
+    # ── JSON extraction: strip markdown fences if model wraps output ──
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+
+    # ── Greedy extraction: find outermost { ... } block ──
+    m = re.search(r'\{.*\}', raw, re.DOTALL)
+    if not m:
+        raise json.JSONDecodeError("No JSON object found in model response", raw, 0)
+    candidate = m.group(0)
+
+    # ── Parse and validate required keys ──
+    result = json.loads(candidate)
+    required = {"verdict", "confidence", "time_horizon", "price_targets",
+                "confluence_summary", "chart_pattern_analysis", "technical_analysis",
+                "fundamental_analysis", "macro_and_altdata", "risk_factors",
+                "action_plan", "summary"}
+    missing_keys = required - set(result.keys())
+    if missing_keys:
+        # Non-fatal: surface the gap rather than silently swallowing it
+        result["_data_warnings"] = f"Model omitted fields: {', '.join(sorted(missing_keys))}"
+
+    # ── Validate price target consistency ──
+    pt = result.get("price_targets", {})
+    verdict = result.get("verdict", "HOLD")
+    entry, sl, t1, t2 = pt.get("entry"), pt.get("stop_loss"), pt.get("target_1"), pt.get("target_2")
+    if all(v is not None for v in [entry, sl, t1, t2]):
+        consistent = (
+            (sl < entry < t1 < t2) if verdict == "BUY" else
+            (sl > entry > t1 > t2) if verdict == "SELL" else True
+        )
+        if not consistent:
+            result["_price_target_warning"] = (
+                f"Price targets inconsistent for {verdict}: "
+                f"entry={entry}, stop_loss={sl}, t1={t1}, t2={t2}"
+            )
+
+    return result
  
  
 # ══════════════════════════════════════════════════════════════════════════════
