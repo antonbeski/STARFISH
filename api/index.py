@@ -1210,7 +1210,7 @@ def _sf(v, d=4):
     except: return None
  
  
-def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None):
+def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None):
     c  = df["Close"].squeeze().dropna()
     h  = df["High"].squeeze()
     lo = df["Low"].squeeze()
@@ -1373,6 +1373,7 @@ def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_dat
         "macro": macro_data or {},
         "trends": trends_data or {},
         "fundamentals": fundamentals or {},
+        "shipping": shipping_ctx or {},
     }
  
  
@@ -1390,6 +1391,7 @@ def build_prompt(payload):
     macro = p.get("macro", {})
     trends = p.get("trends", {})
     fund  = p.get("fundamentals", {})
+    shipping = p.get("shipping", {})
     pats  = p.get("patterns", [])
  
     f  = lambda v, d=2: f"{v:.{d}f}" if v is not None else "N/A"
@@ -1438,6 +1440,19 @@ def build_prompt(payload):
                 f"- '{kw}': score {td.get('current')}/100  |  30d avg: {td.get('avg_30d')}  |  Trend: {td.get('trend','N/A').upper()}"
             )
  
+    # ── Shipping context section ──
+    shipping_lines = []
+    if shipping:
+        shipping_lines = ["## SHIPPING & SUPPLY CHAIN CONTEXT (AIS/Marine Data)"]
+        if shipping.get("vessel_count"):
+            shipping_lines.append(f"- Active vessels tracked: {shipping['vessel_count']:,}")
+        if shipping.get("live_map_vessels"):
+            shipping_lines.append(f"- Vessels on live map: {shipping['live_map_vessels']:,}")
+        for note in shipping.get("notes", []):
+            shipping_lines.append(f"- {note}")
+        congestion = shipping.get("congestion_signal", "neutral")
+        shipping_lines.append(f"- Congestion signal: {congestion.upper()}")
+
     # ── Advanced technicals ──
     adv_lines = [
         "## ADVANCED TECHNICAL INDICATORS",
@@ -1458,10 +1473,11 @@ def build_prompt(payload):
             perf_lines.append(f"- {lbl}: {fp(perf[lbl])}%")
  
     lines = [
-        f"You are a world-class quantitative analyst and portfolio manager with expertise in technical analysis, fundamental analysis, macroeconomics, and alternative data interpretation.",
-        f"Perform a COMPREHENSIVE, DETAILED analysis of **{p['name']} ({p['ticker']})** over the {p['period']} period.",
-        f"You have access to PRICE DATA, TECHNICAL INDICATORS, FUNDAMENTALS, LIVE MACRO DATA, and GOOGLE SEARCH TRENDS.",
-        f"Be specific, cite numbers, identify confluences and divergences across ALL data sources.",
+        f"You are a world-class quantitative analyst and portfolio manager with deep expertise in price chart reading, technical analysis, fundamental analysis, macroeconomics, and alternative data interpretation.",
+        f"Perform a COMPREHENSIVE, INSTITUTIONAL-GRADE analysis of **{p['name']} ({p['ticker']})** over the {p['period']} period.",
+        f"You have access to: OHLCV PRICE DATA (30 candles), ALL TECHNICAL INDICATORS, FUNDAMENTALS, LIVE MACRO DATA (FRED), GOOGLE TRENDS, and SHIPPING CONTEXT.",
+        f"READ THE OHLCV TABLE CAREFULLY — analyze every candle: body size, wicks, open/close relationships, volume spikes, gap-ups/gap-downs, consolidation zones, breakouts.",
+        f"Be specific, cite exact numbers, identify confluences and divergences across ALL data sources.",
         "",
         "## PRICE SNAPSHOT",
         f"- Current: {p['currency']} {f(px['current'])}  |  Prev Close: {p['currency']} {f(px['prev'])}",
@@ -1496,29 +1512,29 @@ def build_prompt(payload):
         "",
     ] + adv_lines + [
         "",
-    ] + (fund_lines + [""]) + (macro_lines + [""]) + (trends_lines + [""]) + [
-        "## RECENT OHLCV (last 30 trading days)",
+    ] + (fund_lines + [""]) + (macro_lines + [""]) + (trends_lines + [""]) + (shipping_lines + [""]) + [
+        "## RECENT OHLCV (last 30 trading days — READ EVERY ROW)",
         "date,open,high,low,close,volume",
     ] + [f"{r['date']},{r['open']},{r['high']},{r['low']},{r['close']},{r['volume']}" for r in p["ohlcv"]] + [
         "",
         "---",
         "## ANALYSIS INSTRUCTIONS",
-        "Using ALL data above (technical, fundamental, macro, trends), provide an INSTITUTIONAL-GRADE analysis.",
-        "Be SPECIFIC: cite exact values, identify multi-indicator confluences, flag divergences.",
-        "Factor in: macro environment (interest rates, inflation, USD strength), search trends (retail sentiment proxy),",
-        "fundamental valuation vs. technical setup, sector context.",
+        "Using ALL data above (OHLCV candles, technical indicators, fundamentals, macro, trends, shipping), provide an INSTITUTIONAL-GRADE analysis.",
+        "CHART READING IS MANDATORY: scan all 30 OHLCV rows — identify swing highs/lows, trend direction, volume-price confirmation, candlestick patterns (doji, engulfing, hammer, shooting star, inside bars, etc.), gap events, consolidation ranges, and breakout/breakdown levels.",
+        "Be SPECIFIC: cite exact price levels and indicator values. Identify multi-indicator confluences. Flag divergences (e.g., price rising but OBV/RSI diverging).",
+        "Factor in: macro environment (interest rates, inflation, USD strength), search trends (retail sentiment proxy), fundamental valuation vs. technical setup, shipping/supply-chain context.",
         "Identify whether fundamentals and technicals AGREE or DIVERGE — this is critical.",
         "",
         "Respond with a single valid JSON object. No markdown. No extra text. Exact structure:",
         '{"verdict":"BUY|SELL|HOLD","confidence":"Low|Medium|High","time_horizon":"Short|Mid|Long",',
         '"price_targets":{"entry":0.0,"stop_loss":0.0,"target_1":0.0,"target_2":0.0},',
-        '"technical_analysis":"DETAILED multi-paragraph breakdown: trend structure, MA alignment, momentum indicators (RSI/MACD/Stochastic/Williams%R), volume analysis (OBV/CMF/VWAP), volatility (ATR/BB), Ichimoku, support/resistance levels, detected patterns. Minimum 4 paragraphs.",',
-        '"fundamental_analysis":"Valuation assessment (P/E, P/B, EV ratios vs. sector norms), growth metrics, balance sheet health, analyst consensus, institutional ownership trends. State if stock is overvalued/undervalued/fairly valued.",',
-        '"macro_and_altdata":"How current macro environment (rates, inflation, USD, credit spreads) affects this stock. Factor in Google Trends search interest as retail sentiment signal. Shipping/commodity context if relevant to the sector.",',
-        '"news_and_macro":"What you know about recent earnings, news events, sector trends, competitive landscape that affect this stock.",',
-        '"risk_factors":"Minimum 5 specific, quantified risks with catalyst descriptions.",',
-        '"action_plan":"Precise step-by-step action: entry triggers (price levels/indicator conditions), position sizing guidance (% portfolio), scaling strategy, stop-loss methodology, take-profit levels with rationale.",',
-        '"summary":"Two sentences: core thesis + key risk."}',
+        '"chart_pattern_analysis":"Comprehensive reading of the 30-day OHLCV chart: identify the dominant price structure (uptrend/downtrend/range), key swing highs and lows with exact prices, volume-price relationships on significant moves, candlestick patterns by date (e.g., doji on DATE at PRICE, bullish engulfing on DATE), gap events, support/resistance zones formed by price action, and the most recent 5-candle micro-structure. Minimum 3 paragraphs.",',
+        '"technical_analysis":"DETAILED multi-paragraph breakdown: trend structure across all timeframes, MA alignment (SMA20/50/200, EMA9/21/50), momentum indicators (RSI trajectory, MACD histogram evolution, Stochastic %K/%D, Williams %R), volume analysis (OBV trend, CMF money flow, VWAP position), volatility regime (ATR%, BB bandwidth and squeeze), Ichimoku cloud analysis, support/resistance levels from S/R calculator, confluence zones where multiple indicators align. Minimum 5 paragraphs.",',
+        '"fundamental_analysis":"Valuation assessment (P/E, P/B, P/S, EV ratios vs. sector norms), revenue/earnings growth trajectory, profit margin and ROE quality, balance sheet health (D/E, current ratio, FCF), analyst consensus and target vs. current price, institutional and insider ownership trends. State explicitly if stock is overvalued/undervalued/fairly valued and by how much.",',
+        '"macro_and_altdata":"How current macro environment (Fed Funds Rate, CPI trend, yield curve spread, USD index, HY credit spreads, mortgage rates) specifically impacts this stock\'s valuation and earnings. Google Trends search interest as retail sentiment signal — rising/falling and what it implies. Shipping/supply-chain context if relevant to sector.",',
+        '"risk_factors":"Minimum 5 specific, quantified risks with exact thresholds: e.g., RSI > 70 with negative divergence signals pullback to PRICE, macro risk if Fed Funds rises above X%, key support at PRICE where stop-loss triggers, etc.",',
+        '"action_plan":"Precise step-by-step action: exact entry price level and indicator conditions required (e.g., wait for RSI < X and price above SMA20), position sizing guidance (% portfolio), scaling-in strategy with price triggers, stop-loss level with methodology (ATR-based / support-based), take-profit at Target 1 and Target 2 with rationale.",',
+        '"summary":"Two sentences: core thesis referencing the most critical technical + fundamental confluence, and the single biggest risk."}',
     ]
     return "\n".join(lines)
  
@@ -2509,10 +2525,10 @@ function renderAIResult(data){{
   var dataTags=data.data_sources||[];
   var tagsHtml=dataTags.length?'<div class="ai-data-tags">'+dataTags.map(t=>'<span class="ai-data-tag">'+esc(t)+'</span>').join('')+'</div>':'';
   var secs=[
+    {{lbl:'Chart Pattern Analysis',key:'chart_pattern_analysis'}},
     {{lbl:'Technical Analysis',key:'technical_analysis'}},
     {{lbl:'Fundamental Analysis',key:'fundamental_analysis'}},
     {{lbl:'Macro & Alternative Data',key:'macro_and_altdata'}},
-    {{lbl:'News & Sector Context',key:'news_and_macro'}},
     {{lbl:'Risk Factors',key:'risk_factors'}},
     {{lbl:"Trader's Action Plan",key:'action_plan'}},
   ];
@@ -2860,13 +2876,14 @@ def api_ai_analysis():
     if trends_data:   data_sources.append(f"Google Trends ({len(trends_data)} keywords)")
     if fundamentals:  data_sources.append("Yahoo Fundamentals")
     if shipping_ctx:  data_sources.append("AIS Shipping Context")
-    data_sources += ["10 Technical Indicators", "30-Day OHLCV", "SPY Correlation"]
+    data_sources += ["12 Technical Indicators", "30-Day OHLCV Chart", "Candlestick Pattern Analysis", "SPY Correlation"]
  
     try:
         payload  = build_analysis_payload(ticker, period, name, df,
                                           macro_data=macro_data,
                                           trends_data=trends_data,
-                                          fundamentals=fundamentals)
+                                          fundamentals=fundamentals,
+                                          shipping_ctx=shipping_ctx)
         prompt   = build_prompt(payload)
     except Exception as e:
         return jsonify({"error": f"Indicator error: {e}"}), 500
