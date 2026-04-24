@@ -51,10 +51,7 @@ Three LLMs available via [OpenRouter](https://openrouter.ai), selectable per ana
 | Qwen3 Coder | `qwen/qwen3-coder` | Quantitative focus |
 
 The AI prompt is constructed from **12 technical indicators**, OHLCV data, FRED macro, Google Trends, shipping context, and company fundamentals — giving each model a rich, structured financial brief.
-<img width="1170" height="314" alt="Screenshot 2026-04-24 170455" src="https://github.com/user-attachments/assets/367a2c83-9b74-4e8b-ae01-9d00b349f8ee" />
 <img width="1145" height="594" alt="Screenshot 2026-04-24 170823" src="https://github.com/user-attachments/assets/6cd35ac7-d4d3-4343-92f1-6ced164af853" />
-<img width="1096" height="563" alt="Screenshot 2026-04-24 170852" src="https://github.com/user-attachments/assets/9bdce4a1-acc3-484c-a6cd-c8f741441e67" />
-<img width="1092" height="153" alt="Screenshot 2026-04-24 170925" src="https://github.com/user-attachments/assets/49386133-689e-4061-851c-2f165837fd26" />
 
 ###  Real-Time Macro Data (FRED)
 Pulls 9 key macroeconomic series from the St. Louis Fed public API:
