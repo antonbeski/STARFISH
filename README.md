@@ -92,6 +92,8 @@ Each of the 11 sectors includes **30 curated latitude/longitude targets** of key
 Sectors covered: Energy, Materials, Industrials, Consumer Discretionary, Consumer Staples, Health Care, Financials, IT, Communication Services, Real Estate, Utilities.
 <img width="1110" height="609" alt="Screenshot 2026-04-24 171142" src="https://github.com/user-attachments/assets/c94f0001-815c-4bc9-a5a0-698b72555bb6" />
 
+###  Google Trends Sentiment
+Uses `pytrends` to fetch 3-month search interest for each ticker's company name and stock symbol, returning current score, 30-day average, peak, and trend direction.
 
 ---
 
@@ -180,26 +182,6 @@ python index.py
 
 Open your browser at **http://127.0.0.1:5000**
 
-### Docker (optional)
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY index.py .
-RUN pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi
-ENV OPEN_ROUTER_API_KEY=""
-ENV AISSTREAM_API_KEY=""
-EXPOSE 5000
-CMD ["python", "index.py"]
-```
-
-```bash
-docker build -t starfish .
-docker run -p 5000:5000 \
-  -e OPEN_ROUTER_API_KEY=your_key \
-  -e AISSTREAM_API_KEY=your_key \
-  starfish
-```
 
 ---
 
@@ -493,6 +475,6 @@ This project is licensed under the MIT License. See `LICENSE` for details.
 
 <div align="center">
 
-Built with ❤️ — *Stocks · AI Analysis · Sectors · Live News*
+ *BUILT TO BEAT THE BENCHMARK.*
 
 </div>
