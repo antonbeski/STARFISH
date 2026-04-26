@@ -1945,7 +1945,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     models_js = json.dumps([{"id":m["id"],"key":m["key"],"label":m["label"],"color":m["color"]} for m in AI_MODELS])
  
     logo_img = f'<img src="{logo_uri}" height="44" style="display:block; filter:grayscale(1) contrast(150%);" alt="Starfish Logo">' if logo_uri else ''
-    sentinel2_token = os.environ.get('SENTINEL2_TOKEN', '')
+    cdse_token = os.environ.get('CDSE_TOKEN', '')
  
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1953,7 +1953,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>STARFISH — Market Intelligence</title>
-  <script>window.__ENV__ = {{"SENTINEL2_TOKEN": "{sentinel2_token}"}};</script>
+  <script>window.__ENV__ = {{"CDSE_TOKEN": "{cdse_token}"}};</script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
@@ -2941,21 +2941,71 @@ loadCh('{fh}');
 // ── Satellite Imagery ─────────────────────────────────────────────────────────
 var satMaps = {{}};
 
-var SENTINEL2_TOKEN = (window.__ENV__ && window.__ENV__.SENTINEL2_TOKEN) || '';
+var CDSE_TOKEN = (window.__ENV__ && window.__ENV__.CDSE_TOKEN) || '';
+
+// ── CDSE Process API tile layer ───────────────────────────────────────────────
+// Uses POST /api/v1/process per tile — only a Bearer token required, no instance ID.
+L.GridLayer.CDSE = L.GridLayer.extend({{
+  createTile: function(coords, done) {{
+    var img      = document.createElement('img');
+    img.alt      = '';
+    img.setAttribute('role', 'presentation');
+    var tileSize = this.getTileSize();
+    // Convert tile coords → geographic bbox (EPSG:4326)
+    var nwPx = coords.scaleBy(tileSize);
+    var sePx = nwPx.add([tileSize.x, tileSize.y]);
+    var nw   = L.CRS.EPSG3857.pointToLatLng(nwPx, coords.z);
+    var se   = L.CRS.EPSG3857.pointToLatLng(sePx, coords.z);
+    var bbox = [nw.lng, se.lat, se.lng, nw.lat]; // [west, south, east, north]
+    var body = {{
+      input: {{
+        bounds: {{
+          bbox: bbox,
+          properties: {{ crs: "http://www.opengis.net/def/crs/EPSG/0/4326" }}
+        }},
+        data: [{{
+          type: "sentinel-2-l2a",
+          dataFilter: {{ mosaickingOrder: "leastCC" }}
+        }}]
+      }},
+      output: {{
+        width: 256, height: 256,
+        responses: [{{ identifier: "default", format: {{ type: "image/jpeg" }} }}]
+      }},
+      evalscript: [
+        "//VERSION=3",
+        "function setup(){{return{{input:[\"B04\",\"B03\",\"B02\"],output:{{bands:3}}}};}}",
+        "function evaluatePixel(s){{return[3.5*s.B04,3.5*s.B03,3.5*s.B02];}}"
+      ].join("\n")
+    }};
+    fetch('https://sh.dataspace.copernicus.eu/api/v1/process', {{
+      method: 'POST',
+      headers: {{
+        'Authorization': 'Bearer ' + this.options.bearerToken,
+        'Content-Type': 'application/json'
+      }},
+      body: JSON.stringify(body)
+    }})
+    .then(function(r) {{ if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); }})
+    .then(function(blob) {{
+      var objUrl = URL.createObjectURL(blob);
+      img.onload  = function() {{ URL.revokeObjectURL(objUrl); done(null, img); }};
+      img.onerror = function(e) {{ URL.revokeObjectURL(objUrl); done(e,    img); }};
+      img.src = objUrl;
+    }})
+    .catch(function(e) {{ done(e, img); }});
+    return img;
+  }}
+}});
+
 function makeSatLayers() {{
-  var tileUrl = SENTINEL2_TOKEN
-    ? 'https://services.sentinel-hub.com/ogc/wmts/' + SENTINEL2_TOKEN
-      + '?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0'
-      + '&LAYER=TRUE_COLOR&STYLE=DEFAULT'
-      + '&TILEMATRIXSET=PopularWebMercator256'
-      + '&TILEMATRIX={{z}}&TILEROW={{y}}&TILECOL={{x}}'
-      + '&FORMAT=image%2Fjpeg'
-    : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}';
   return {{
-    sentinel2: L.tileLayer(tileUrl, {{
-      maxZoom: 18,
+    sentinel2: new L.GridLayer.CDSE({{
       tileSize: 256,
-      attribution: SENTINEL2_TOKEN ? '&copy; Sentinel Hub / ESA / Copernicus' : '&copy; Esri',
+      maxZoom: 18,
+      attribution: '&copy; Copernicus / ESA · CDSE',
+      bearerToken: CDSE_TOKEN,
+      keepBuffer: 2,
     }}),
   }};
 }}
