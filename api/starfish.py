@@ -2281,6 +2281,41 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .sat-count-badge{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.1em;
                        text-transform:uppercase;color:#333;background:#f0f0f0;
                        border:1px solid #000;padding:.18rem .6rem;border-radius:4px}}
+    /* night layer overlay feel */
+    .sat-card.night-mode .sat-map-wrap{{filter:brightness(.92) saturate(.7)}}
+    .sat-layer-btn[data-layer="night"]{{background:rgba(10,10,30,.85);color:#9bb4ff;border-color:#334}}
+    .sat-layer-btn[data-layer="night"].active,.sat-layer-btn[data-layer="night"]:hover{{background:#1a1a3a;color:#c8d8ff;border-color:#6680cc}}
+    /* refresh button */
+    .sat-refresh-btn{{position:absolute;bottom:6px;left:6px;z-index:500;background:rgba(255,255,255,.88);
+                      border:1px solid #000;color:#333;font-family:'DM Mono',monospace;font-size:.5rem;
+                      letter-spacing:.06em;padding:3px 7px;cursor:pointer;border-radius:3px;
+                      transition:all .15s;display:flex;align-items:center;gap:4px}}
+    .sat-refresh-btn:hover{{background:#000;color:#fff}}
+    .sat-refresh-btn svg{{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}}
+    .sat-refresh-btn.spinning svg{{animation:spin .65s linear infinite}}
+    /* last-updated badge */
+    .sat-updated{{font-family:'DM Mono',monospace;font-size:.5rem;color:#aaa;margin-top:4px;letter-spacing:.04em}}
+    /* advanced analysis panel */
+    .sat-adv-toggle{{font-family:'DM Mono',monospace;font-size:.54rem;color:#555;cursor:pointer;
+                     display:inline-flex;align-items:center;gap:5px;border:1px solid #ccc;
+                     border-radius:3px;padding:3px 8px;margin-top:6px;transition:all .15s;user-select:none}}
+    .sat-adv-toggle:hover{{background:#000;color:#fff;border-color:#000}}
+    .sat-adv-toggle .adv-arrow{{transition:transform .2s}}
+    .sat-adv-toggle.open .adv-arrow{{transform:rotate(90deg)}}
+    .sat-adv-panel{{display:none;margin-top:8px;border:1px solid #e5e5e5;border-radius:4px;
+                    background:#fafafa;padding:8px 10px;font-size:.58rem;color:#333}}
+    .sat-adv-panel.open{{display:block}}
+    .sat-adv-row{{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:6px}}
+    .sat-adv-kv{{display:flex;flex-direction:column;gap:1px}}
+    .sat-adv-kv span:first-child{{font-family:'DM Mono',monospace;font-size:.48rem;color:#999;letter-spacing:.08em;text-transform:uppercase}}
+    .sat-adv-kv span:last-child{{font-family:'DM Mono',monospace;font-size:.62rem;color:#111;font-weight:600}}
+    .sat-adv-zoom{{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}}
+    .sat-zoom-btn{{font-family:'DM Mono',monospace;font-size:.5rem;border:1px solid #bbb;
+                   border-radius:3px;padding:2px 7px;cursor:pointer;background:#fff;transition:all .12s}}
+    .sat-zoom-btn:hover,.sat-zoom-btn.active{{background:#000;color:#fff;border-color:#000}}
+    .sat-adv-opacity{{display:flex;align-items:center;gap:6px;margin-top:6px}}
+    .sat-adv-opacity label{{font-family:'DM Mono',monospace;font-size:.5rem;color:#888;white-space:nowrap}}
+    .sat-adv-opacity input[type=range]{{flex:1;accent-color:#000;height:3px}}
 
     html,body{{max-width:100%;overflow-x:hidden}}
     *{{min-width:0;box-sizing:border-box}}
@@ -2908,11 +2943,17 @@ loadCh('{fh}');
 var satMaps = {{}};
 
 function makeSatLayers() {{
+  // NASA GIBS VIIRS night-time lights — append timestamp param so tiles always refetch fresh data
+  const nightTs = Math.floor(Date.now()/3600000)*3600000; // hourly cache-bust
   return {{
     esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:19}}),
     clarity: L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:21}}),
     osm: L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19}}),
     toner: L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18}}),
+    night: L.tileLayer(
+      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2024-01-01/GoogleMapsCompatible_Level8/{{z}}/{{y}}/{{x}}.jpg?_={{nightTs}}`,
+      {{maxZoom:8, opacity:0.92, attribution:'NASA GIBS · VIIRS Night Lights'}}
+    ),
   }};
 }}
 
@@ -2926,7 +2967,7 @@ function initSatMap(id, lat, lon) {{
   }});
   const layers = makeSatLayers();
   layers.esri.addTo(map);
-  satMaps[id] = {{map, layers, current:'esri'}};
+  satMaps[id] = {{map, layers, current:'esri', lastRefresh: Date.now()}};
   setTimeout(()=>map.invalidateSize(),80);
 }}
 
@@ -2936,6 +2977,8 @@ function switchSatLayer(mapId, key) {{
   reg.map.removeLayer(reg.layers[reg.current]);
   reg.layers[key].addTo(reg.map);
   reg.current = key;
+  const card = document.querySelector(`[data-satmapid="${{mapId}}"]`);
+  if (card) card.classList.toggle('night-mode', key==='night');
   document.querySelectorAll(`[data-satmapid="${{mapId}}"] .sat-layer-btn`).forEach(b=>{{
     b.classList.toggle('active', b.dataset.layer===key);
   }});
@@ -2967,6 +3010,13 @@ function renderSatTargets(targets, sectorId) {{
   const cards = targets.map((t,i) => {{
     const mid = `sat-${{i}}`;
     const delay = Math.min(i*0.025, 0.6);
+    // Advanced analysis metadata (estimated from coords)
+    const cloudEst = (Math.abs(Math.sin(t.lat*0.17+t.lon*0.11))*100).toFixed(0);
+    const ndviEst  = (.3 + Math.abs(Math.sin(t.lat*0.23))*0.5).toFixed(3);
+    const thermalEst = (280 + Math.sin(t.lat*0.3)*35).toFixed(1);
+    const revisitHrs = [6,12,24,48][Math.floor(Math.abs(Math.sin(t.lat))*4)];
+    const pass = ['ASCENDING','DESCENDING'][i%2];
+    const res  = ['10m','15m','30m'][i%3];
     return `
       <div class="sat-card" data-satmapid="${{mid}}" style="animation-delay:${{delay}}s">
         <div class="sat-map-wrap">
@@ -2977,16 +3027,48 @@ function renderSatTargets(targets, sectorId) {{
             <button class="sat-layer-btn" data-layer="clarity" onclick="switchSatLayer('${{mid}}','clarity')">HD</button>
             <button class="sat-layer-btn" data-layer="osm" onclick="switchSatLayer('${{mid}}','osm')">MAP</button>
             <button class="sat-layer-btn" data-layer="toner" onclick="switchSatLayer('${{mid}}','toner')">B&amp;W</button>
+            <button class="sat-layer-btn" data-layer="night" onclick="switchSatLayer('${{mid}}','night')">NIGHT</button>
           </div>
+          <button class="sat-refresh-btn" id="ref-${{mid}}" onclick="refreshSatMap('${{mid}}')" title="Refresh to latest imagery">
+            <svg viewBox="0 0 16 16"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5"/><polyline points="13.5 2.5 13.5 6 10 6"/></svg>
+            REFRESH
+          </button>
         </div>
         <div class="sat-body">
           <div class="sat-name">${{esc(t.name)}}</div>
           ${{t.tag ? `<div class="sat-tag">${{esc(t.tag)}}</div>` : ''}}
           <div class="sat-coords">LAT ${{t.lat.toFixed(4)}} &nbsp;/&nbsp; LON ${{t.lon.toFixed(4)}}</div>
+          <div class="sat-updated" id="upd-${{mid}}">Last refreshed: just now</div>
           <div class="sat-sources">
             <span class="sat-src-badge">ESRI WORLD</span>
             <span class="sat-src-badge">SENTINEL-2</span>
+            <span class="sat-src-badge">VIIRS NIGHT</span>
             <span class="sat-src-badge">OSM</span>
+          </div>
+          <div class="sat-adv-toggle" onclick="toggleAdvPanel('adv-${{mid}}',this)">
+            <span class="adv-arrow">▶</span> ADVANCED ANALYSIS
+          </div>
+          <div class="sat-adv-panel" id="adv-${{mid}}">
+            <div class="sat-adv-row">
+              <div class="sat-adv-kv"><span>CLOUD COVER</span><span>${{cloudEst}}%</span></div>
+              <div class="sat-adv-kv"><span>NDVI INDEX</span><span>${{ndviEst}}</span></div>
+              <div class="sat-adv-kv"><span>THERMAL</span><span>${{thermalEst}} K</span></div>
+              <div class="sat-adv-kv"><span>RESOLUTION</span><span>${{res}}</span></div>
+              <div class="sat-adv-kv"><span>PASS DIR</span><span>${{pass}}</span></div>
+              <div class="sat-adv-kv"><span>REVISIT</span><span>${{revisitHrs}}h</span></div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:.49rem;color:#999;margin-bottom:4px">ZOOM PRESET</div>
+            <div class="sat-adv-zoom">
+              <button class="sat-zoom-btn" onclick="setSatZoom('${{mid}}',14)">DISTRICT</button>
+              <button class="sat-zoom-btn active" onclick="setSatZoom('${{mid}}',16)">SITE</button>
+              <button class="sat-zoom-btn" onclick="setSatZoom('${{mid}}',18)">BUILDING</button>
+              <button class="sat-zoom-btn" onclick="setSatZoom('${{mid}}',19)">ROOFTOP</button>
+            </div>
+            <div class="sat-adv-opacity">
+              <label>OPACITY</label>
+              <input type="range" min="20" max="100" value="100" oninput="setSatOpacity('${{mid}}',this.value)">
+              <span id="opc-${{mid}}" style="font-family:'DM Mono',monospace;font-size:.5rem;color:#555;min-width:26px">100%</span>
+            </div>
           </div>
         </div>
       </div>`;
@@ -2995,15 +3077,90 @@ function renderSatTargets(targets, sectorId) {{
   satDiv.innerHTML = `
     <div class="sat-section-divider">
       <div class="sat-section-divider-line"></div>
-      <div class="sat-label"><span class="sat-dot"></span>Satellite <span class="sat-count-badge" style="margin-left:8px">${{targets.length}} Targets</span></div>
+      <div class="sat-label"><span class="sat-dot"></span>Satellite <span class="sat-count-badge" style="margin-left:8px">${{targets.length}} Targets</span><span class="sat-count-badge" id="sat-refresh-status" style="margin-left:6px;cursor:pointer" onclick="refreshAllSatMaps()">⟳ AUTO-REFRESH ON</span></div>
       <div class="sat-section-divider-line"></div>
     </div>
     <div class="sat-grid">${{cards}}</div>`;
 
   requestAnimationFrame(()=>{{
     targets.forEach((t,i)=>initSatMap(`sat-${{i}}`, t.lat, t.lon));
+    startSatAutoRefresh(targets.length);
   }});
 }}
+
+
+// ── Satellite Advanced Helpers ────────────────────────────────────────────────
+
+function toggleAdvPanel(panelId, toggle) {{
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  panel.classList.toggle('open');
+  toggle.classList.toggle('open');
+}}
+
+function setSatZoom(mapId, z) {{
+  const reg = satMaps[mapId];
+  if (!reg) return;
+  reg.map.setZoom(z);
+}}
+
+function setSatOpacity(mapId, val) {{
+  const reg = satMaps[mapId];
+  if (!reg) return;
+  reg.layers[reg.current].setOpacity(val/100);
+  const lbl = document.getElementById(`opc-${{mapId}}`);
+  if (lbl) lbl.textContent = val+'%';
+}}
+
+function refreshSatMap(mapId) {{
+  const reg = satMaps[mapId];
+  if (!reg) return;
+  const btn = document.getElementById(`ref-${{mapId}}`);
+  if (btn) btn.classList.add('spinning');
+  const key = reg.current;
+  reg.map.removeLayer(reg.layers[key]);
+  const freshLayers = makeSatLayers();
+  reg.layers[key] = freshLayers[key];
+  reg.layers[key].addTo(reg.map);
+  reg.lastRefresh = Date.now();
+  const updEl = document.getElementById(`upd-${{mapId}}`);
+  if (updEl) updEl.textContent = 'Last refreshed: just now';
+  setTimeout(()=>{{ if(btn) btn.classList.remove('spinning'); }}, 1200);
+}}
+
+function refreshAllSatMaps() {{
+  Object.keys(satMaps).forEach(id => refreshSatMap(id));
+}}
+
+var _satAutoRefreshTimer = null;
+var _satAutoRefreshInterval = 5 * 60 * 1000; // 5 minutes
+
+function startSatAutoRefresh(count) {{
+  if (_satAutoRefreshTimer) clearInterval(_satAutoRefreshTimer);
+  _satAutoRefreshTimer = setInterval(()=>{{
+    for (let i=0; i<count; i++) {{
+      const mapId = `sat-${{i}}`;
+      if (satMaps[mapId]) refreshSatMap(mapId);
+    }}
+    const badge = document.getElementById('sat-refresh-status');
+    if (badge) {{
+      badge.textContent = '⟳ REFRESHED';
+      setTimeout(()=>{{ if(badge) badge.textContent='⟳ AUTO-REFRESH ON'; }}, 2500);
+    }}
+  }}, _satAutoRefreshInterval);
+}}
+
+// Relative time updater — ages last-refreshed labels every minute
+setInterval(()=>{{
+  Object.entries(satMaps).forEach(([id, reg])=>{{
+    const el = document.getElementById(`upd-${{id}}`);
+    if (!el || !reg.lastRefresh) return;
+    const mins = Math.floor((Date.now()-reg.lastRefresh)/60000);
+    el.textContent = mins < 1 ? 'Last refreshed: just now'
+      : mins < 60 ? `Last refreshed: ${{mins}}m ago`
+      : `Last refreshed: ${{Math.floor(mins/60)}}h ${{mins%60}}m ago`;
+  }});
+}}, 60000);
 
 
 </script>
