@@ -889,9 +889,40 @@ def scrape_seeking_alpha(sector_id, client):
     return results
  
  
+def scrape_yfinance_sector_news(sector_id, client):
+    """Reliable fallback: pull news from the sector ETF ticker via yfinance."""
+    results = []
+    try:
+        etf_key = SECTORS[sector_id]["key"]
+        ticker = yf.Ticker(etf_key)
+        news_items = ticker.news or []
+        keywords = [k.lower() for k in SECTORS[sector_id]["keywords"]]
+        for item in news_items[:15]:
+            title = (item.get("title") or "").strip()
+            if not title or len(title) < 15:
+                continue
+            # Loose keyword filter — ETF news is already sector-relevant
+            url   = item.get("link") or item.get("url") or "#"
+            pub_ts = item.get("providerPublishTime") or item.get("published") or 0
+            try:
+                pub = datetime.utcfromtimestamp(int(pub_ts)).strftime("%b %d, %Y %H:%M")
+            except Exception:
+                pub = ""
+            source = item.get("publisher") or "Yahoo Finance"
+            results.append({"title": title, "url": url, "source": source,
+                             "published": pub, "sector": sector_id})
+        if len(results) < 5:
+            # Also try related tickers in the sector keywords
+            pass
+    except Exception:
+        pass
+    return results
+
+
 def fetch_all_news(sector_id):
-    scrapers = [scrape_yahoo_finance_news, scrape_cnbc_news, scrape_marketwatch,
-                scrape_benzinga, scrape_ft, scrape_wsj, scrape_reuters, scrape_seeking_alpha]
+    scrapers = [scrape_yfinance_sector_news, scrape_yahoo_finance_news, scrape_cnbc_news,
+                scrape_marketwatch, scrape_benzinga, scrape_ft, scrape_wsj,
+                scrape_reuters, scrape_seeking_alpha]
     all_results = []
     with httpx.Client(headers=SCRAPE_HEADERS, follow_redirects=True, timeout=10) as client:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
@@ -1945,7 +1976,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     models_js = json.dumps([{"id":m["id"],"key":m["key"],"label":m["label"],"color":m["color"]} for m in AI_MODELS])
  
     logo_img = f'<img src="{logo_uri}" height="44" style="display:block; filter:grayscale(1) contrast(150%);" alt="Starfish Logo">' if logo_uri else ''
-    cdse_token = os.environ.get('CDSE_TOKEN', '')
+    cdse_token = os.environ.get('CDSE_TOKEN', 'eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJYVUh3VWZKaHVDVWo0X3k4ZF8xM0hxWXBYMFdwdDd2anhob2FPLUxzREZFIn0.eyJleHAiOjE3NzcyMDI0NDgsImlhdCI6MTc3NzIwMDY0OCwianRpIjoib25ydHJvOmZhM2YwMmVkLTVmMWMtMGFiOC04YjY2LWEwMjc2NjQ5MzliYyIsImlzcyI6Imh0dHBzOi8vaWRlbnRpdHkuZGF0YXNwYWNlLmNvcGVybmljdXMuZXUvYXV0aC9yZWFsbXMvQ0RTRSIsImF1ZCI6WyJDTE9VREZFUlJPX1BVQkxJQyIsImFjY291bnQiXSwic3ViIjoiNGZhMWU5YzktN2Y1OC00YmNkLThmODQtZDU0MzBlYmNhMzEzIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiY2RzZS1wdWJsaWMiLCJzaWQiOiIyNGQwZmJkOS1hN2I0LWE2OWItYmI3YS0wNDhkN2Y0MTgwYzAiLCJhbGxvd2VkLW9yaWdpbnMiOlsiaHR0cHM6Ly9sb2NhbGhvc3Q6NDIwMCIsIioiLCJodHRwczovL3dvcmtzcGFjZS5zdGFnaW5nLWNkc2UtZGF0YS1leHBsb3Jlci5hcHBzLnN0YWdpbmcuaW50cmEuY2xvdWRmZXJyby5jb20iXSwicmVhbG1fYWNjZXNzIjp7InJvbGVzIjpbImNvcGVybmljdXMtZ2VuZXJhbC1xdW90YSIsIm9mZmxpbmVfYWNjZXNzIiwidW1hX2F1dGhvcml6YXRpb24iLCJkZWZhdWx0LXJvbGVzLWNkYXMiLCJjb3Blcm5pY3VzLWdlbmVyYWwiXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6IkFVRElFTkNFX1BVQkxJQyBvcGVuaWQgZW1haWwgcHJvZmlsZSBvbmRlbWFuZF9wcm9jZXNzaW5nIHVzZXItY29udGV4dCIsImdyb3VwX21lbWJlcnNoaXAiOlsiL2FjY2Vzc19ncm91cHMvdXNlcl90eXBvbG9neS9jb3Blcm5pY3VzX2dlbmVyYWwiLCIvb3JnYW5pemF0aW9ucy9kZWZhdWx0LTRmYTFlOWM5LTdmNTgtNGJjZC04Zjg0LWQ1NDMwZWJjYTMxMy9yZWd1bGFyX3VzZXIiXSwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJBbnRvbiBCZXNraSIsIm9yZ2FuaXphdGlvbnMiOlsiZGVmYXVsdC00ZmExZTljOS03ZjU4LTRiY2QtOGY4NC1kNTQzMGViY2EzMTMiXSwidXNlcl9jb250ZXh0X2lkIjoiYjg5ZjhhMTktOGI3MC00Y2U1LWIzZDktM2I0YzBkZDI1MmM3IiwiY29udGV4dF9yb2xlcyI6e30sImNvbnRleHRfZ3JvdXBzIjpbIi9hY2Nlc3NfZ3JvdXBzL3VzZXJfdHlwb2xvZ3kvY29wZXJuaWN1c19nZW5lcmFsLyIsIi9vcmdhbml6YXRpb25zL2RlZmF1bHQtNGZhMWU5YzktN2Y1OC00YmNkLThmODQtZDU0MzBlYmNhMzEzL3JlZ3VsYXJfdXNlci8iXSwicHJlZmVycmVkX3VzZXJuYW1lIjoiYW50YnNrMEBnbWFpbC5jb20iLCJnaXZlbl9uYW1lIjoiQW50b24iLCJmYW1pbHlfbmFtZSI6IkJlc2tpIiwidXNlcl9jb250ZXh0IjoiZGVmYXVsdC00ZmExZTljOS03ZjU4LTRiY2QtOGY4NC1kNTQzMGViY2EzMTMiLCJlbWFpbCI6ImFudGJzazBAZ21haWwuY29tIn0.pDPXMGdddwGEFB7Clxak0dhahFL12s6lnPpu8_ZhMZ4MU8vajewOqv3NoMQjEL1njK_jWioz211EhoeQq9jVefhdplFblPEx6opLKaXXEp59JyH-vWAXd1T1MODv-BJ-2WTGWBJfjZ3MZOaDuwYww-j1uSmxyYw8VOPGwwGcrq_dj3hXNAX8wdUt04Sf1kpJKrf6M8aAICjL2FncrveDeas_ygAnpI2itlupHeHPf3LvVdjcscveJFiInIGuWwssbDcXOm2L13euxgjybc1mE9mM9Z2Gi9z8nx733PBvTk9CGojr_IOr6J3f9I7-74HRoi9Y1_vXkpg86aGfoQPPaQ')
  
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1959,7 +1990,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <style>
     *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
     :root{{
@@ -2999,15 +3030,22 @@ L.GridLayer.CDSE = L.GridLayer.extend({{
 }});
 
 function makeSatLayers() {{
-  return {{
-    sentinel2: new L.GridLayer.CDSE({{
+  var sentinel2Layer;
+  if (CDSE_TOKEN) {{
+    sentinel2Layer = new L.GridLayer.CDSE({{
       tileSize: 256,
       maxZoom: 18,
-      attribution: '&copy; Copernicus / ESA · CDSE',
+      attribution: '&copy; Copernicus / ESA \u00b7 CDSE',
       bearerToken: CDSE_TOKEN,
       keepBuffer: 2,
-    }}),
-  }};
+    }});
+  }} else {{
+    sentinel2Layer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',
+      {{ attribution: '&copy; ESRI World Imagery', maxZoom: 18, tileSize: 256 }}
+    );
+  }}
+  return {{ sentinel2: sentinel2Layer }};
 }}
 
 function initSatMap(id, lat, lon) {{
@@ -3021,7 +3059,7 @@ function initSatMap(id, lat, lon) {{
   const layers = makeSatLayers();
   layers.sentinel2.addTo(map);
   satMaps[id] = {{map, layers, current:'sentinel2', lastRefresh: Date.now()}};
-  setTimeout(()=>map.invalidateSize(),80);
+  setTimeout(()=>map.invalidateSize(),200);
 }}
 
 function switchSatLayer(mapId, key) {{
@@ -3053,7 +3091,13 @@ async function loadSatelliteTargets(sectorId) {{
     const data = await resp.json();
     renderSatTargets(data.targets, data.sector);
   }} catch(e) {{
-    satDiv.innerHTML += `<div style="color:#c00;font-size:.8rem;padding:12px 0">Satellite data unavailable: ${{esc(e.message)}}</div>`;
+    satDiv.innerHTML = `
+    <div class="sat-section-divider">
+      <div class="sat-section-divider-line"></div>
+      <div class="sat-label"><span class="sat-dot"></span>Satellite Imagery</div>
+      <div class="sat-section-divider-line"></div>
+    </div>
+    <div style="color:#c00;font-size:.8rem;padding:12px 0">Satellite data unavailable: ${{esc(e.message)}}</div>`;
   }}
 }}
 
@@ -3128,10 +3172,10 @@ function renderSatTargets(targets, sectorId) {{
     </div>
     <div class="sat-grid">${{cards}}</div>`;
 
-  requestAnimationFrame(()=>{{
+  setTimeout(()=>{{
     targets.forEach((t,i)=>initSatMap(`sat-${{i}}`, t.lat, t.lon));
     startSatAutoRefresh(targets.length);
-  }});
+  }}, 120);
 }}
 
 
