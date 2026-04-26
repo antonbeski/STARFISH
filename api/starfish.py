@@ -2281,10 +2281,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .sat-count-badge{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.1em;
                        text-transform:uppercase;color:#333;background:#f0f0f0;
                        border:1px solid #000;padding:.18rem .6rem;border-radius:4px}}
-    /* night layer overlay feel */
-    .sat-card.night-mode .sat-map-wrap{{filter:brightness(.92) saturate(.7)}}
-    .sat-layer-btn[data-layer="night"]{{background:rgba(10,10,30,.85);color:#9bb4ff;border-color:#334}}
-    .sat-layer-btn[data-layer="night"].active,.sat-layer-btn[data-layer="night"]:hover{{background:#1a1a3a;color:#c8d8ff;border-color:#6680cc}}
+
     /* refresh button */
     .sat-refresh-btn{{position:absolute;bottom:6px;left:6px;z-index:500;background:rgba(255,255,255,.88);
                       border:1px solid #000;color:#333;font-family:'DM Mono',monospace;font-size:.5rem;
@@ -2948,10 +2945,7 @@ function makeSatLayers() {{
     clarity: L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:21}}),
     osm: L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19}}),
     toner: L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18}}),
-    night: L.tileLayer(
-      'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/wmts.cgi?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=VIIRS_Black_Marble_Nighttime_M15&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible_Level8&TILEMATRIX={{z}}&TILEROW={{y}}&TILECOL={{x}}&FORMAT=image%2Fpng',
-      {{maxZoom:8, minZoom:1, opacity:1.0, attribution:'NASA GIBS · VIIRS Black Marble'}}
-    ),
+
   }};
 }}
 
@@ -2974,13 +2968,8 @@ function switchSatLayer(mapId, key) {{
   if (!reg || reg.current===key) return;
   reg.map.removeLayer(reg.layers[reg.current]);
   reg.layers[key].addTo(reg.map);
-  // Night layer only goes to zoom 8 — back off if needed
-  if (key === 'night' && reg.map.getZoom() > 8) reg.map.setZoom(6);
-  // Restore a sensible zoom when leaving night mode
-  if (reg.current === 'night' && key !== 'night') reg.map.setZoom(16);
   reg.current = key;
   const card = document.querySelector(`[data-satmapid="${{mapId}}"]`);
-  if (card) card.classList.toggle('night-mode', key==='night');
   document.querySelectorAll(`[data-satmapid="${{mapId}}"] .sat-layer-btn`).forEach(b=>{{
     b.classList.toggle('active', b.dataset.layer===key);
   }});
@@ -3029,7 +3018,6 @@ function renderSatTargets(targets, sectorId) {{
             <button class="sat-layer-btn" data-layer="clarity" onclick="switchSatLayer('${{mid}}','clarity')">HD</button>
             <button class="sat-layer-btn" data-layer="osm" onclick="switchSatLayer('${{mid}}','osm')">MAP</button>
             <button class="sat-layer-btn" data-layer="toner" onclick="switchSatLayer('${{mid}}','toner')">B&amp;W</button>
-            <button class="sat-layer-btn" data-layer="night" onclick="switchSatLayer('${{mid}}','night')">NIGHT</button>
           </div>
           <button class="sat-refresh-btn" id="ref-${{mid}}" onclick="refreshSatMap('${{mid}}')" title="Refresh to latest imagery">
             <svg viewBox="0 0 16 16"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5"/><polyline points="13.5 2.5 13.5 6 10 6"/></svg>
@@ -3044,7 +3032,6 @@ function renderSatTargets(targets, sectorId) {{
           <div class="sat-sources">
             <span class="sat-src-badge">ESRI WORLD</span>
             <span class="sat-src-badge">SENTINEL-2</span>
-            <span class="sat-src-badge">VIIRS NIGHT</span>
             <span class="sat-src-badge">OSM</span>
           </div>
           <div class="sat-adv-toggle" onclick="toggleAdvPanel('adv-${{mid}}',this)">
