@@ -1952,6 +1952,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>STARFISH — Market Intelligence</title>
+  <script>window.__ENV__ = {{{{ "SENTINEL2_TOKEN": "{{os.environ.get('SENTINEL2_TOKEN', '')}}" }}}};</script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
@@ -2939,13 +2940,13 @@ loadCh('{fh}');
 // ── Satellite Imagery ─────────────────────────────────────────────────────────
 var satMaps = {{}};
 
+var SENTINEL2_TOKEN = (typeof window !== 'undefined' && window.__ENV__ && window.__ENV__.SENTINEL2_TOKEN) || '';
 function makeSatLayers() {{
   return {{
-    esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:19}}),
-    clarity: L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:21}}),
-    osm: L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19}}),
-    toner: L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18}}),
-
+    sentinel2: L.tileLayer(
+      'https://services.sentinel-hub.com/ogc/wmts/' + SENTINEL2_TOKEN + '?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=TRUE_COLOR&STYLE=DEFAULT&TILEMATRIXSET=PopularWebMercator256&TILEMATRIX={{z}}&TILEROW={{y}}&TILECOL={{x}}&FORMAT=image/jpeg',
+      {{maxZoom:18, attribution:'&copy; Sentinel Hub / ESA'}}
+    ),
   }};
 }}
 
@@ -2958,8 +2959,8 @@ function initSatMap(id, lat, lon) {{
     dragging:true, scrollWheelZoom:false, doubleClickZoom:true,
   }});
   const layers = makeSatLayers();
-  layers.esri.addTo(map);
-  satMaps[id] = {{map, layers, current:'esri', lastRefresh: Date.now()}};
+  layers.sentinel2.addTo(map);
+  satMaps[id] = {{map, layers, current:'sentinel2', lastRefresh: Date.now()}};
   setTimeout(()=>map.invalidateSize(),80);
 }}
 
@@ -3014,10 +3015,7 @@ function renderSatTargets(targets, sectorId) {{
           <div id="${{mid}}" class="sat-map-leaf"></div>
           <div class="sat-map-crosshair"></div>
           <div class="sat-layer-btns">
-            <button class="sat-layer-btn active" data-layer="esri" onclick="switchSatLayer('${{mid}}','esri')">SAT</button>
-            <button class="sat-layer-btn" data-layer="clarity" onclick="switchSatLayer('${{mid}}','clarity')">HD</button>
-            <button class="sat-layer-btn" data-layer="osm" onclick="switchSatLayer('${{mid}}','osm')">MAP</button>
-            <button class="sat-layer-btn" data-layer="toner" onclick="switchSatLayer('${{mid}}','toner')">B&amp;W</button>
+            <button class="sat-layer-btn active" data-layer="sentinel2">SENTINEL-2 LIVE</button>
           </div>
           <button class="sat-refresh-btn" id="ref-${{mid}}" onclick="refreshSatMap('${{mid}}')" title="Refresh to latest imagery">
             <svg viewBox="0 0 16 16"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5"/><polyline points="13.5 2.5 13.5 6 10 6"/></svg>
@@ -3030,9 +3028,8 @@ function renderSatTargets(targets, sectorId) {{
           <div class="sat-coords">LAT ${{t.lat.toFixed(4)}} &nbsp;/&nbsp; LON ${{t.lon.toFixed(4)}}</div>
           <div class="sat-updated" id="upd-${{mid}}">Last refreshed: just now</div>
           <div class="sat-sources">
-            <span class="sat-src-badge">ESRI WORLD</span>
-            <span class="sat-src-badge">SENTINEL-2</span>
-            <span class="sat-src-badge">OSM</span>
+            <span class="sat-src-badge">SENTINEL-2 LIVE</span>
+            <span class="sat-src-badge">ESA · COPERNICUS</span>
           </div>
           <div class="sat-adv-toggle" onclick="toggleAdvPanel('adv-${{mid}}',this)">
             <span class="adv-arrow">▶</span> ADVANCED ANALYSIS
