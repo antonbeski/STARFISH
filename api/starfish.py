@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-STARFISH — Unified Market Intelligence Platform
+STARFISH — Market Dynamics
 Stocks · AI Analysis · Sectors · Live News
-Dark Premium Theme
 """
 
 import os
