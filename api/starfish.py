@@ -1945,6 +1945,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     models_js = json.dumps([{"id":m["id"],"key":m["key"],"label":m["label"],"color":m["color"]} for m in AI_MODELS])
  
     logo_img = f'<img src="{logo_uri}" height="44" style="display:block; filter:grayscale(1) contrast(150%);" alt="Starfish Logo">' if logo_uri else ''
+    sentinel2_token = os.environ.get('SENTINEL2_TOKEN', '')
  
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1952,7 +1953,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>STARFISH — Market Intelligence</title>
-  <script>window.__ENV__ = {{{{ "SENTINEL2_TOKEN": "{{os.environ.get('SENTINEL2_TOKEN', '')}}" }}}};</script>
+  <script>window.__ENV__ = {{"SENTINEL2_TOKEN": "{sentinel2_token}"}};</script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
@@ -2940,13 +2941,22 @@ loadCh('{fh}');
 // ── Satellite Imagery ─────────────────────────────────────────────────────────
 var satMaps = {{}};
 
-var SENTINEL2_TOKEN = (typeof window !== 'undefined' && window.__ENV__ && window.__ENV__.SENTINEL2_TOKEN) || '';
+var SENTINEL2_TOKEN = (window.__ENV__ && window.__ENV__.SENTINEL2_TOKEN) || '';
 function makeSatLayers() {{
+  var tileUrl = SENTINEL2_TOKEN
+    ? 'https://services.sentinel-hub.com/ogc/wmts/' + SENTINEL2_TOKEN
+      + '?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0'
+      + '&LAYER=TRUE_COLOR&STYLE=DEFAULT'
+      + '&TILEMATRIXSET=PopularWebMercator256'
+      + '&TILEMATRIX={{z}}&TILEROW={{y}}&TILECOL={{x}}'
+      + '&FORMAT=image%2Fjpeg'
+    : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}';
   return {{
-    sentinel2: L.tileLayer(
-      'https://services.sentinel-hub.com/ogc/wmts/' + SENTINEL2_TOKEN + '?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=TRUE_COLOR&STYLE=DEFAULT&TILEMATRIXSET=PopularWebMercator256&TILEMATRIX={{z}}&TILEROW={{y}}&TILECOL={{x}}&FORMAT=image/jpeg',
-      {{maxZoom:18, attribution:'&copy; Sentinel Hub / ESA'}}
-    ),
+    sentinel2: L.tileLayer(tileUrl, {{
+      maxZoom: 18,
+      tileSize: 256,
+      attribution: SENTINEL2_TOKEN ? '&copy; Sentinel Hub / ESA / Copernicus' : '&copy; Esri',
+    }}),
   }};
 }}
 
