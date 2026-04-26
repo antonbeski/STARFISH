@@ -889,40 +889,9 @@ def scrape_seeking_alpha(sector_id, client):
     return results
  
  
-def scrape_yfinance_sector_news(sector_id, client):
-    """Reliable fallback: pull news from the sector ETF ticker via yfinance."""
-    results = []
-    try:
-        etf_key = SECTORS[sector_id]["key"]
-        ticker = yf.Ticker(etf_key)
-        news_items = ticker.news or []
-        keywords = [k.lower() for k in SECTORS[sector_id]["keywords"]]
-        for item in news_items[:15]:
-            title = (item.get("title") or "").strip()
-            if not title or len(title) < 15:
-                continue
-            # Loose keyword filter — ETF news is already sector-relevant
-            url   = item.get("link") or item.get("url") or "#"
-            pub_ts = item.get("providerPublishTime") or item.get("published") or 0
-            try:
-                pub = datetime.utcfromtimestamp(int(pub_ts)).strftime("%b %d, %Y %H:%M")
-            except Exception:
-                pub = ""
-            source = item.get("publisher") or "Yahoo Finance"
-            results.append({"title": title, "url": url, "source": source,
-                             "published": pub, "sector": sector_id})
-        if len(results) < 5:
-            # Also try related tickers in the sector keywords
-            pass
-    except Exception:
-        pass
-    return results
-
-
 def fetch_all_news(sector_id):
-    scrapers = [scrape_yfinance_sector_news, scrape_yahoo_finance_news, scrape_cnbc_news,
-                scrape_marketwatch, scrape_benzinga, scrape_ft, scrape_wsj,
-                scrape_reuters, scrape_seeking_alpha]
+    scrapers = [scrape_yahoo_finance_news, scrape_cnbc_news, scrape_marketwatch,
+                scrape_benzinga, scrape_ft, scrape_wsj, scrape_reuters, scrape_seeking_alpha]
     all_results = []
     with httpx.Client(headers=SCRAPE_HEADERS, follow_redirects=True, timeout=10) as client:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
@@ -1976,7 +1945,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     models_js = json.dumps([{"id":m["id"],"key":m["key"],"label":m["label"],"color":m["color"]} for m in AI_MODELS])
  
     logo_img = f'<img src="{logo_uri}" height="44" style="display:block; filter:grayscale(1) contrast(150%);" alt="Starfish Logo">' if logo_uri else ''
-    cdse_token = os.environ.get('CDSE_TOKEN', 'eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJYVUh3VWZKaHVDVWo0X3k4ZF8xM0hxWXBYMFdwdDd2anhob2FPLUxzREZFIn0.eyJleHAiOjE3NzcyMDI0NDgsImlhdCI6MTc3NzIwMDY0OCwianRpIjoib25ydHJvOmZhM2YwMmVkLTVmMWMtMGFiOC04YjY2LWEwMjc2NjQ5MzliYyIsImlzcyI6Imh0dHBzOi8vaWRlbnRpdHkuZGF0YXNwYWNlLmNvcGVybmljdXMuZXUvYXV0aC9yZWFsbXMvQ0RTRSIsImF1ZCI6WyJDTE9VREZFUlJPX1BVQkxJQyIsImFjY291bnQiXSwic3ViIjoiNGZhMWU5YzktN2Y1OC00YmNkLThmODQtZDU0MzBlYmNhMzEzIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiY2RzZS1wdWJsaWMiLCJzaWQiOiIyNGQwZmJkOS1hN2I0LWE2OWItYmI3YS0wNDhkN2Y0MTgwYzAiLCJhbGxvd2VkLW9yaWdpbnMiOlsiaHR0cHM6Ly9sb2NhbGhvc3Q6NDIwMCIsIioiLCJodHRwczovL3dvcmtzcGFjZS5zdGFnaW5nLWNkc2UtZGF0YS1leHBsb3Jlci5hcHBzLnN0YWdpbmcuaW50cmEuY2xvdWRmZXJyby5jb20iXSwicmVhbG1fYWNjZXNzIjp7InJvbGVzIjpbImNvcGVybmljdXMtZ2VuZXJhbC1xdW90YSIsIm9mZmxpbmVfYWNjZXNzIiwidW1hX2F1dGhvcml6YXRpb24iLCJkZWZhdWx0LXJvbGVzLWNkYXMiLCJjb3Blcm5pY3VzLWdlbmVyYWwiXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6IkFVRElFTkNFX1BVQkxJQyBvcGVuaWQgZW1haWwgcHJvZmlsZSBvbmRlbWFuZF9wcm9jZXNzaW5nIHVzZXItY29udGV4dCIsImdyb3VwX21lbWJlcnNoaXAiOlsiL2FjY2Vzc19ncm91cHMvdXNlcl90eXBvbG9neS9jb3Blcm5pY3VzX2dlbmVyYWwiLCIvb3JnYW5pemF0aW9ucy9kZWZhdWx0LTRmYTFlOWM5LTdmNTgtNGJjZC04Zjg0LWQ1NDMwZWJjYTMxMy9yZWd1bGFyX3VzZXIiXSwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJBbnRvbiBCZXNraSIsIm9yZ2FuaXphdGlvbnMiOlsiZGVmYXVsdC00ZmExZTljOS03ZjU4LTRiY2QtOGY4NC1kNTQzMGViY2EzMTMiXSwidXNlcl9jb250ZXh0X2lkIjoiYjg5ZjhhMTktOGI3MC00Y2U1LWIzZDktM2I0YzBkZDI1MmM3IiwiY29udGV4dF9yb2xlcyI6e30sImNvbnRleHRfZ3JvdXBzIjpbIi9hY2Nlc3NfZ3JvdXBzL3VzZXJfdHlwb2xvZ3kvY29wZXJuaWN1c19nZW5lcmFsLyIsIi9vcmdhbml6YXRpb25zL2RlZmF1bHQtNGZhMWU5YzktN2Y1OC00YmNkLThmODQtZDU0MzBlYmNhMzEzL3JlZ3VsYXJfdXNlci8iXSwicHJlZmVycmVkX3VzZXJuYW1lIjoiYW50YnNrMEBnbWFpbC5jb20iLCJnaXZlbl9uYW1lIjoiQW50b24iLCJmYW1pbHlfbmFtZSI6IkJlc2tpIiwidXNlcl9jb250ZXh0IjoiZGVmYXVsdC00ZmExZTljOS03ZjU4LTRiY2QtOGY4NC1kNTQzMGViY2EzMTMiLCJlbWFpbCI6ImFudGJzazBAZ21haWwuY29tIn0.pDPXMGdddwGEFB7Clxak0dhahFL12s6lnPpu8_ZhMZ4MU8vajewOqv3NoMQjEL1njK_jWioz211EhoeQq9jVefhdplFblPEx6opLKaXXEp59JyH-vWAXd1T1MODv-BJ-2WTGWBJfjZ3MZOaDuwYww-j1uSmxyYw8VOPGwwGcrq_dj3hXNAX8wdUt04Sf1kpJKrf6M8aAICjL2FncrveDeas_ygAnpI2itlupHeHPf3LvVdjcscveJFiInIGuWwssbDcXOm2L13euxgjybc1mE9mM9Z2Gi9z8nx733PBvTk9CGojr_IOr6J3f9I7-74HRoi9Y1_vXkpg86aGfoQPPaQ')
  
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1984,13 +1952,12 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>STARFISH — Market Intelligence</title>
-  <script>window.__ENV__ = {{"CDSE_TOKEN": "{cdse_token}"}};</script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
   <style>
     *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
     :root{{
@@ -2314,38 +2281,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .sat-count-badge{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.1em;
                        text-transform:uppercase;color:#333;background:#f0f0f0;
                        border:1px solid #000;padding:.18rem .6rem;border-radius:4px}}
-
-    /* refresh button */
-    .sat-refresh-btn{{position:absolute;bottom:6px;left:6px;z-index:500;background:rgba(255,255,255,.88);
-                      border:1px solid #000;color:#333;font-family:'DM Mono',monospace;font-size:.5rem;
-                      letter-spacing:.06em;padding:3px 7px;cursor:pointer;border-radius:3px;
-                      transition:all .15s;display:flex;align-items:center;gap:4px}}
-    .sat-refresh-btn:hover{{background:#000;color:#fff}}
-    .sat-refresh-btn svg{{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}}
-    .sat-refresh-btn.spinning svg{{animation:spin .65s linear infinite}}
-    /* last-updated badge */
-    .sat-updated{{font-family:'DM Mono',monospace;font-size:.5rem;color:#aaa;margin-top:4px;letter-spacing:.04em}}
-    /* advanced analysis panel */
-    .sat-adv-toggle{{font-family:'DM Mono',monospace;font-size:.54rem;color:#555;cursor:pointer;
-                     display:inline-flex;align-items:center;gap:5px;border:1px solid #ccc;
-                     border-radius:3px;padding:3px 8px;margin-top:6px;transition:all .15s;user-select:none}}
-    .sat-adv-toggle:hover{{background:#000;color:#fff;border-color:#000}}
-    .sat-adv-toggle .adv-arrow{{transition:transform .2s}}
-    .sat-adv-toggle.open .adv-arrow{{transform:rotate(90deg)}}
-    .sat-adv-panel{{display:none;margin-top:8px;border:1px solid #e5e5e5;border-radius:4px;
-                    background:#fafafa;padding:8px 10px;font-size:.58rem;color:#333}}
-    .sat-adv-panel.open{{display:block}}
-    .sat-adv-row{{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:6px}}
-    .sat-adv-kv{{display:flex;flex-direction:column;gap:1px}}
-    .sat-adv-kv span:first-child{{font-family:'DM Mono',monospace;font-size:.48rem;color:#999;letter-spacing:.08em;text-transform:uppercase}}
-    .sat-adv-kv span:last-child{{font-family:'DM Mono',monospace;font-size:.62rem;color:#111;font-weight:600}}
-    .sat-adv-zoom{{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}}
-    .sat-zoom-btn{{font-family:'DM Mono',monospace;font-size:.5rem;border:1px solid #bbb;
-                   border-radius:3px;padding:2px 7px;cursor:pointer;background:#fff;transition:all .12s}}
-    .sat-zoom-btn:hover,.sat-zoom-btn.active{{background:#000;color:#fff;border-color:#000}}
-    .sat-adv-opacity{{display:flex;align-items:center;gap:6px;margin-top:6px}}
-    .sat-adv-opacity label{{font-family:'DM Mono',monospace;font-size:.5rem;color:#888;white-space:nowrap}}
-    .sat-adv-opacity input[type=range]{{flex:1;accent-color:#000;height:3px}}
 
     html,body{{max-width:100%;overflow-x:hidden}}
     *{{min-width:0;box-sizing:border-box}}
@@ -2972,80 +2907,13 @@ loadCh('{fh}');
 // ── Satellite Imagery ─────────────────────────────────────────────────────────
 var satMaps = {{}};
 
-var CDSE_TOKEN = (window.__ENV__ && window.__ENV__.CDSE_TOKEN) || '';
-
-// ── CDSE Process API tile layer ───────────────────────────────────────────────
-// Uses POST /api/v1/process per tile — only a Bearer token required, no instance ID.
-L.GridLayer.CDSE = L.GridLayer.extend({{
-  createTile: function(coords, done) {{
-    var img      = document.createElement('img');
-    img.alt      = '';
-    img.setAttribute('role', 'presentation');
-    var tileSize = this.getTileSize();
-    // Convert tile coords → geographic bbox (EPSG:4326)
-    var nwPx = coords.scaleBy(tileSize);
-    var sePx = nwPx.add([tileSize.x, tileSize.y]);
-    var nw   = L.CRS.EPSG3857.pointToLatLng(nwPx, coords.z);
-    var se   = L.CRS.EPSG3857.pointToLatLng(sePx, coords.z);
-    var bbox = [nw.lng, se.lat, se.lng, nw.lat]; // [west, south, east, north]
-    var body = {{
-      input: {{
-        bounds: {{
-          bbox: bbox,
-          properties: {{ crs: "http://www.opengis.net/def/crs/EPSG/0/4326" }}
-        }},
-        data: [{{
-          type: "sentinel-2-l2a",
-          dataFilter: {{ mosaickingOrder: "leastCC" }}
-        }}]
-      }},
-      output: {{
-        width: 256, height: 256,
-        responses: [{{ identifier: "default", format: {{ type: "image/jpeg" }} }}]
-      }},
-      evalscript: [
-        "//VERSION=3",
-        "function setup(){{return{{input:[\"B04\",\"B03\",\"B02\"],output:{{bands:3}}}};}}",
-        "function evaluatePixel(s){{return[3.5*s.B04,3.5*s.B03,3.5*s.B02];}}"
-      ].join("\n")
-    }};
-    fetch('https://sh.dataspace.copernicus.eu/api/v1/process', {{
-      method: 'POST',
-      headers: {{
-        'Authorization': 'Bearer ' + this.options.bearerToken,
-        'Content-Type': 'application/json'
-      }},
-      body: JSON.stringify(body)
-    }})
-    .then(function(r) {{ if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); }})
-    .then(function(blob) {{
-      var objUrl = URL.createObjectURL(blob);
-      img.onload  = function() {{ URL.revokeObjectURL(objUrl); done(null, img); }};
-      img.onerror = function(e) {{ URL.revokeObjectURL(objUrl); done(e,    img); }};
-      img.src = objUrl;
-    }})
-    .catch(function(e) {{ done(e, img); }});
-    return img;
-  }}
-}});
-
 function makeSatLayers() {{
-  var sentinel2Layer;
-  if (CDSE_TOKEN) {{
-    sentinel2Layer = new L.GridLayer.CDSE({{
-      tileSize: 256,
-      maxZoom: 18,
-      attribution: '&copy; Copernicus / ESA \u00b7 CDSE',
-      bearerToken: CDSE_TOKEN,
-      keepBuffer: 2,
-    }});
-  }} else {{
-    sentinel2Layer = L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',
-      {{ attribution: '&copy; ESRI World Imagery', maxZoom: 18, tileSize: 256 }}
-    );
-  }}
-  return {{ sentinel2: sentinel2Layer }};
+  return {{
+    esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:19}}),
+    clarity: L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:21}}),
+    osm: L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19}}),
+    toner: L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18}}),
+  }};
 }}
 
 function initSatMap(id, lat, lon) {{
@@ -3057,9 +2925,9 @@ function initSatMap(id, lat, lon) {{
     dragging:true, scrollWheelZoom:false, doubleClickZoom:true,
   }});
   const layers = makeSatLayers();
-  layers.sentinel2.addTo(map);
-  satMaps[id] = {{map, layers, current:'sentinel2', lastRefresh: Date.now()}};
-  setTimeout(()=>map.invalidateSize(),200);
+  layers.esri.addTo(map);
+  satMaps[id] = {{map, layers, current:'esri'}};
+  setTimeout(()=>map.invalidateSize(),80);
 }}
 
 function switchSatLayer(mapId, key) {{
@@ -3068,7 +2936,6 @@ function switchSatLayer(mapId, key) {{
   reg.map.removeLayer(reg.layers[reg.current]);
   reg.layers[key].addTo(reg.map);
   reg.current = key;
-  const card = document.querySelector(`[data-satmapid="${{mapId}}"]`);
   document.querySelectorAll(`[data-satmapid="${{mapId}}"] .sat-layer-btn`).forEach(b=>{{
     b.classList.toggle('active', b.dataset.layer===key);
   }});
@@ -3091,13 +2958,7 @@ async function loadSatelliteTargets(sectorId) {{
     const data = await resp.json();
     renderSatTargets(data.targets, data.sector);
   }} catch(e) {{
-    satDiv.innerHTML = `
-    <div class="sat-section-divider">
-      <div class="sat-section-divider-line"></div>
-      <div class="sat-label"><span class="sat-dot"></span>Satellite Imagery</div>
-      <div class="sat-section-divider-line"></div>
-    </div>
-    <div style="color:#c00;font-size:.8rem;padding:12px 0">Satellite data unavailable: ${{esc(e.message)}}</div>`;
+    satDiv.innerHTML += `<div style="color:#c00;font-size:.8rem;padding:12px 0">Satellite data unavailable: ${{esc(e.message)}}</div>`;
   }}
 }}
 
@@ -3106,59 +2967,26 @@ function renderSatTargets(targets, sectorId) {{
   const cards = targets.map((t,i) => {{
     const mid = `sat-${{i}}`;
     const delay = Math.min(i*0.025, 0.6);
-    // Advanced analysis metadata (estimated from coords)
-    const cloudEst = (Math.abs(Math.sin(t.lat*0.17+t.lon*0.11))*100).toFixed(0);
-    const ndviEst  = (.3 + Math.abs(Math.sin(t.lat*0.23))*0.5).toFixed(3);
-    const thermalEst = (280 + Math.sin(t.lat*0.3)*35).toFixed(1);
-    const revisitHrs = [6,12,24,48][Math.floor(Math.abs(Math.sin(t.lat))*4)];
-    const pass = ['ASCENDING','DESCENDING'][i%2];
-    const res  = ['10m','15m','30m'][i%3];
     return `
       <div class="sat-card" data-satmapid="${{mid}}" style="animation-delay:${{delay}}s">
         <div class="sat-map-wrap">
           <div id="${{mid}}" class="sat-map-leaf"></div>
           <div class="sat-map-crosshair"></div>
           <div class="sat-layer-btns">
-            <button class="sat-layer-btn active" data-layer="sentinel2">SENTINEL-2 LIVE</button>
+            <button class="sat-layer-btn active" data-layer="esri" onclick="switchSatLayer('${{mid}}','esri')">SAT</button>
+            <button class="sat-layer-btn" data-layer="clarity" onclick="switchSatLayer('${{mid}}','clarity')">HD</button>
+            <button class="sat-layer-btn" data-layer="osm" onclick="switchSatLayer('${{mid}}','osm')">MAP</button>
+            <button class="sat-layer-btn" data-layer="toner" onclick="switchSatLayer('${{mid}}','toner')">B&amp;W</button>
           </div>
-          <button class="sat-refresh-btn" id="ref-${{mid}}" onclick="refreshSatMap('${{mid}}')" title="Refresh to latest imagery">
-            <svg viewBox="0 0 16 16"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5"/><polyline points="13.5 2.5 13.5 6 10 6"/></svg>
-            REFRESH
-          </button>
         </div>
         <div class="sat-body">
           <div class="sat-name">${{esc(t.name)}}</div>
           ${{t.tag ? `<div class="sat-tag">${{esc(t.tag)}}</div>` : ''}}
           <div class="sat-coords">LAT ${{t.lat.toFixed(4)}} &nbsp;/&nbsp; LON ${{t.lon.toFixed(4)}}</div>
-          <div class="sat-updated" id="upd-${{mid}}">Last refreshed: just now</div>
           <div class="sat-sources">
-            <span class="sat-src-badge">SENTINEL-2 LIVE</span>
-            <span class="sat-src-badge">ESA · COPERNICUS</span>
-          </div>
-          <div class="sat-adv-toggle" onclick="toggleAdvPanel('adv-${{mid}}',this)">
-            <span class="adv-arrow">▶</span> ADVANCED ANALYSIS
-          </div>
-          <div class="sat-adv-panel" id="adv-${{mid}}">
-            <div class="sat-adv-row">
-              <div class="sat-adv-kv"><span>CLOUD COVER</span><span>${{cloudEst}}%</span></div>
-              <div class="sat-adv-kv"><span>NDVI INDEX</span><span>${{ndviEst}}</span></div>
-              <div class="sat-adv-kv"><span>THERMAL</span><span>${{thermalEst}} K</span></div>
-              <div class="sat-adv-kv"><span>RESOLUTION</span><span>${{res}}</span></div>
-              <div class="sat-adv-kv"><span>PASS DIR</span><span>${{pass}}</span></div>
-              <div class="sat-adv-kv"><span>REVISIT</span><span>${{revisitHrs}}h</span></div>
-            </div>
-            <div style="font-family:'DM Mono',monospace;font-size:.49rem;color:#999;margin-bottom:4px">ZOOM PRESET</div>
-            <div class="sat-adv-zoom">
-              <button class="sat-zoom-btn" onclick="setSatZoom('${{mid}}',14)">DISTRICT</button>
-              <button class="sat-zoom-btn active" onclick="setSatZoom('${{mid}}',16)">SITE</button>
-              <button class="sat-zoom-btn" onclick="setSatZoom('${{mid}}',18)">BUILDING</button>
-              <button class="sat-zoom-btn" onclick="setSatZoom('${{mid}}',19)">ROOFTOP</button>
-            </div>
-            <div class="sat-adv-opacity">
-              <label>OPACITY</label>
-              <input type="range" min="20" max="100" value="100" oninput="setSatOpacity('${{mid}}',this.value)">
-              <span id="opc-${{mid}}" style="font-family:'DM Mono',monospace;font-size:.5rem;color:#555;min-width:26px">100%</span>
-            </div>
+            <span class="sat-src-badge">ESRI WORLD</span>
+            <span class="sat-src-badge">SENTINEL-2</span>
+            <span class="sat-src-badge">OSM</span>
           </div>
         </div>
       </div>`;
@@ -3167,90 +2995,15 @@ function renderSatTargets(targets, sectorId) {{
   satDiv.innerHTML = `
     <div class="sat-section-divider">
       <div class="sat-section-divider-line"></div>
-      <div class="sat-label"><span class="sat-dot"></span>Satellite <span class="sat-count-badge" style="margin-left:8px">${{targets.length}} Targets</span><span class="sat-count-badge" id="sat-refresh-status" style="margin-left:6px;cursor:pointer" onclick="refreshAllSatMaps()">⟳ AUTO-REFRESH ON</span></div>
+      <div class="sat-label"><span class="sat-dot"></span>Satellite <span class="sat-count-badge" style="margin-left:8px">${{targets.length}} Targets</span></div>
       <div class="sat-section-divider-line"></div>
     </div>
     <div class="sat-grid">${{cards}}</div>`;
 
-  setTimeout(()=>{{
+  requestAnimationFrame(()=>{{
     targets.forEach((t,i)=>initSatMap(`sat-${{i}}`, t.lat, t.lon));
-    startSatAutoRefresh(targets.length);
-  }}, 120);
-}}
-
-
-// ── Satellite Advanced Helpers ────────────────────────────────────────────────
-
-function toggleAdvPanel(panelId, toggle) {{
-  const panel = document.getElementById(panelId);
-  if (!panel) return;
-  panel.classList.toggle('open');
-  toggle.classList.toggle('open');
-}}
-
-function setSatZoom(mapId, z) {{
-  const reg = satMaps[mapId];
-  if (!reg) return;
-  reg.map.setZoom(z);
-}}
-
-function setSatOpacity(mapId, val) {{
-  const reg = satMaps[mapId];
-  if (!reg) return;
-  reg.layers[reg.current].setOpacity(val/100);
-  const lbl = document.getElementById(`opc-${{mapId}}`);
-  if (lbl) lbl.textContent = val+'%';
-}}
-
-function refreshSatMap(mapId) {{
-  const reg = satMaps[mapId];
-  if (!reg) return;
-  const btn = document.getElementById(`ref-${{mapId}}`);
-  if (btn) btn.classList.add('spinning');
-  const key = reg.current;
-  reg.map.removeLayer(reg.layers[key]);
-  const freshLayers = makeSatLayers();
-  reg.layers[key] = freshLayers[key];
-  reg.layers[key].addTo(reg.map);
-  reg.lastRefresh = Date.now();
-  const updEl = document.getElementById(`upd-${{mapId}}`);
-  if (updEl) updEl.textContent = 'Last refreshed: just now';
-  setTimeout(()=>{{ if(btn) btn.classList.remove('spinning'); }}, 1200);
-}}
-
-function refreshAllSatMaps() {{
-  Object.keys(satMaps).forEach(id => refreshSatMap(id));
-}}
-
-var _satAutoRefreshTimer = null;
-var _satAutoRefreshInterval = 5 * 60 * 1000; // 5 minutes
-
-function startSatAutoRefresh(count) {{
-  if (_satAutoRefreshTimer) clearInterval(_satAutoRefreshTimer);
-  _satAutoRefreshTimer = setInterval(()=>{{
-    for (let i=0; i<count; i++) {{
-      const mapId = `sat-${{i}}`;
-      if (satMaps[mapId]) refreshSatMap(mapId);
-    }}
-    const badge = document.getElementById('sat-refresh-status');
-    if (badge) {{
-      badge.textContent = '⟳ REFRESHED';
-      setTimeout(()=>{{ if(badge) badge.textContent='⟳ AUTO-REFRESH ON'; }}, 2500);
-    }}
-  }}, _satAutoRefreshInterval);
-}}
-
-// Relative time updater — ages last-refreshed labels every minute
-setInterval(()=>{{
-  Object.entries(satMaps).forEach(([id, reg])=>{{
-    const el = document.getElementById(`upd-${{id}}`);
-    if (!el || !reg.lastRefresh) return;
-    const mins = Math.floor((Date.now()-reg.lastRefresh)/60000);
-    el.textContent = mins < 1 ? 'Last refreshed: just now'
-      : mins < 60 ? `Last refreshed: ${{mins}}m ago`
-      : `Last refreshed: ${{Math.floor(mins/60)}}h ${{mins%60}}m ago`;
   }});
-}}, 60000);
+}}
 
 
 </script>
