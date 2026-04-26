@@ -2943,16 +2943,14 @@ loadCh('{fh}');
 var satMaps = {{}};
 
 function makeSatLayers() {{
-  // NASA GIBS VIIRS night-time lights — append timestamp param so tiles always refetch fresh data
-  const nightTs = Math.floor(Date.now()/3600000)*3600000; // hourly cache-bust
   return {{
     esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:19}}),
     clarity: L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:21}}),
     osm: L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19}}),
     toner: L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18}}),
     night: L.tileLayer(
-      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2024-01-01/GoogleMapsCompatible_Level8/{{z}}/{{y}}/{{x}}.jpg?_={{nightTs}}`,
-      {{maxZoom:8, opacity:0.92, attribution:'NASA GIBS · VIIRS Night Lights'}}
+      'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/wmts.cgi?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=VIIRS_Black_Marble_Nighttime_M15&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible_Level8&TILEMATRIX={{z}}&TILEROW={{y}}&TILECOL={{x}}&FORMAT=image%2Fpng',
+      {{maxZoom:8, minZoom:1, opacity:1.0, attribution:'NASA GIBS · VIIRS Black Marble'}}
     ),
   }};
 }}
@@ -2976,6 +2974,10 @@ function switchSatLayer(mapId, key) {{
   if (!reg || reg.current===key) return;
   reg.map.removeLayer(reg.layers[reg.current]);
   reg.layers[key].addTo(reg.map);
+  // Night layer only goes to zoom 8 — back off if needed
+  if (key === 'night' && reg.map.getZoom() > 8) reg.map.setZoom(6);
+  // Restore a sensible zoom when leaving night mode
+  if (reg.current === 'night' && key !== 'night') reg.map.setZoom(16);
   reg.current = key;
   const card = document.querySelector(`[data-satmapid="${{mapId}}"]`);
   if (card) card.classList.toggle('night-mode', key==='night');
