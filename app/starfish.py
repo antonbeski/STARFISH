@@ -3253,6 +3253,192 @@ function renderSatTargets(targets, sectorId) {{
 }}
 
 
+// ── LIVE SATELLITE VIEWER ──────────────────────────────────────────────────
+var _satRunning = false;
+var _satTokenInterval = null;
+
+function toggleSat() {{
+  var btn = document.getElementById('sat-toggle-btn');
+  if (!_satRunning) {{
+    _satRunning = true;
+    btn.textContent = '⏹ Stop';
+    btn.style.borderColor = 'rgba(0,200,100,.5)';
+    btn.style.background = 'rgba(0,200,100,.08)';
+    btn.style.color = '#008844';
+    _satStartViewer();
+  }} else {{
+    _satRunning = false;
+    btn.innerHTML = '&#9654; Start';
+    btn.style.borderColor = 'rgba(255,100,100,.5)';
+    btn.style.background = 'rgba(255,100,100,.08)';
+    btn.style.color = '#cc3333';
+    _satStopViewer();
+  }}
+}}
+
+function _satStartViewer() {{
+  // Set default dates on first start
+  var today = new Date();
+  var prior = new Date(today);
+  prior.setDate(prior.getDate() - 30);
+  var fmt = function(d){{ return d.toISOString().split('T')[0]; }};
+  document.getElementById('satDateTo').value   = fmt(today);
+  document.getElementById('satDateFrom').value = fmt(prior);
+
+  function waitForLeaflet(cb) {{
+    if (typeof L !== 'undefined') {{ cb(); return; }}
+    var t = setInterval(function() {{
+      if (typeof L !== 'undefined') {{ clearInterval(t); cb(); }}
+    }}, 80);
+  }}
+  waitForLeaflet(function() {{ _satInitMap(); }});
+
+  _satUpdateToken();
+  _satTokenInterval = setInterval(_satUpdateToken, 30000);
+}}
+
+function _satStopViewer() {{
+  clearInterval(_satTokenInterval);
+  _satTokenInterval = null;
+  var badge = document.getElementById('satTokenBadge');
+  if (badge) badge.textContent = 'TOKEN —';
+  _satLog('Satellite viewer stopped.', 'info');
+}}
+
+(function initSatViewer() {{
+  // Dates will be set on Start — nothing auto-runs here
+}})();
+
+var _satMap = null, _satLayer = null, _satCurrentLayer = 'TRUE-COLOR';
+
+function _satInitMap() {{
+  _satMap = L.map('satMap', {{ center: [20, 77], zoom: 5, zoomControl: true, attributionControl: false }});
+  L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{ maxZoom: 19, subdomains: 'abcd' }}).addTo(_satMap);
+  _satMap.on('mousemove', function(e) {{}});
+}}
+
+async function _satUpdateToken() {{
+  try {{
+    var res = await fetch('/sentinel/token-status');
+    var d = await res.json();
+    var sec = d.remaining_seconds;
+    if (sec == null) return;
+    var m = String(Math.floor(sec/60)).padStart(2,'0');
+    var s = String(sec%60).padStart(2,'0');
+    document.getElementById('satTokenBadge').textContent = 'TOKEN ' + m + ':' + s;
+    var dot = document.getElementById('satStatusDot');
+    if (sec < 120) {{ dot.style.background='#dc2626'; }}
+    else if (sec < 300) {{ dot.style.background='#f59e0b'; }}
+    else {{ dot.style.background='#22c55e'; }}
+  }} catch(e) {{}}
+}}
+
+function satSelectLayer(btn) {{
+  document.querySelectorAll('.sat-vlayer-btn').forEach(function(b){{ b.classList.remove('active'); }});
+  btn.classList.add('active');
+  _satCurrentLayer = btn.dataset.layer;
+  _satLog('Layer: ' + _satCurrentLayer);
+}}
+
+async function satApplyLayer() {{
+  var dateFrom = document.getElementById('satDateFrom').value;
+  var dateTo   = document.getElementById('satDateTo').value;
+  var cloud    = document.getElementById('satCloudSlider').value;
+  var btn      = document.getElementById('satLoadBtn');
+  if (!dateFrom || !dateTo) {{ _satLog('Set date range first', 'err'); return; }}
+  if (!_satMap) {{ _satLog('Map not ready yet', 'err'); return; }}
+  btn.disabled = true;
+  btn.textContent = '&#9632; LOADING…';
+  document.getElementById('satStatusText').textContent = 'Fetching satellite data…';
+  _satLog('Requesting ' + _satCurrentLayer + ' imagery…');
+  try {{
+    if (_satLayer) {{ _satMap.removeLayer(_satLayer); _satLayer = null; }}
+    var proxyUrl = '/sentinel/proxy-tile?layer=' + _satCurrentLayer +
+      '&dateFrom=' + dateFrom + '&dateTo=' + dateTo + '&cloud=' + cloud +
+      '&z={{z}}&x={{x}}&y={{y}}';
+    _satLayer = L.tileLayer(proxyUrl, {{ maxZoom: 18, opacity: 0.92, tileSize: 256, attribution: '\u00a9 Copernicus/ESA' }});
+    _satLayer.addTo(_satMap);
+    _satLog(_satCurrentLayer + ' layer loaded', 'ok');
+    document.getElementById('satStatusText').textContent = 'Showing: ' + _satCurrentLayer + ' — Sentinel-2 L2A';
+  }} catch(err) {{
+    _satLog('Error: ' + err.message, 'err');
+    document.getElementById('satStatusText').textContent = 'Error loading layer';
+  }} finally {{
+    btn.disabled = false;
+    btn.textContent = '■ LOAD SATELLITE DATA';
+  }}
+}}
+
+// Satellite search
+var _satSearchTimer;
+document.getElementById('satSearchInput').addEventListener('input', function() {{
+  clearTimeout(_satSearchTimer);
+  var q = this.value.trim();
+  if (q.length < 3) {{ _satHideResults(); return; }}
+  _satSearchTimer = setTimeout(function(){{ _satGeocode(q); }}, 400);
+}});
+
+document.getElementById('satSearchInput').addEventListener('keydown', function(e) {{
+  if (e.key === 'Enter') {{ clearTimeout(_satSearchTimer); satDoSearch(); }}
+  if (e.key === 'Escape') _satHideResults();
+}});
+
+function satDoSearch() {{
+  var q = document.getElementById('satSearchInput').value.trim();
+  if (!q) return;
+  _satGeocode(q);
+}}
+
+async function _satGeocode(q) {{
+  try {{
+    var res = await fetch('/sentinel/geocode?q=' + encodeURIComponent(q));
+    var data = await res.json();
+    var container = document.getElementById('satSearchResults');
+    container.innerHTML = '';
+    container.style.display = 'block';
+    if (!data.results || data.results.length === 0) {{
+      container.innerHTML = '<div class="sat-search-result-item" style="color:#999">No results</div>';
+      return;
+    }}
+    data.results.slice(0,5).forEach(function(r) {{
+      var el = document.createElement('div');
+      el.className = 'sat-search-result-item';
+      el.textContent = r.display_name;
+      el.title = r.display_name;
+      el.onclick = function() {{
+        if (_satMap) _satMap.flyTo([parseFloat(r.lat), parseFloat(r.lon)], 12, {{duration:1.5}});
+        document.getElementById('satSearchInput').value = r.display_name.split(',')[0];
+        _satHideResults();
+        _satLog('Navigated to: ' + r.display_name.split(',')[0]);
+      }};
+      container.appendChild(el);
+    }});
+  }} catch(err) {{
+    _satLog('Geocode error: ' + err.message, 'err');
+  }}
+}}
+
+function _satHideResults() {{
+  document.getElementById('satSearchResults').style.display = 'none';
+}}
+
+document.addEventListener('click', function(e) {{
+  if (!e.target.closest('.sat-search-wrap')) _satHideResults();
+}});
+
+function _satLog(msg, type) {{
+  type = type || 'info';
+  var area = document.getElementById('satLog');
+  var el = document.createElement('div');
+  el.className = 'sat-log-entry' + (type !== 'info' ? ' ' + type : '');
+  var icons = {{info:'▸', ok:'✓', err:'✕'}};
+  el.textContent = (icons[type]||'▸') + ' ' + msg;
+  area.appendChild(el);
+  area.scrollTop = area.scrollHeight;
+}}
+
+</script>
+
 </script>
 </body>
 </html>"""
@@ -3856,190 +4042,6 @@ window.addEventListener('message', function(e) {
 setStatus('init', 'Ready — press Start to connect');
 dbg('AIS tracker ready. Press \u25b6 Start in the panel above.');
 
-
-// ── LIVE SATELLITE VIEWER ──────────────────────────────────────────────────
-var _satRunning = false;
-var _satTokenInterval = null;
-
-function toggleSat() {{
-  var btn = document.getElementById('sat-toggle-btn');
-  if (!_satRunning) {{
-    _satRunning = true;
-    btn.textContent = '⏹ Stop';
-    btn.style.borderColor = 'rgba(0,200,100,.5)';
-    btn.style.background = 'rgba(0,200,100,.08)';
-    btn.style.color = '#008844';
-    _satStartViewer();
-  }} else {{
-    _satRunning = false;
-    btn.innerHTML = '&#9654; Start';
-    btn.style.borderColor = 'rgba(255,100,100,.5)';
-    btn.style.background = 'rgba(255,100,100,.08)';
-    btn.style.color = '#cc3333';
-    _satStopViewer();
-  }}
-}}
-
-function _satStartViewer() {{
-  // Set default dates on first start
-  var today = new Date();
-  var prior = new Date(today);
-  prior.setDate(prior.getDate() - 30);
-  var fmt = function(d){{ return d.toISOString().split('T')[0]; }};
-  document.getElementById('satDateTo').value   = fmt(today);
-  document.getElementById('satDateFrom').value = fmt(prior);
-
-  function waitForLeaflet(cb) {{
-    if (typeof L !== 'undefined') {{ cb(); return; }}
-    var t = setInterval(function() {{
-      if (typeof L !== 'undefined') {{ clearInterval(t); cb(); }}
-    }}, 80);
-  }}
-  waitForLeaflet(function() {{ _satInitMap(); }});
-
-  _satUpdateToken();
-  _satTokenInterval = setInterval(_satUpdateToken, 30000);
-}}
-
-function _satStopViewer() {{
-  clearInterval(_satTokenInterval);
-  _satTokenInterval = null;
-  var badge = document.getElementById('satTokenBadge');
-  if (badge) badge.textContent = 'TOKEN —';
-  _satLog('Satellite viewer stopped.', 'info');
-}}
-
-(function initSatViewer() {{
-  // Dates will be set on Start — nothing auto-runs here
-}})();
-
-var _satMap = null, _satLayer = null, _satCurrentLayer = 'TRUE-COLOR';
-
-function _satInitMap() {
-  _satMap = L.map('satMap', { center: [20, 77], zoom: 5, zoomControl: true, attributionControl: false });
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd' }).addTo(_satMap);
-  _satMap.on('mousemove', function(e) {});
-}
-
-async function _satUpdateToken() {
-  try {
-    var res = await fetch('/sentinel/token-status');
-    var d = await res.json();
-    var sec = d.remaining_seconds;
-    if (sec == null) return;
-    var m = String(Math.floor(sec/60)).padStart(2,'0');
-    var s = String(sec%60).padStart(2,'0');
-    document.getElementById('satTokenBadge').textContent = 'TOKEN ' + m + ':' + s;
-    var dot = document.getElementById('satStatusDot');
-    if (sec < 120) {{ dot.style.background='#dc2626'; }}
-    else if (sec < 300) {{ dot.style.background='#f59e0b'; }}
-    else {{ dot.style.background='#22c55e'; }}
-  }} catch(e) {{}}
-}}
-
-function satSelectLayer(btn) {{
-  document.querySelectorAll('.sat-vlayer-btn').forEach(function(b){{ b.classList.remove('active'); }});
-  btn.classList.add('active');
-  _satCurrentLayer = btn.dataset.layer;
-  _satLog('Layer: ' + _satCurrentLayer);
-}}
-
-async function satApplyLayer() {{
-  var dateFrom = document.getElementById('satDateFrom').value;
-  var dateTo   = document.getElementById('satDateTo').value;
-  var cloud    = document.getElementById('satCloudSlider').value;
-  var btn      = document.getElementById('satLoadBtn');
-  if (!dateFrom || !dateTo) {{ _satLog('Set date range first', 'err'); return; }}
-  if (!_satMap) {{ _satLog('Map not ready yet', 'err'); return; }}
-  btn.disabled = true;
-  btn.textContent = '&#9632; LOADING…';
-  document.getElementById('satStatusText').textContent = 'Fetching satellite data…';
-  _satLog('Requesting ' + _satCurrentLayer + ' imagery…');
-  try {{
-    if (_satLayer) {{ _satMap.removeLayer(_satLayer); _satLayer = null; }}
-    var proxyUrl = '/sentinel/proxy-tile?layer=' + _satCurrentLayer +
-      '&dateFrom=' + dateFrom + '&dateTo=' + dateTo + '&cloud=' + cloud +
-      '&z={z}&x={x}&y={y}';
-    _satLayer = L.tileLayer(proxyUrl, { maxZoom: 18, opacity: 0.92, tileSize: 256, attribution: '\u00a9 Copernicus/ESA' });
-    _satLayer.addTo(_satMap);
-    _satLog(_satCurrentLayer + ' layer loaded', 'ok');
-    document.getElementById('satStatusText').textContent = 'Showing: ' + _satCurrentLayer + ' — Sentinel-2 L2A';
-  }} catch(err) {{
-    _satLog('Error: ' + err.message, 'err');
-    document.getElementById('satStatusText').textContent = 'Error loading layer';
-  }} finally {{
-    btn.disabled = false;
-    btn.textContent = '■ LOAD SATELLITE DATA';
-  }}
-}}
-
-// Satellite search
-var _satSearchTimer;
-document.getElementById('satSearchInput').addEventListener('input', function() {{
-  clearTimeout(_satSearchTimer);
-  var q = this.value.trim();
-  if (q.length < 3) {{ _satHideResults(); return; }}
-  _satSearchTimer = setTimeout(function(){{ _satGeocode(q); }}, 400);
-}});
-
-document.getElementById('satSearchInput').addEventListener('keydown', function(e) {{
-  if (e.key === 'Enter') {{ clearTimeout(_satSearchTimer); satDoSearch(); }}
-  if (e.key === 'Escape') _satHideResults();
-}});
-
-function satDoSearch() {{
-  var q = document.getElementById('satSearchInput').value.trim();
-  if (!q) return;
-  _satGeocode(q);
-}}
-
-async function _satGeocode(q) {{
-  try {{
-    var res = await fetch('/sentinel/geocode?q=' + encodeURIComponent(q));
-    var data = await res.json();
-    var container = document.getElementById('satSearchResults');
-    container.innerHTML = '';
-    container.style.display = 'block';
-    if (!data.results || data.results.length === 0) {{
-      container.innerHTML = '<div class="sat-search-result-item" style="color:#999">No results</div>';
-      return;
-    }}
-    data.results.slice(0,5).forEach(function(r) {{
-      var el = document.createElement('div');
-      el.className = 'sat-search-result-item';
-      el.textContent = r.display_name;
-      el.title = r.display_name;
-      el.onclick = function() {{
-        if (_satMap) _satMap.flyTo([parseFloat(r.lat), parseFloat(r.lon)], 12, {{duration:1.5}});
-        document.getElementById('satSearchInput').value = r.display_name.split(',')[0];
-        _satHideResults();
-        _satLog('Navigated to: ' + r.display_name.split(',')[0]);
-      }};
-      container.appendChild(el);
-    }});
-  }} catch(err) {{
-    _satLog('Geocode error: ' + err.message, 'err');
-  }}
-}}
-
-function _satHideResults() {{
-  document.getElementById('satSearchResults').style.display = 'none';
-}}
-
-document.addEventListener('click', function(e) {{
-  if (!e.target.closest('.sat-search-wrap')) _satHideResults();
-}});
-
-function _satLog(msg, type) {{
-  type = type || 'info';
-  var area = document.getElementById('satLog');
-  var el = document.createElement('div');
-  el.className = 'sat-log-entry' + (type !== 'info' ? ' ' + type : '');
-  var icons = {{info:'▸', ok:'✓', err:'✕'}};
-  el.textContent = (icons[type]||'▸') + ' ' + msg;
-  area.appendChild(el);
-  area.scrollTop = area.scrollHeight;
-}}
 
 </script>
 </body>
