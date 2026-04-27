@@ -110,7 +110,7 @@ Uses `pytrends` to fetch 3-month search interest for each ticker's company name 
 ##  Architecture
 
 ```
-STARFISH (index.py)
+STARFISH (starfish.py)
 │
 ├── Flask App (app)
 │   ├── GET/POST  /                     → Main dashboard page
