@@ -2342,7 +2342,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
  
 
     /* ── LIVE SATELLITE VIEWER PANEL ── */
-    .sat-viewer-panel{{background:#fff;border:2px solid #000;border-radius:0;margin-top:0;overflow:hidden}}
+    .sat-viewer-panel{{background:#fff;border:2px solid #000;border-radius:0;margin-top:0;overflow:visible}}
     .sat-viewer-toolbar{{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #000;flex-wrap:wrap;background:#f8f7f4}}
     .sat-viewer-map-wrap{{position:relative;width:100%;height:480px;background:#e8e8e8}}
     .sat-viewer-map{{width:100%;height:100%}}
@@ -2356,7 +2356,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .sat-layer-grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:0 16px 14px}}
     .sat-vlayer-btn{{padding:6px 4px;border:1px solid #000;background:#fff;font-family:'DM Mono',monospace;font-size:.52rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-align:center;transition:all .15s}}
     .sat-vlayer-btn.active,.sat-vlayer-btn:hover{{background:#000;color:#fff}}
-    .sat-load-btn{{width:100%;padding:11px 16px;background:#000;color:#fff;border:none;font-family:'DM Mono',monospace;font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;transition:opacity .2s;margin:0 16px 16px;width:calc(100% - 32px)}}
+    .sat-load-btn{{display:block;width:100%;box-sizing:border-box;padding:11px 16px;background:#000;color:#fff;border:none;font-family:'DM Mono',monospace;font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;transition:opacity .2s}}
     .sat-load-btn:hover{{opacity:.78}}
     .sat-load-btn:disabled{{opacity:.35;cursor:not-allowed}}
     .sat-status-bar{{display:flex;align-items:center;gap:8px;padding:8px 16px;border-top:1px solid #e5e5e5;font-family:'DM Mono',monospace;font-size:.58rem;color:#888}}
@@ -2385,7 +2385,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .sat-token-badge{{order:2}}
       .sat-viewer-row{{grid-template-columns:1fr}}
       .sat-viewer-sidebar{{padding:10px 12px;gap:8px}}
-      .sat-load-btn{{margin:0 10px 12px;width:calc(100% - 20px)}}
+      .sat-load-btn{{margin:0;width:100%}}
+      .sat-load-btn-wrap{{padding:0 10px 12px}}
       .sat-layer-grid{{margin:0 10px 10px}}
       .sat-cloud-row{{flex-wrap:wrap}}
     }}
@@ -2883,7 +2884,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       </div>
     </div>
   </div>
-  <button class="sat-load-btn" id="satLoadBtn" onclick="satApplyLayer()">&#9632; LOAD SATELLITE DATA</button>
+  <div class="sat-load-btn-wrap" style="padding:0 16px 16px"><button class="sat-load-btn" id="satLoadBtn" onclick="satApplyLayer()">&#9632; LOAD SATELLITE DATA</button></div>
 
   <!-- Status + log -->
   <div class="sat-status-bar">
