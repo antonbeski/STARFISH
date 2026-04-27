@@ -2633,15 +2633,15 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div class="logo">
     {logo_img}
     <div class="logo-text-group">
-      <span class="logo-word">Starfish</span>
-      <span class="logo-tagline">Market Intelligence</span>
+      <span class="logo-word">STARFISH</span>
+      <span class="logo-tagline">Market Dynamics</span>
     </div>
   </div>
   <nav class="header-nav">
     <a class="nav-link" href="#stocks">Stocks</a>
     <a class="nav-link" href="#sectors">Sectors</a>
     <a class="nav-link" href="#live-news">Live News</a>
-    <a class="nav-link" href="#vessels">Vessels</a>
+    <a class="nav-link" href="#vessels">Data</a>
   </nav>
 </header>
  
@@ -3829,7 +3829,7 @@ function updateCounter() {
   el.style.color = atCap ? '#ffaa33' : '#00c8ff';
   el.style.background = atCap ? 'rgba(255,170,50,.07)' : 'rgba(0,200,255,.07)';
   var btn = document.getElementById('limit-btn');
-  if (btn) btn.textContent = atCap ? '⚡ +500' : '+500';
+  if (btn) btn.textContent = atCap ? ' +500' : '+500';
   try { var b=window.parent.document.getElementById('ais-vessel-badge'); if(b) b.textContent=n.toLocaleString()+' live'; } catch(e){}
 }
 
