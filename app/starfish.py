@@ -33,8 +33,8 @@ app = Flask(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 # COPERNICUS / SENTINEL HUB — LIVE SATELLITE IMAGERY
 # ══════════════════════════════════════════════════════════════════════════════
-_CDSE_USERNAME = "antbsk0@gmail.com"
-_CDSE_PASSWORD = "7mK2C=Ysp)PmqE@"
+_CDSE_USERNAME = os.environ.get("CDSE_USERNAME", "antbsk0@gmail.com")
+_CDSE_PASSWORD = os.environ.get("CDSE_PASSWORD", "7mK2C=Ysp)PmqE@")
 _TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 _REFRESH_INTERVAL = 27 * 60
 
@@ -44,8 +44,6 @@ class TokenManager:
         self.fetched_at = None
         self.expires_at = None
         self.lock = threading.Lock()
-        self._refresh()
-        self._start_background_refresh()
 
     def _refresh(self):
         try:
@@ -61,19 +59,16 @@ class TokenManager:
                 self.token = payload["access_token"]
                 self.fetched_at = datetime.utcnow()
                 expires_in = payload.get("expires_in", 1800)
-                self.expires_at = self.fetched_at + timedelta(seconds=expires_in)
+                self.expires_at = self.fetched_at + timedelta(seconds=expires_in - 60)
             print(f"[TokenManager] Token refreshed at {self.fetched_at.strftime('%H:%M:%S')} UTC")
         except Exception as exc:
             print(f"[TokenManager] ERROR: {exc}")
 
-    def _start_background_refresh(self):
-        def _loop():
-            while True:
-                time.sleep(_REFRESH_INTERVAL)
-                self._refresh()
-        threading.Thread(target=_loop, daemon=True).start()
-
     def get(self):
+        with self.lock:
+            expired = not self.token or not self.expires_at or datetime.utcnow() >= self.expires_at
+        if expired:
+            self._refresh()
         with self.lock:
             return self.token
 
@@ -3445,7 +3440,7 @@ def api_satellite():
 @app.route("/api/ais-key")
 def api_ais_key():
     """Return AIS key status without exposing the key itself in the vessels HTML."""
-    key = os.environ.get("AISSTREAM_API_KEY", "").strip()
+    key = os.environ.get("AISSTREAM_API_KEY", "").strip().strip("\"'")
     if not key:
         return jsonify({"ok": False, "reason": "AISSTREAM_API_KEY env var not set"}), 503
     # Return the key only over this server-side route (same-origin iframe can fetch it)
