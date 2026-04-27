@@ -26,7 +26,7 @@
 
 STARFISH is a self-contained Flask web application that aggregates financial market intelligence from over **10 live data sources** into a single, dark-themed dashboard. It supports US and Indian (NSE/BSE) equities, provides multi-model AI analysis via OpenRouter, and surfaces alternative data signals — from shipping traffic to satellite imagery targets — that institutional analysts rely on.
 
-The entire platform ships as a **single Python file** (`index.py`), requiring no database, no frontend build step, and no external deployment pipeline. Spin it up locally in under two minutes.
+The entire platform ships as a **single Python file** (`starfish__3_.py`), requiring no database, no frontend build step, and no external deployment pipeline. Spin it up locally in under two minutes.
 
 ---
 
@@ -91,6 +91,17 @@ Each of the 11 sectors includes **30 curated latitude/longitude targets** of key
 Sectors covered: Energy, Materials, Industrials, Consumer Discretionary, Consumer Staples, Health Care, Financials, IT, Communication Services, Real Estate, Utilities.
 <img width="1110" height="609" alt="Screenshot 2026-04-24 171142" src="https://github.com/user-attachments/assets/c94f0001-815c-4bc9-a5a0-698b72555bb6" />
 
+###  Live Sentinel-2 Satellite Viewer (Copernicus)
+A fully interactive satellite imagery viewer powered by the **Copernicus Data Space Ecosystem (CDSE)** and **Sentinel Hub Process API**, embedded directly in the dashboard:
+
+- **5 spectral layers**: True Color · False Color · NDVI (vegetation) · SWIR (soil/burn) · Geology
+- **Date range selector**: `From Date` / `To Date` inputs for custom time windows
+- **Cloud cover filter**: Slider (0–100%) to exclude cloudy acquisitions; uses `mosaickingOrder: leastCC`
+- **Leaflet.js map** with live XYZ tile proxy — each tile fetched server-side via `/sentinel/proxy-tile`
+- **Location search**: Geocoding via Nominatim (OpenStreetMap) with autocomplete dropdown
+- **Token manager**: Automatic OAuth2 token refresh (27-min cycle) against the CDSE identity endpoint — no manual re-auth needed
+- **Mobile responsive**: Controls, map, and load button reflow correctly on narrow viewports (≤600px)
+
 ###  Google Trends Sentiment
 Uses `pytrends` to fetch 3-month search interest for each ticker's company name and stock symbol, returning current score, 30-day average, peak, and trend direction.
 
@@ -112,6 +123,9 @@ STARFISH (index.py)
 │   ├── GET       /api/satellite        → Sector satellite targets
 │   ├── GET       /api/ais-key          → AIS stream key status
 │   ├── GET       /vessels              → Live vessel tracking map
+│   ├── GET       /sentinel/token-status → CDSE OAuth2 token info
+│   ├── GET       /sentinel/geocode     → Nominatim location search
+│   ├── GET       /sentinel/proxy-tile  → Sentinel Hub tile proxy (XYZ)
 │   └── GET       /debug                → Data source health check
 │
 ├── Data Layer
@@ -122,7 +136,8 @@ STARFISH (index.py)
 │   ├── fetch_google_trends()           → pytrends 3-month interest
 │   ├── fetch_shipping_context()        → AIS + port context
 │   ├── fetch_baltic_dry()              → BDI scraper
-│   └── _get_fundamentals()             → yfinance ticker info
+│   ├── _get_fundamentals()             → yfinance ticker info
+│   └── TokenManager                   → CDSE OAuth2 auto-refresh (27-min cycle)
 │
 ├── Technical Analysis (12 Indicators)
 │   ├── calc_sma()                      → Simple Moving Average
@@ -176,7 +191,7 @@ export OPEN_ROUTER_API_KEY="your_openrouter_key"
 export AISSTREAM_API_KEY="your_aisstream_key"   # optional
 
 # 4. Run the server
-python index.py
+python starfish__3_.py
 ```
 
 Open your browser at **http://127.0.0.1:5000**
@@ -192,6 +207,8 @@ Open your browser at **http://127.0.0.1:5000**
 |---|---|---|
 | `OPEN_ROUTER_API_KEY` | **Yes** (for AI) | Your [OpenRouter](https://openrouter.ai) API key |
 | `AISSTREAM_API_KEY` | No | [AISStream.io](https://aisstream.io) key for live vessel tracking |
+| `CDSE_USERNAME` | No | Copernicus Data Space email (for Sentinel-2 viewer) |
+| `CDSE_PASSWORD` | No | Copernicus Data Space password (for Sentinel-2 viewer) |
 
 
 ### Cache TTLs
@@ -330,6 +347,55 @@ Full-page AIS vessel tracking map (requires `AISSTREAM_API_KEY`).
 
 ---
 
+### `GET /sentinel/token-status`
+
+Returns the current state of the CDSE OAuth2 token.
+
+**Response:**
+```json
+{
+  "fetched_at": "10:32:01 UTC",
+  "expires_at": "11:01:01 UTC",
+  "remaining_seconds": 1734,
+  "token_prefix": "eyJhbGciOiJSU…"
+}
+```
+
+---
+
+### `GET /sentinel/geocode?q=Rotterdam`
+
+Geocodes a location string via Nominatim (OpenStreetMap). Used by the satellite viewer's search bar.
+
+**Response:**
+```json
+{
+  "results": [
+    { "display_name": "Rotterdam, South Holland, Netherlands", "lat": "51.9225", "lon": "4.47917" }
+  ]
+}
+```
+
+---
+
+### `GET /sentinel/proxy-tile?layer=TRUE-COLOR&dateFrom=2025-01-01&dateTo=2025-01-31&cloud=30&z=8&x=132&y=85`
+
+Server-side XYZ tile proxy for the Sentinel Hub Process API. Converts tile coordinates to a WGS84 bounding box, posts an evalscript request to Copernicus, and streams the resulting PNG back to the Leaflet map.
+
+**Query parameters:**
+
+| Param | Default | Description |
+|---|---|---|
+| `layer` | `TRUE-COLOR` | Spectral layer: `TRUE-COLOR` · `FALSE-COLOR` · `NDVI` · `SWIR` · `GEOLOGY` |
+| `dateFrom` | — | Start of acquisition window (`YYYY-MM-DD`) |
+| `dateTo` | — | End of acquisition window (`YYYY-MM-DD`) |
+| `cloud` | `30` | Max cloud coverage % (0–100) |
+| `z`, `x`, `y` | — | Standard XYZ tile coordinates |
+
+Returns a 512×512 PNG tile, or a 1×1 transparent fallback on error/no-data.
+
+---
+
 ### `GET /debug`
 
 Health check: tests Yahoo Finance data fetch and FRED macro series. Returns colored pre-formatted output.
@@ -366,6 +432,8 @@ Health check: tests Yahoo Finance data fetch and FRED macro series. Returns colo
 | [OpenRouter](https://openrouter.ai) | LLM inference | REST API |
 | [Google Trends](https://trends.google.com) | Search interest | `pytrends` |
 | [AISStream.io](https://aisstream.io) | Live vessel positions | WebSocket API |
+| [Copernicus CDSE](https://dataspace.copernicus.eu) | Sentinel-2 L2A imagery | OAuth2 + Sentinel Hub Process API |
+| [Nominatim / OSM](https://nominatim.openstreetmap.org) | Location geocoding | REST API |
 | Yahoo Finance RSS | Financial news | RSS/XML scraping |
 | CNBC, Reuters, FT, MW, Benzinga, WSJ | Financial news | RSS/XML scraping |
 | BDI (Baltic Exchange) | Shipping index | Web scraping |
@@ -442,8 +510,8 @@ Contributions are welcome. Please:
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make changes in `index.py` (or split into modules if refactoring)
-4. Test your changes: `python index.py` → verify `/debug` passes
+3. Make changes in `starfish__3_.py` (or split into modules if refactoring)
+4. Test your changes: `python starfish__3_.py` → verify `/debug` passes
 5. Submit a pull request with a clear description
 
 ### Areas for Contribution
@@ -469,6 +537,8 @@ This project is licensed under the MIT License. See `LICENSE` for details.
 - [OpenRouter](https://openrouter.ai) for multi-model LLM routing
 - [Plotly](https://plotly.com) for interactive charting
 - [AISStream.io](https://aisstream.io) for vessel tracking
+- [Copernicus Data Space Ecosystem](https://dataspace.copernicus.eu) & ESA for Sentinel-2 satellite imagery
+- [OpenStreetMap / Nominatim](https://nominatim.openstreetmap.org) for location geocoding
 
 ---
 
