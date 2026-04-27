@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 STARFISH — Market Dynamics
 Stocks · AI Analysis · Sectors · Live News
