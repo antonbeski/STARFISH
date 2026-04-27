@@ -101,6 +101,7 @@ A fully interactive satellite imagery viewer powered by the **Copernicus Data Sp
 - **Location search**: Geocoding via Nominatim (OpenStreetMap) with autocomplete dropdown
 - **Token manager**: Automatic OAuth2 token refresh (27-min cycle) against the CDSE identity endpoint — no manual re-auth needed
 - **Mobile responsive**: Controls, map, and load button reflow correctly on narrow viewports (≤600px)
+<img width="1158" height="581" alt="Screenshot 2026-04-27 150059" src="https://github.com/user-attachments/assets/c1c8ccbd-68a6-445a-a42b-99c133b98956" />
 
 ###  Google Trends Sentiment
 Uses `pytrends` to fetch 3-month search interest for each ticker's company name and stock symbol, returning current score, 30-day average, peak, and trend direction.
