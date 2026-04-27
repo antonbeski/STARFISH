@@ -96,28 +96,59 @@ def COPERNICUS_TOKEN():
     return _token_mgr.get()
 
 EVALSCRIPTS = {
-    "TRUE-COLOR": """//VERSION=3
+    "TRUE-COLOR": """
+//VERSION=3
 function setup(){return{input:["B04","B03","B02","dataMask"],output:{bands:4}}}
-function evaluatePixel(s){return[3.5*s.B04,3.5*s.B03,3.5*s.B02,s.dataMask];}""",
-    "FALSE-COLOR": """//VERSION=3
+function evaluatePixel(s){
+  return[3.5*s.B04,3.5*s.B03,3.5*s.B02,s.dataMask];
+}""",
+    "FALSE-COLOR": """
+//VERSION=3
 function setup(){return{input:["B08","B04","B03","dataMask"],output:{bands:4}}}
-function evaluatePixel(s){return[2.5*s.B08,2.5*s.B04,2.5*s.B03,s.dataMask];}""",
-    "NDVI": """//VERSION=3
+function evaluatePixel(s){
+  return[2.5*s.B08,2.5*s.B04,2.5*s.B03,s.dataMask];
+}""",
+    "NDVI": """
+//VERSION=3
 function setup(){return{input:["B08","B04","dataMask"],output:{bands:4}}}
 function evaluatePixel(s){
-  var n=(s.B08-s.B04)/(s.B08+s.B04);
+  var ndvi=(s.B08-s.B04)/(s.B08+s.B04);
   var r,g,b;
-  if(n<0){r=0.86;g=0.86;b=0.86;}
-  else if(n<0.2){r=1;g=0.98;b=0.8;}
-  else if(n<0.4){r=0.13;g=0.55;b=0.13;}
+  if(ndvi<-0.2){r=0.75;g=0.75;b=0.75;}
+  else if(ndvi<0){r=0.86;g=0.86;b=0.86;}
+  else if(ndvi<0.1){r=1;g=0.98;b=0.8;}
+  else if(ndvi<0.2){r=0.78;g=0.88;b=0.52;}
+  else if(ndvi<0.3){r=0.36;g=0.73;b=0.36;}
+  else if(ndvi<0.4){r=0.13;g=0.55;b=0.13;}
   else{r=0;g=0.39;b=0;}
-  return[r,g,b,s.dataMask];}""",
-    "SWIR": """//VERSION=3
+  return[r,g,b,s.dataMask];
+}""",
+    "MOISTURE-INDEX": """
+//VERSION=3
+function setup(){return{input:["B8A","B11","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){
+  var mi=(s.B8A-s.B11)/(s.B8A+s.B11);
+  var r,g,b;
+  if(mi<-0.8){r=0.5;g=0;b=0;}
+  else if(mi<-0.4){r=1;g=0;b=0;}
+  else if(mi<0){r=1;g=0.6;b=0;}
+  else if(mi<0.2){r=1;g=1;b=0.6;}
+  else if(mi<0.4){r=0.6;g=0.8;b=1;}
+  else{r=0;g=0.4;b=1;}
+  return[r,g,b,s.dataMask];
+}""",
+    "SWIR": """
+//VERSION=3
 function setup(){return{input:["B12","B8A","B04","dataMask"],output:{bands:4}}}
-function evaluatePixel(s){return[2.5*s.B12,2.5*s.B8A,2.5*s.B04,s.dataMask];}""",
-    "GEOLOGY": """//VERSION=3
+function evaluatePixel(s){
+  return[2.5*s.B12,2.5*s.B8A,2.5*s.B04,s.dataMask];
+}""",
+    "GEOLOGY": """
+//VERSION=3
 function setup(){return{input:["B12","B11","B02","dataMask"],output:{bands:4}}}
-function evaluatePixel(s){return[2.5*s.B12,2.5*s.B11,2.5*s.B02,s.dataMask];}""",
+function evaluatePixel(s){
+  return[2.5*s.B12,2.5*s.B11,2.5*s.B02,s.dataMask];
+}""",
 }
 
 EMPTY_PNG = base64.b64decode(
@@ -2832,6 +2863,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <button class="sat-vlayer-btn active" data-layer="TRUE-COLOR" onclick="satSelectLayer(this)">TRUE COLOR</button>
     <button class="sat-vlayer-btn" data-layer="FALSE-COLOR" onclick="satSelectLayer(this)">FALSE COLOR</button>
     <button class="sat-vlayer-btn" data-layer="NDVI" onclick="satSelectLayer(this)">NDVI</button>
+    <button class="sat-vlayer-btn" data-layer="MOISTURE-INDEX" onclick="satSelectLayer(this)">MOISTURE</button>
     <button class="sat-vlayer-btn" data-layer="SWIR" onclick="satSelectLayer(this)">SWIR</button>
     <button class="sat-vlayer-btn" data-layer="GEOLOGY" onclick="satSelectLayer(this)">GEOLOGY</button>
   </div>
@@ -3974,6 +4006,90 @@ function _satLog(msg, type) {{
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE SATELLITE IMAGERY — BACKEND ROUTES
 # ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.route("/sentinel/wms-url")
+def sentinel_wms_url():
+    """Returns WMS endpoint info for the satellite viewer frontend."""
+    layer     = request.args.get("layer", "TRUE-COLOR")
+    date_from = request.args.get("dateFrom")
+    date_to   = request.args.get("dateTo")
+    cloud     = request.args.get("cloud", "30")
+
+    layer_map = {
+        "TRUE-COLOR":     "TRUE-COLOR",
+        "FALSE-COLOR":    "FALSE-COLOR",
+        "NDVI":           "NDVI",
+        "MOISTURE-INDEX": "MOISTURE-INDEX",
+        "SWIR":           "SWIR",
+        "GEOLOGY":        "GEOLOGY",
+    }
+    sh_layer = layer_map.get(layer, "TRUE-COLOR")
+    wms_base = "https://sh.dataspace.copernicus.eu/ogc/wms/1635b3a9-a94a-4e94-b82b-f1dda13ab684"
+
+    return jsonify({
+        "wms_url":    wms_base,
+        "layer_id":   sh_layer,
+        "time_range": f"{date_from}/{date_to}",
+        "token":      COPERNICUS_TOKEN(),
+        "tile_url":   f"/sentinel/proxy-tile?layer={sh_layer}&dateFrom={date_from}&dateTo={date_to}&cloud={cloud}",
+    })
+
+
+@app.route("/sentinel/debug-tile")
+def sentinel_debug_tile():
+    """
+    Visit /sentinel/debug-tile to verify Copernicus connectivity.
+    Returns JSON showing the API response for one test tile over India.
+    """
+    from datetime import date as _date, timedelta as _td
+    today     = _date.today().isoformat()
+    month_ago = (_date.today() - _td(days=30)).isoformat()
+
+    # Test tile: z=8, x=180, y=110 — covers southern India
+    lon_w, lat_s, lon_e, lat_n = xyz_to_wgs84_bbox(8, 180, 110)
+
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [lon_w, lat_s, lon_e, lat_n],
+                "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"},
+            },
+            "data": [{
+                "type": "sentinel-2-l2a",
+                "dataFilter": {
+                    "timeRange": {"from": f"{month_ago}T00:00:00Z", "to": f"{today}T23:59:59Z"},
+                    "maxCloudCoverage": 50,
+                    "mosaickingOrder": "leastCC",
+                },
+            }],
+        },
+        "output": {
+            "width": 256, "height": 256,
+            "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+        },
+        "evalscript": EVALSCRIPTS["TRUE-COLOR"],
+    }
+
+    hdrs = {
+        "Authorization": f"Bearer {COPERNICUS_TOKEN()}",
+        "Content-Type":  "application/json",
+        "Accept":        "image/png",
+    }
+    try:
+        r = requests.post("https://sh.dataspace.copernicus.eu/api/v1/process",
+                          json=payload, headers=hdrs, timeout=20)
+        return jsonify({
+            "status":         r.status_code,
+            "content_type":   r.headers.get("Content-Type"),
+            "content_length": len(r.content),
+            "body_preview":   r.text[:600] if "image" not in r.headers.get("Content-Type", "") else "<<IMAGE OK>>",
+            "token_ok":       COPERNICUS_TOKEN() != "",
+            "bbox_tested":    [lon_w, lat_s, lon_e, lat_n],
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)})
+
 
 @app.route("/sentinel/token-status")
 def sentinel_token_status():
