@@ -2060,7 +2060,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <style>
     *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
     :root{{
@@ -2838,7 +2838,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
   <!-- Map -->
   <div class="sat-viewer-map-wrap">
-    <div id="satMap" class="sat-viewer-map"></div>
+    <div id="satMap" class="sat-viewer-map" style="width:100%;height:100%;min-height:480px;"></div>
   </div>
 
   <!-- Controls -->
@@ -3790,7 +3790,22 @@ function init() {
       connect(data.key);
     })
     .catch(function(err) {
-      setStatus('nokey', 'Set AISSTREAM_API_KEY in Vercel env vars. Error: ' + err.message);
+      // No API key — still show the map with OpenSeaMap + a status notice
+      setStatus('nokey', err.message);
+      var led = document.getElementById('status-led');
+      var txt = document.getElementById('status-text');
+      led.style.background = '#ffaa33';
+      txt.textContent = 'Live positions need AISSTREAM_API_KEY';
+      dbg('Map visible — set AISSTREAM_API_KEY env var in Vercel to enable live AIS', err.message);
+      // Add a visible overlay hint on the map
+      var info = L.control({position:'topright'});
+      info.onAdd = function() {
+        var d = L.DomUtil.create('div');
+        d.style.cssText = 'background:rgba(7,9,15,.88);color:#ffaa33;font-family:DM Mono,monospace;font-size:10px;letter-spacing:.06em;padding:8px 12px;border:1px solid rgba(255,170,50,.3);border-radius:6px;max-width:240px;line-height:1.5;';
+        d.innerHTML = '<strong>AIS LIVE FEED</strong><br>Set <code>AISSTREAM_API_KEY</code><br>in Vercel env vars to enable<br>live vessel positions.';
+        return d;
+      };
+      info.addTo(map);
     });
 }
 
@@ -3807,20 +3822,15 @@ init();
   document.getElementById('satDateTo').value   = fmt(today);
   document.getElementById('satDateFrom').value = fmt(prior);
 
-  // Init Leaflet map for satellite viewer
-  if (typeof L === 'undefined') {
-    // Leaflet not yet loaded for this context — load from CDN
-    var link = document.createElement('link');
-    link.rel  = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(link);
-    var script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = function(){ _satInitMap(); };
-    document.head.appendChild(script);
-  } else {
-    _satInitMap();
+  // Leaflet is already loaded in the page head (cdnjs, no defer on that script)
+  // Use a small poll to wait for L to be available then init the map
+  function waitForLeaflet(cb) {
+    if (typeof L !== 'undefined') { cb(); return; }
+    var t = setInterval(function() {
+      if (typeof L !== 'undefined') { clearInterval(t); cb(); }
+    }, 80);
   }
+  waitForLeaflet(function() { _satInitMap(); });
 
   // Token countdown
   _satUpdateToken();
@@ -3831,7 +3841,7 @@ var _satMap = null, _satLayer = null, _satCurrentLayer = 'TRUE-COLOR';
 
 function _satInitMap() {
   _satMap = L.map('satMap', { center: [20, 77], zoom: 5, zoomControl: true, attributionControl: false });
-  L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{ maxZoom: 19 }}).addTo(_satMap);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd' }).addTo(_satMap);
   _satMap.on('mousemove', function(e) {});
 }
 
@@ -3873,8 +3883,8 @@ async function satApplyLayer() {{
     if (_satLayer) {{ _satMap.removeLayer(_satLayer); _satLayer = null; }}
     var proxyUrl = '/sentinel/proxy-tile?layer=' + _satCurrentLayer +
       '&dateFrom=' + dateFrom + '&dateTo=' + dateTo + '&cloud=' + cloud +
-      '&z={{z}}&x={{x}}&y={{y}}';
-    _satLayer = L.tileLayer(proxyUrl, {{ maxZoom: 18, opacity: 0.92, tileSize: 256, attribution: '© Copernicus/ESA' }});
+      '&z={z}&x={x}&y={y}';
+    _satLayer = L.tileLayer(proxyUrl, { maxZoom: 18, opacity: 0.92, tileSize: 256, attribution: '\u00a9 Copernicus/ESA' });
     _satLayer.addTo(_satMap);
     _satLog(_satCurrentLayer + ' layer loaded', 'ok');
     document.getElementById('satStatusText').textContent = 'Showing: ' + _satCurrentLayer + ' — Sentinel-2 L2A';
