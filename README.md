@@ -1,5 +1,6 @@
 #  STARFISH — Market dynamics <img width="50" height="50" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />
-**S**tatistical **T**rend **A**nalysis & **R**isk **F**orecasting **I**n Intelligent **S**tock **H**euristics 
+$${\color{red}\textbf{S}}{\color{red}\text{tatistical }}{\color{red}\textbf{T}}{\color{red}\text{rend }}{\color{red}\textbf{A}}{\color{red}\text{nalysis \& }}{\color{red}\textbf{R}}{\color{red}\text{isk }}{\color{red}\textbf{F}}{\color{red}\text{orecasting }}{\color{red}\textbf{I}}{\color{red}\text{n Intelligent }}{\color{red}\textbf{S}}{\color{red}\text{tock }}{\color{red}\textbf{H}}{\color{red}\text{euristics}}$$
+
 
 
 
