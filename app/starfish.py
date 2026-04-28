@@ -2392,7 +2392,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     }}
     @media(max-width:400px){{
       .sat-viewer-map-wrap{{height:240px;max-height:240px;overflow:hidden}}
-      .sat-layer-grid{{grid-template-columns:repeat(2,1fr)}}
+      .sat-layer-grid{{grid-template-columns:repeat(3,1fr)}}
     }}
     /* ── SATELLITE IMAGERY SECTION ── */
     #sector-satellite{{margin-top:24px;display:none}}
