@@ -2593,7 +2593,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .disclaimer-icon svg{{width:12px;height:12px}}
 
       /* Vessel tracker */
-      #vessel-iframe{{height:380px;min-height:0}}
+      #vessel-iframe{{width:100%;height:300px!important;min-height:0;max-height:300px!important}}
       .vessel-wrap{{overflow:hidden;border-radius:0 0 10px 10px}}
       /* Disable hover animations on touch to prevent jank */
       .news-card{{animation:none;transition:none}}
@@ -2623,7 +2623,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-badge{{font-size:.72rem;padding:5px 12px}}
       .ai-pts{{grid-template-columns:1fr 1fr}}
       .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
-      #vessel-iframe{{height:320px;min-height:0}}
+      #vessel-iframe{{height:260px!important;max-height:260px!important;min-height:0}}
     }}
   </style>
 </head>
