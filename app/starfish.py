@@ -2344,7 +2344,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     /* ── LIVE SATELLITE VIEWER PANEL ── */
     .sat-viewer-panel{{background:#fff;border:2px solid #000;border-radius:0;margin-top:0;overflow:visible}}
     .sat-viewer-toolbar{{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #000;flex-wrap:wrap;background:#f8f7f4}}
-    .sat-viewer-map-wrap{{position:relative;width:100%;height:480px;background:#e8e8e8;overflow:hidden}}
+    .sat-viewer-map-wrap{{position:relative;width:100%;height:480px;background:#e8e8e8}}
     .sat-viewer-map{{width:100%;height:100%}}
     .sat-viewer-sidebar{{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-top:1px solid #000;background:#f8f7f4}}
     .sat-viewer-row{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
@@ -2378,7 +2378,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
     /* Mobile responsive for satellite viewer */
     @media(max-width:600px){{
-      .sat-viewer-map-wrap{{height:280px;max-height:280px;overflow:hidden}}
+      .sat-viewer-map-wrap{{height:280px}}
       .sat-layer-grid{{grid-template-columns:repeat(3,1fr);margin:0 10px 10px}}
       .sat-viewer-toolbar{{gap:6px;padding:8px 10px}}
       .sat-search-wrap{{min-width:100%;order:1}}
@@ -2391,8 +2391,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .sat-cloud-row{{flex-wrap:wrap}}
     }}
     @media(max-width:400px){{
-      .sat-viewer-map-wrap{{height:240px;max-height:240px;overflow:hidden}}
-      .sat-layer-grid{{grid-template-columns:repeat(3,1fr)}}
+      .sat-viewer-map-wrap{{height:240px}}
+      .sat-layer-grid{{grid-template-columns:repeat(2,1fr)}}
     }}
     /* ── SATELLITE IMAGERY SECTION ── */
     #sector-satellite{{margin-top:24px;display:none}}
@@ -2593,7 +2593,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .disclaimer-icon svg{{width:12px;height:12px}}
 
       /* Vessel tracker */
-      #vessel-iframe{{height:260px;min-height:0}}
+      #vessel-iframe{{width:100%;height:300px!important;min-height:0;max-height:300px!important}}
       .vessel-wrap{{overflow:hidden;border-radius:0 0 10px 10px}}
       /* Disable hover animations on touch to prevent jank */
       .news-card{{animation:none;transition:none}}
@@ -2623,7 +2623,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-badge{{font-size:.72rem;padding:5px 12px}}
       .ai-pts{{grid-template-columns:1fr 1fr}}
       .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
-      #vessel-iframe{{height:200px;min-height:0}}
+      #vessel-iframe{{height:260px!important;max-height:260px!important;min-height:0}}
     }}
   </style>
 </head>
@@ -2860,7 +2860,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
   <!-- Map -->
   <div class="sat-viewer-map-wrap">
-    <div id="satMap" class="sat-viewer-map" style="width:100%;height:100%;"></div>
+    <div id="satMap" class="sat-viewer-map" style="width:100%;height:100%;min-height:480px;"></div>
   </div>
 
   <!-- Controls -->
