@@ -1,5 +1,5 @@
 #  STARFISH — Market dynamics <img width="50" height="50" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />
-
+**S**tatistical **T**rend **A**nalysis & **R**isk **F**orecasting **I**n Intelligent **S**tock **H**euristics 
 
 
 
