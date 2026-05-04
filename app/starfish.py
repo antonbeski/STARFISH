@@ -4456,7 +4456,7 @@ function pollADSB() {
   if (_adsbStopped) return;
   var r = REGIONS[_regionIdx % REGIONS.length];
   _regionIdx++;
-  var url = 'https://api.adsb.lol/v2/aircraft?lat='+r[0]+'&lon='+r[1]+'&dst='+r[2];
+  var url = '/adsb/proxy?lat='+r[0]+'&lon='+r[1]+'&dst='+r[2];
   fetch(url)
   .then(function(resp) {
     if (!resp.ok) throw new Error('HTTP '+resp.status);
@@ -4516,6 +4516,26 @@ dbg('ADS-B tracker ready. Press \u25b6 Start in the panel above.');
 </html>"""
     return html
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADS-B PROXY ROUTE — avoids browser CORS block on api.adsb.lol
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/adsb/proxy")
+def adsb_proxy():
+    lat = request.args.get("lat", "0")
+    lon = request.args.get("lon", "0")
+    dst = request.args.get("dst", "250")
+    try:
+        r = requests.get(
+            f"https://api.adsb.lol/v2/aircraft?lat={lat}&lon={lon}&dst={dst}",
+            timeout=15,
+            headers={"User-Agent": "Starfish/1.0"},
+        )
+        r.raise_for_status()
+        return jsonify(r.json())
+    except Exception as exc:
+        return jsonify({"error": str(exc), "ac": []}), 502
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LIVE SATELLITE IMAGERY — BACKEND ROUTES
