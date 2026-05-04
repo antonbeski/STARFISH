@@ -3303,6 +3303,21 @@ function runAnalysis(){{
  
 function esc(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}
 function fn(v,d){{d=d||2;return(v==null||v===undefined)?'N/A':Number(v).toFixed(d);}}
+function safeStr(v){{
+  if(v==null||v===undefined)return'No data.';
+  if(typeof v==='string')return v;
+  if(Array.isArray(v))return v.map(function(item){{
+    if(typeof item==='string')return item;
+    if(typeof item==='object'&&item!==null){{
+      return Object.entries(item).map(function(e){{return e[0].replace(/_/g,' ')+': '+e[1];}}).join(' | ');
+    }}
+    return String(item);
+  }}).join('\n');
+  if(typeof v==='object'){{
+    return Object.entries(v).map(function(e){{return e[0].replace(/_/g,' ')+': '+e[1];}}).join('\n');
+  }}
+  return String(v);
+}}
  
 function renderAIResult(data){{
   var r=data.analysis;
@@ -3319,7 +3334,7 @@ function renderAIResult(data){{
     {{lbl:'Risk Factors',key:'risk_factors'}},
     {{lbl:"Trader's Action Plan",key:'action_plan'}},
   ];
-  var secHtml=secs.map(s=>'<div class="ai-sec"><div class="ai-sec-hdr">'+s.lbl+'</div><div class="ai-sec-body">'+esc(r[s.key]||'No data.')+'</div></div>').join('');
+  var secHtml=secs.map(s=>'<div class="ai-sec"><div class="ai-sec-hdr">'+s.lbl+'</div><div class="ai-sec-body">'+esc(safeStr(r[s.key]))+'</div></div>').join('');
   document.getElementById('ai-result').innerHTML=
     '<div class="ai-verdict-bar">'+
       '<div class="ai-badge v-'+verdict+'">'+verdict+'</div>'+
