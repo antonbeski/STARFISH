@@ -4532,8 +4532,16 @@ def adsb_proxy():
             timeout=15,
             headers={"User-Agent": "Starfish/1.0"},
         )
-        r.raise_for_status()
-        return jsonify(r.json())
+        if r.status_code == 200:
+            return jsonify(r.json())
+        # Upstream rejected — serve buffered data so the map stays live
+        with _adsb_lock:
+            buf = list(_adsb_buffer)
+        cols = ["ts","hex","flight","lat","lon","alt_baro","gs","track"]
+        ac = [dict(zip(cols, row)) for row in buf if row[3] and row[4]]
+        return jsonify({"ac": ac, "_source": "buffer",
+                        "_upstream_status": r.status_code,
+                        "_upstream_body": r.text[:200]})
     except Exception as exc:
         return jsonify({"error": str(exc), "ac": []}), 502
 
