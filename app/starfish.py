@@ -187,15 +187,28 @@ _FRED_CACHE = {}
 _FRED_CACHE_TTL = 3600  # 1 hour
  
 FRED_SERIES = {
-    "DFF":        "Fed Funds Rate (%)",
-    "CPIAUCSL":   "CPI YoY (%)",
-    "UNRATE":     "Unemployment Rate (%)",
-    "GDP":        "Real GDP (QoQ %)",
-    "T10Y2Y":     "10Y-2Y Yield Spread (bps)",
-    "DTWEXBGS":   "USD Trade-Weighted Index",
-    "VIXCLS":     "VIX (CBOE Volatility)",
+    # ── Core macro (original) ──
+    "DFF":          "Fed Funds Rate (%)",
+    "CPIAUCSL":     "CPI YoY (%)",
+    "UNRATE":       "Unemployment Rate (%)",
+    "GDP":          "Real GDP (QoQ %)",
+    "T10Y2Y":       "10Y-2Y Yield Spread (bps)",
+    "DTWEXBGS":     "USD Trade-Weighted Index",
+    "VIXCLS":       "VIX (CBOE Volatility)",
     "BAMLH0A0HYM2": "High-Yield Credit Spread (%)",
     "MORTGAGE30US": "30Y Mortgage Rate (%)",
+    # ── New: consumer & spending ──
+    "RETAILSMNSA":  "US Retail Sales (monthly, $M)",
+    "PCE":          "Personal Consumption Expenditures ($B)",
+    "UMCSENT":      "U Michigan Consumer Sentiment (index)",
+    # ── New: housing & production ──
+    "HOUST":        "Housing Starts (thousands, SAAR)",
+    "INDPRO":       "Industrial Production Index",
+    # ── New: labour & credit ──
+    "ICSA":         "Initial Jobless Claims (weekly)",
+    "DEXUSEU":      "USD/EUR Exchange Rate",
+    # ── New: commodities ──
+    "DCOILBRENTEU": "Brent Crude Oil Price ($/bbl)",
 }
  
 # Visa SMI series IDs on FRED
@@ -393,6 +406,262 @@ def fetch_baltic_dry():
  
  
 # ══════════════════════════════════════════════════════════════════════════════
+# SEC EARNINGS DATE  (EDGAR company facts — free, no key)
+# ══════════════════════════════════════════════════════════════════════════════
+_EARNINGS_CACHE = {}
+_EARNINGS_CACHE_TTL = 3600 * 6  # 6 hours
+
+
+def _get_cik(ticker):
+    """Resolve ticker → zero-padded CIK via SEC EDGAR ticker map."""
+    try:
+        r = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers={"User-Agent": "Starfish/1.0 contact@starfish.app"},
+            timeout=8,
+        )
+        if r.status_code == 200:
+            for entry in r.json().values():
+                if entry.get("ticker", "").upper() == ticker.upper():
+                    return str(entry["cik_str"]).zfill(10)
+    except Exception:
+        pass
+    return None
+
+
+def fetch_earnings_date(ticker):
+    """
+    Return the next/most-recent earnings date for a ticker using SEC EDGAR.
+    Returns dict with keys: next_date, days_away, is_imminent (<=7 days), source.
+    """
+    cache_key = f"earnings_{ticker}"
+    now = time.time()
+    if cache_key in _EARNINGS_CACHE and now - _EARNINGS_CACHE[cache_key]["ts"] < _EARNINGS_CACHE_TTL:
+        return _EARNINGS_CACHE[cache_key]["data"]
+
+    result = {"next_date": None, "days_away": None, "is_imminent": False, "source": "SEC EDGAR"}
+    try:
+        # First try yfinance calendar (faster)
+        tk = yf.Ticker(ticker)
+        cal = tk.calendar
+        if cal is not None:
+            # calendar may be a dict or DataFrame depending on yfinance version
+            if isinstance(cal, dict):
+                ed = cal.get("Earnings Date")
+                if ed:
+                    ed = ed[0] if isinstance(ed, list) else ed
+                    result["next_date"] = str(ed)[:10]
+            elif hasattr(cal, "iloc"):
+                if "Earnings Date" in cal.index:
+                    ed = cal.loc["Earnings Date"].iloc[0] if hasattr(cal.loc["Earnings Date"], "iloc") else cal.loc["Earnings Date"]
+                    result["next_date"] = str(ed)[:10]
+    except Exception:
+        pass
+
+    # Fallback: EDGAR submissions JSON (gives last 10-Q/10-K filing dates as proxy)
+    if not result["next_date"]:
+        try:
+            cik = _get_cik(ticker)
+            if cik:
+                r = requests.get(
+                    f"https://data.sec.gov/submissions/CIK{cik}.json",
+                    headers={"User-Agent": "Starfish/1.0 contact@starfish.app"},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    filings = r.json().get("filings", {}).get("recent", {})
+                    forms   = filings.get("form", [])
+                    dates   = filings.get("filingDate", [])
+                    # Find most recent 10-Q or 10-K
+                    for form, date in zip(forms, dates):
+                        if form in ("10-Q", "10-K"):
+                            result["next_date"] = date
+                            result["source"] = "SEC EDGAR (last filing date)"
+                            break
+        except Exception:
+            pass
+
+    # Compute days away
+    if result["next_date"]:
+        try:
+            delta = (datetime.strptime(result["next_date"], "%Y-%m-%d") - datetime.utcnow()).days
+            result["days_away"]   = delta
+            result["is_imminent"] = -2 <= delta <= 7   # within 7 days ahead or 2 days past
+        except Exception:
+            pass
+
+    _EARNINGS_CACHE[cache_key] = {"data": result, "ts": now}
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BEA PERSONAL CONSUMPTION EXPENDITURES BY CATEGORY  (free, no key needed)
+# ══════════════════════════════════════════════════════════════════════════════
+_BEA_CACHE = {}
+_BEA_CACHE_TTL = 3600 * 6  # 6 hours
+
+# BEA NIPA table 2.3.5 — PCE by major type of product (line numbers stable)
+BEA_PCE_LINES = {
+    "1":  "Total PCE",
+    "2":  "Goods",
+    "5":  "Services",
+    "6":  "  Housing & Utilities",
+    "11": "  Healthcare",
+    "15": "  Financial Services",
+    "18": "  Recreation",
+}
+
+
+def fetch_bea_pce():
+    """
+    Fetch BEA PCE by category via the BEA open-data JSON endpoint (no API key).
+    Returns a dict of {label: {value, period, units}} or {} on failure.
+    """
+    cache_key = "bea_pce"
+    now = time.time()
+    if cache_key in _BEA_CACHE and now - _BEA_CACHE[cache_key]["ts"] < _BEA_CACHE_TTL:
+        return _BEA_CACHE[cache_key]["data"]
+    result = {}
+    try:
+        # BEA publishes NIPA table 2.3.5 in JSON via the open data portal
+        url = (
+            "https://apps.bea.gov/api/data/"
+            "?UserID=GUEST"
+            "&method=GetData"
+            "&DataSetName=NIPA"
+            "&TableName=T20305"
+            "&Frequency=Q"
+            "&Year=LAST5"
+            "&ResultFormat=JSON"
+        )
+        r = requests.get(url, timeout=12,
+                         headers={"User-Agent": "Mozilla/5.0 (compatible; Starfish/1.0)"})
+        if r.status_code == 200:
+            data = r.json()
+            rows = (data.get("BEAAPI", {})
+                        .get("Results", {})
+                        .get("Data", []))
+            # Collect the latest observation per line number
+            latest_by_line = {}
+            for row in rows:
+                ln = str(row.get("LineNumber", ""))
+                if ln in BEA_PCE_LINES:
+                    period = row.get("TimePeriod", "")
+                    if ln not in latest_by_line or period > latest_by_line[ln]["period"]:
+                        try:
+                            val = float(str(row.get("DataValue", "")).replace(",", ""))
+                            latest_by_line[ln] = {
+                                "label":  BEA_PCE_LINES[ln],
+                                "value":  val,
+                                "period": period,
+                                "units":  row.get("CL_UNIT", ""),
+                            }
+                        except ValueError:
+                            pass
+            result = {v["label"]: v for v in latest_by_line.values()}
+    except Exception as exc:
+        print(f"[BEA] Exception: {exc}")
+    _BEA_CACHE[cache_key] = {"data": result, "ts": now}
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EDGAR INSIDER TRANSACTIONS  (Form 4 — free, no key)
+# ══════════════════════════════════════════════════════════════════════════════
+_INSIDER_CACHE = {}
+_INSIDER_CACHE_TTL = 3600 * 4  # 4 hours
+
+
+def fetch_insider_transactions(ticker):
+    """
+    Fetch the 5 most recent Form 4 insider transactions for a ticker via EDGAR full-text search.
+    Returns list of dicts: {name, role, transaction_type, shares, date} or [] on failure.
+    """
+    cache_key = f"insider_{ticker}"
+    now = time.time()
+    if cache_key in _INSIDER_CACHE and now - _INSIDER_CACHE[cache_key]["ts"] < _INSIDER_CACHE_TTL:
+        return _INSIDER_CACHE[cache_key]["data"]
+    result = []
+    try:
+        cik = _get_cik(ticker)
+        if not cik:
+            _INSIDER_CACHE[cache_key] = {"data": result, "ts": now}
+            return result
+        # EDGAR submissions — grab recent Form 4 filings
+        r = requests.get(
+            f"https://data.sec.gov/submissions/CIK{cik}.json",
+            headers={"User-Agent": "Starfish/1.0 contact@starfish.app"},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            _INSIDER_CACHE[cache_key] = {"data": result, "ts": now}
+            return result
+        filings = r.json().get("filings", {}).get("recent", {})
+        forms        = filings.get("form", [])
+        dates        = filings.get("filingDate", [])
+        accessions   = filings.get("accessionNumber", [])
+        primary_docs = filings.get("primaryDocument", [])
+
+        form4_entries = [
+            (date, acc, doc)
+            for form, date, acc, doc in zip(forms, dates, accessions, primary_docs)
+            if form == "4"
+        ][:5]  # latest 5 only
+
+        for date, acc, doc in form4_entries:
+            try:
+                acc_clean = acc.replace("-", "")
+                xml_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc}"
+                rx = requests.get(
+                    xml_url,
+                    headers={"User-Agent": "Starfish/1.0 contact@starfish.app"},
+                    timeout=8,
+                )
+                if rx.status_code != 200:
+                    continue
+                soup = BeautifulSoup(rx.text, "lxml")
+                # Reporting owner
+                owner_name = ""
+                owner_tag = soup.find("rptownername") or soup.find("reportingownername")
+                if owner_tag:
+                    owner_name = owner_tag.get_text(strip=True)
+                role = ""
+                for tag_name in ["isofficer", "isdirector", "istenpercentowner"]:
+                    tag = soup.find(tag_name)
+                    if tag and tag.get_text(strip=True) == "1":
+                        role = {"isofficer": "Officer", "isdirector": "Director",
+                                "istenpercentowner": "10% Owner"}.get(tag_name, "")
+                        break
+                # Transaction type & shares
+                txn_code_tag = soup.find("transactioncode")
+                txn_code = txn_code_tag.get_text(strip=True) if txn_code_tag else "?"
+                txn_type = {"P": "Purchase", "S": "Sale", "A": "Award",
+                            "D": "Disposition", "F": "Tax withholding"}.get(txn_code, txn_code)
+                shares_tag = soup.find("transactionshares") or soup.find("sharesownedfollowingtransaction")
+                shares = None
+                if shares_tag:
+                    val_tag = shares_tag.find("value")
+                    if val_tag:
+                        try:
+                            shares = float(val_tag.get_text(strip=True).replace(",", ""))
+                        except ValueError:
+                            pass
+                result.append({
+                    "name":             owner_name,
+                    "role":             role,
+                    "transaction_type": txn_type,
+                    "shares":           shares,
+                    "date":             date,
+                })
+            except Exception:
+                continue
+    except Exception as exc:
+        print(f"[EDGAR Insider] Exception for {ticker}: {exc}")
+    _INSIDER_CACHE[cache_key] = {"data": result, "ts": now}
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # YOUTUBE LIVE NEWS
 # ══════════════════════════════════════════════════════════════════════════════
 NEWS_CHANNELS = [
@@ -443,28 +712,27 @@ SECTORS = {
         "label": "Consumer Discretionary", "sub": "Retail · Autos · Leisure", "key": "XLY",
         "keywords": ["retail","auto","leisure","Amazon","Tesla","Nike","McDonald's","Booking","Home Depot"],
         "queries": ["consumer discretionary sector stocks news","retail auto leisure stocks"],
-        "fred_series": ["CPIAUCSL", "UNRATE", "MORTGAGE30US"],
+        "fred_series": ["CPIAUCSL", "UNRATE", "MORTGAGE30US", "RETAILSMNSA", "UMCSENT", "PCE"],
         "trend_keywords": ["retail sales", "consumer spending"],
     },
     "consumer-staples": {
         "label": "Consumer Staples", "sub": "Food · Beverages · Essentials", "key": "XLP",
         "keywords": ["food","beverage","household","Procter Gamble","Coca-Cola","PepsiCo","Walmart","Costco","Unilever"],
         "queries": ["consumer staples sector stocks news","food beverage essentials stocks"],
-        "fred_series": ["CPIAUCSL", "DFF"],
-        "trend_keywords": ["grocery", "food prices"],
+        "fred_series": ["CPIAUCSL", "DFF", "PCE", "UMCSENT"],
     },
     "energy": {
         "label": "Energy", "sub": "Oil · Gas · Renewables", "key": "XLE",
         "keywords": ["oil","gas","energy","renewable","ExxonMobil","Chevron","Shell","BP","ConocoPhillips","pipeline"],
         "queries": ["energy sector stocks oil gas news","oil gas renewables stocks"],
-        "fred_series": ["DCOILWTICO", "DTWEXBGS"],
+        "fred_series": ["DCOILWTICO", "DTWEXBGS", "DCOILBRENTEU"],
         "trend_keywords": ["oil price", "crude oil"],
     },
     "financials": {
         "label": "Financials", "sub": "Banks · Insurance · Fintech", "key": "XLF",
         "keywords": ["bank","insurance","fintech","JPMorgan","Visa","Mastercard","Goldman Sachs","Wells Fargo","Berkshire"],
         "queries": ["financial sector stocks banks insurance news","banks fintech stocks news"],
-        "fred_series": ["DFF", "T10Y2Y", "BAMLH0A0HYM2"],
+        "fred_series": ["DFF", "T10Y2Y", "BAMLH0A0HYM2", "ICSA"],
         "trend_keywords": ["interest rates", "banking"],
     },
     "health-care": {
@@ -478,7 +746,7 @@ SECTORS = {
         "label": "Industrials", "sub": "Aerospace · Machinery · Logistics", "key": "XLI",
         "keywords": ["aerospace","defense","machinery","logistics","Boeing","Caterpillar","Honeywell","UPS","Raytheon"],
         "queries": ["industrials sector stocks aerospace machinery news","defense logistics industrial stocks"],
-        "fred_series": ["DBRI", "INDPRO"],
+        "fred_series": ["DBRI", "INDPRO", "HOUST"],
         "trend_keywords": ["industrial production", "defense spending"],
     },
     "information-technology": {
@@ -499,7 +767,7 @@ SECTORS = {
         "label": "Real Estate", "sub": "Property · REITs", "key": "XLRE",
         "keywords": ["REIT","property","real estate","Prologis","American Tower","Simon Property","Crown Castle","Equinix"],
         "queries": ["real estate sector REIT stocks news","property REIT stocks news"],
-        "fred_series": ["MORTGAGE30US", "DFF", "CSUSHPINSA"],
+        "fred_series": ["MORTGAGE30US", "DFF", "CSUSHPINSA", "HOUST"],
         "trend_keywords": ["real estate", "housing market"],
     },
     "utilities": {
@@ -1315,7 +1583,7 @@ def _sf(v, d=4):
     except: return None
  
  
-def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None):
+def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None, earnings_data=None, bea_pce_data=None, insider_data=None):
     # ── DATA HYGIENE: drop NaN rows, deduplicate index, enforce numeric types ──
     df = df[~df.index.duplicated(keep="last")].sort_index()
     for col in ["Open", "High", "Low", "Close"]:
@@ -1594,7 +1862,10 @@ def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_dat
         "macro": macro_data or {},
         "trends": trends_data or {},
         "fundamentals": fundamentals or {},
-        "shipping": shipping_ctx or {},
+        "shipping":  shipping_ctx or {},
+        "earnings":  earnings_data or {},
+        "bea_pce":   bea_pce_data or {},
+        "insiders":  insider_data or [],
     }
  
  
@@ -1613,6 +1884,9 @@ def build_prompt(payload):
     trends   = p.get("trends", {})
     fund     = p.get("fundamentals", {})
     shipping = p.get("shipping", {})
+    earnings = p.get("earnings", {})
+    bea_pce  = p.get("bea_pce", {})
+    insiders = p.get("insiders", [])
     pats     = p.get("patterns", [])
     conf     = p.get("confluence", {})
 
@@ -1626,6 +1900,9 @@ def build_prompt(payload):
     if not macro:    missing_data.append("FRED macro data")
     if not trends:   missing_data.append("Google Trends")
     if not shipping: missing_data.append("AIS shipping context")
+    if not earnings.get("next_date"): missing_data.append("earnings date (SEC unavailable)")
+    if not bea_pce:  missing_data.append("BEA PCE spending data")
+    if not insiders: missing_data.append("insider transactions (EDGAR unavailable)")
     data_quality_lines = [
         "## DATA QUALITY REPORT",
         f"- Bars loaded: {p['bars']}  |  Period: {p['period']}  |  Currency: {p['currency']}",
@@ -1713,6 +1990,45 @@ def build_prompt(payload):
             perf_lines.append(f"- {lbl}: {fp(perf[lbl])}%")
     perf_lines.append("")
 
+    # ── EARNINGS DATE ──
+    earnings_lines = []
+    if earnings.get("next_date"):
+        days = earnings.get("days_away")
+        imm  = earnings.get("is_imminent", False)
+        days_str = f"{days}d away" if days is not None and days >= 0 else (f"{abs(days)}d ago" if days is not None else "unknown")
+        warn = "  ⚠️ EARNINGS IMMINENT — elevated vol risk, avoid new positions" if imm else ""
+        earnings_lines = [
+            "## EARNINGS CALENDAR (SEC EDGAR)",
+            f"- Next/Recent Earnings Date: {earnings['next_date']}  ({days_str}){warn}",
+            f"- Source: {earnings.get('source','SEC')}",
+            "",
+        ]
+
+    # ── BEA PCE BY CATEGORY ──
+    bea_lines = []
+    if bea_pce:
+        bea_lines = ["## CONSUMER SPENDING BY CATEGORY (BEA PCE — Official)"]
+        for cat, d in bea_pce.items():
+            bea_lines.append(f"- {cat}: ${d['value']:,.1f}B  [{d.get('period','')}]")
+        bea_lines.append("")
+
+    # ── INSIDER TRANSACTIONS ──
+    insider_lines = []
+    if insiders:
+        buys  = [t for t in insiders if t.get("transaction_type") == "Purchase"]
+        sales = [t for t in insiders if t.get("transaction_type") == "Sale"]
+        insider_lines = [
+            "## INSIDER TRANSACTIONS (SEC Form 4 — last 5 filings)",
+            f"- Purchases: {len(buys)}  |  Sales: {len(sales)}  |  Net signal: "
+            f"{'BULLISH (insider buying)' if len(buys) > len(sales) else 'BEARISH (insider selling)' if len(sales) > len(buys) else 'NEUTRAL'}",
+        ]
+        for t in insiders[:5]:
+            shares_str = f"{t['shares']:,.0f} shares" if t.get("shares") else "shares N/A"
+            insider_lines.append(
+                f"- [{t['date']}] {t.get('name','?')} ({t.get('role','?')}): {t.get('transaction_type','?')} — {shares_str}"
+            )
+        insider_lines.append("")
+
     lines = [
         "[ROLE]",
         "You are a Senior Quantitative Portfolio Manager at a top-tier hedge fund.",
@@ -1759,7 +2075,7 @@ def build_prompt(payload):
         f"- ATR(14): {p['currency']} {f(atr.get('value'))} ({f(atr.get('pct'))}% of price)",
         f"- Latest Vol: {int(vol['latest']) if vol.get('latest') else 'N/A'}  |  20D Avg: {int(vol['avg_20d']) if vol.get('avg_20d') else 'N/A'}  |  Ratio: {f(vol.get('ratio_vs_avg'))}x",
         "",
-    ] + adv_lines + fund_lines + macro_lines + trends_lines + shipping_lines + [
+    ] + adv_lines + fund_lines + macro_lines + trends_lines + shipping_lines + earnings_lines + bea_lines + insider_lines + [
         "## RECENT OHLCV (last 20 trading days)",
         "date,open,high,low,close,volume",
     ] + [
@@ -1797,7 +2113,7 @@ def build_prompt(payload):
         '  "chart_pattern_analysis": "Dominant structure + swing highs/lows with prices + volume-price confirmation + candlestick patterns by date + last-5-candle micro-structure. Min 3 paragraphs.",',
         '  "technical_analysis": "MA alignment + RSI trajectory + MACD histogram evolution + Stochastic/Williams + OBV/CMF/VWAP + ATR + BB + Ichimoku + S/R + ADX. Cite exact values. Min 5 paragraphs.",',
         '  "fundamental_analysis": "P/E, P/B, P/S vs sector norms (state over/undervalued by X%) + growth quality + margins/ROE + balance sheet + analyst gap + short interest as contrarian signal.",',
-        '  "macro_and_altdata": "Map each FRED series to a direct mechanism for this ticker. Google Trends as retail sentiment — rising/falling and near-term demand implication. Shipping context if sector-relevant.",',
+        '  "macro_and_altdata": "Map each FRED series to a direct mechanism for this ticker. BEA PCE categories as actual consumer spending confirmation. Insider transaction net signal and what it implies about management conviction. Earnings date proximity — flag if imminent and how it changes position sizing. Shipping context if sector-relevant.",',
         '  "risk_factors": "Exactly 3 risks: Risk: [scenario + exact threshold]. Early warning: [what to watch]. Mitigation: [action].",',
         '  "action_plan": "Step 1: entry condition (price + indicator confirmation). Step 2: position size (% portfolio, ATR-justified). Step 3: scale-in trigger. Step 4: stop-loss (show ATR or S/R calculation). Step 5: exit at T1 (partial) and T2 (remainder).",',
         '  "summary": "Sentence 1: core thesis — the single most critical technical+fundamental confluence. Sentence 2: the biggest risk with its specific threshold."',
@@ -3499,33 +3815,53 @@ def api_ai_analysis():
     trends_data   = {}
     fundamentals  = {}
     shipping_ctx  = {}
- 
+    earnings_data = {}
+    bea_pce_data  = {}
+    insider_data  = []
+
     def _fetch_macro():
         nonlocal macro_data
         try: macro_data = fetch_all_macro()
         except: pass
- 
+
     def _fetch_trends():
         nonlocal trends_data
         try:
             kws = get_ticker_trend_keywords(ticker, name)
             trends_data = fetch_google_trends(kws, timeframe="today 3-m")
         except: pass
- 
+
     def _fetch_fundamentals():
         nonlocal fundamentals
         try: fundamentals = _get_fundamentals(ticker)
         except: pass
- 
+
     def _fetch_shipping():
         nonlocal shipping_ctx
         try: shipping_ctx = fetch_shipping_context()
         except: pass
- 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+
+    def _fetch_earnings():
+        nonlocal earnings_data
+        try: earnings_data = fetch_earnings_date(ticker)
+        except: pass
+
+    def _fetch_bea():
+        nonlocal bea_pce_data
+        try: bea_pce_data = fetch_bea_pce()
+        except: pass
+
+    def _fetch_insiders():
+        nonlocal insider_data
+        try: insider_data = fetch_insider_transactions(ticker)
+        except: pass
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
         futs = [ex.submit(_fetch_macro), ex.submit(_fetch_trends),
-                ex.submit(_fetch_fundamentals), ex.submit(_fetch_shipping)]
-        concurrent.futures.wait(futs, timeout=18)
+                ex.submit(_fetch_fundamentals), ex.submit(_fetch_shipping),
+                ex.submit(_fetch_earnings), ex.submit(_fetch_bea),
+                ex.submit(_fetch_insiders)]
+        concurrent.futures.wait(futs, timeout=22)
  
     # Track which data sources succeeded
     data_sources = []
@@ -3533,6 +3869,9 @@ def api_ai_analysis():
     if trends_data:   data_sources.append(f"Google Trends ({len(trends_data)} keywords)")
     if fundamentals:  data_sources.append("Yahoo Fundamentals")
     if shipping_ctx:  data_sources.append("AIS Shipping Context")
+    if earnings_data and earnings_data.get("next_date"): data_sources.append("SEC Earnings Date")
+    if bea_pce_data:  data_sources.append(f"BEA PCE ({len(bea_pce_data)} categories)")
+    if insider_data:  data_sources.append(f"EDGAR Insider Transactions ({len(insider_data)} filings)")
     data_sources += ["12 Technical Indicators", "30-Day OHLCV Chart", "Candlestick Pattern Analysis", "SPY Correlation"]
  
     try:
@@ -3540,7 +3879,10 @@ def api_ai_analysis():
                                           macro_data=macro_data,
                                           trends_data=trends_data,
                                           fundamentals=fundamentals,
-                                          shipping_ctx=shipping_ctx)
+                                          shipping_ctx=shipping_ctx,
+                                          earnings_data=earnings_data,
+                                          bea_pce_data=bea_pce_data,
+                                          insider_data=insider_data)
         prompt   = build_prompt(payload)
     except Exception as e:
         return jsonify({"error": f"Indicator error: {e}"}), 500
