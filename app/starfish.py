@@ -2843,7 +2843,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 <div class="glass" style="padding:0;overflow:hidden;border-radius:12px;content-visibility:auto;contain-intrinsic-size:0 700px;">
   <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span class="panel-label" style="margin:0;">ADS-B Live Map</span>
-    <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#aa6600;background:#fff8e8;border:1px solid #f5ddb8;border-radius:20px;padding:3px 10px;">OpenSky · Free</span>
+    <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#aa6600;background:#fff8e8;border:1px solid #f5ddb8;border-radius:20px;padding:3px 10px;">adsb.lol · Free</span>
     <button id="adsb-toggle-btn" onclick="toggleADSB()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
     <span id="adsb-aircraft-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
@@ -3683,32 +3683,7 @@ def api_ais_key():
     return jsonify({"ok": True, "key": key})
 
 
-@app.route("/api/opensky")
-def api_opensky():
-    """Server-side proxy for OpenSky Network REST API.
-    OpenSky blocks direct browser fetch (CORS), so the iframe calls this
-    same-origin endpoint instead. Flask fetches from OpenSky server-side.
-    Query params: lamin, lomin, lamax, lomax (bounding box, all required).
-    """
-    lamin = request.args.get("lamin")
-    lomin = request.args.get("lomin")
-    lamax = request.args.get("lamax")
-    lomax = request.args.get("lomax")
-    if None in (lamin, lomin, lamax, lomax):
-        return jsonify({"error": "lamin, lomin, lamax, lomax required"}), 400
-    try:
-        r = requests.get(
-            "https://opensky-network.org/api/states/all",
-            params={"lamin": lamin, "lomin": lomin, "lamax": lamax, "lomax": lomax},
-            headers={"User-Agent": "Starfish/1.0"},
-            timeout=15,
-        )
-        r.raise_for_status()
-        return jsonify(r.json())
-    except requests.exceptions.Timeout:
-        return jsonify({"error": "OpenSky timeout"}), 504
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
+
 
 
 
@@ -4254,7 +4229,7 @@ function makeIcon(color, track) {
 function buildPopup(d) {
   var meta = TYPE_META[d.cls] || TYPE_META.other;
   var badge = '<span class="popup-type-badge" style="background:'+meta.color+'22;color:'+meta.color+';border:1px solid '+meta.color+'44">'+meta.label+'</span>';
-  // OpenSky altitude is in metres — convert to feet
+  // altitude: baro_alt stored in metres internally, convert to feet for display
   var altFt = d.baro_alt != null ? Math.round(d.baro_alt * 3.28084).toLocaleString()+' ft' : '—';
   if (d.on_ground) altFt = 'Ground';
   // velocity m/s → knots
@@ -4342,7 +4317,7 @@ function setStatus(state, detail) {
   var txt = document.getElementById('status-text');
   var states = {
     init:      {bg:'#ffaa33', text:'Initialising…'},
-    polling:   {bg:'#44ff88', text:'Live · OpenSky'},
+    polling:   {bg:'#44ff88', text:'Live · adsb.lol'},
     error:     {bg:'#ff4444', text:'Error — Retrying…'},
     stopped:   {bg:'#ffaa33', text:'Stopped'}
   };
@@ -4353,61 +4328,56 @@ function setStatus(state, detail) {
   else dbg(s.text);
 }
 
-// ── POLLING — OpenSky Network free REST API (no key required) ─────────────
-// Endpoint: https://opensky-network.org/api/states/all?lamin=&lomin=&lamax=&lomax=
-// Returns state vectors as arrays; anonymous users get snapshots every ~10s.
-// We cycle through bounding boxes to build global coverage at 10s per tile.
+// ── POLLING — adsb.lol free API (CORS-enabled, no key, direct browser fetch) ──
+// Endpoint: https://api.adsb.lol/v2/aircraft?lat={lat}&lon={lon}&dst={km}
+// Returns {ac:[...]} objects with lat/lon/hex/flight/alt_baro/gs/track fields.
+// Cycles through 12 global regions; poll every 8s (within 5-10s guideline).
 var _adsbStopped  = true;
 var _pollTimer    = null;
-var _pollInterval = 10000;  // OpenSky anonymous limit: ~1 new snapshot per 10s
+var _pollInterval = 8000;
 
-// OpenSky field indices in each state vector array
-var F = {
-  icao24:0, callsign:1, origin_country:2, time_position:3, last_contact:4,
-  longitude:5, latitude:6, baro_altitude:7, on_ground:8, velocity:9,
-  heading:10, vert_rate:11, sensors:12, geo_altitude:13, squawk:14,
-  spi:15, position_source:16
-};
-
-// Bounding boxes [lamin, lomin, lamax, lomax] — 10 tiles covering the globe
-var BBOXES = [
-  [ 24,  -130,  72,  -60],  // North America
-  [-10,  -82,   24,  -34],  // Central/South America North
-  [-56,  -82,  -10,  -34],  // South America South
-  [ 34,  -12,   72,   45],  // Europe
-  [-36,  -18,   34,   52],  // Africa
-  [ 12,   25,   72,   70],  // Middle East / Central Asia
-  [ -5,   67,   36,  100],  // South Asia
-  [ 18,  100,   55,  145],  // East Asia
-  [-46,  110,   18,  180],  // Australia / Oceania
-  [ 36,  130,   72,  180],  // Japan / NE Asia
+// Global regions [lat, lon, dst_km]
+var REGIONS = [
+  [40,  -95,  4500],  // North America
+  [51,   10,  3700],  // Europe
+  [35,  115,  4500],  // East Asia
+  [20,   80,  3700],  // South Asia
+  [-15, 133,  3700],  // Australia
+  [55,   60,  4500],  // Russia / Central Asia
+  [25,   45,  3700],  // Middle East
+  [-5,   20,  4500],  // Africa
+  [-20, -60,  4500],  // South America
+  [65,  -20,  2800],  // North Atlantic
+  [35,  135,  2800],  // Japan / Korea
+  [5,   105,  3700],  // SE Asia
 ];
-var _bboxIdx = 0;
+var _regionIdx = 0;
 
-// Parse a raw OpenSky state vector array into a normalised object
-function parseState(s) {
-  if (!s) return null;
-  var lat = s[F.latitude], lon = s[F.longitude];
-  if (lat == null || lon == null) return null;
+// Normalise adsb.lol ac object → internal format
+// adsb.lol uses: hex, flight, lat, lon, alt_baro, gs (knots), track, on_ground implied by alt_baro==="ground"
+function parseAC(ac) {
+  if (!ac || ac.lat == null || ac.lon == null) return null;
+  var onGround = (ac.alt_baro === 'ground' || ac.alt_baro === 0);
+  var altFtRaw = onGround ? null : ac.alt_baro;   // already feet in adsb.lol
   return {
-    hex:            s[F.icao24]  || '',
-    callsign:       s[F.callsign] ? s[F.callsign].trim() : '',
-    origin_country: s[F.origin_country] || '',
-    lat:            lat,
-    lon:            lon,
-    baro_alt:       s[F.baro_altitude],   // metres
-    on_ground:      s[F.on_ground],
-    velocity:       s[F.velocity],         // m/s
-    heading:        s[F.heading],          // degrees
-    vert_rate:      s[F.vert_rate],        // m/s
+    hex:            ac.hex  || '',
+    callsign:       ac.flight ? ac.flight.trim() : '',
+    origin_country: '',
+    lat:            ac.lat,
+    lon:            ac.lon,
+    baro_alt:       altFtRaw != null ? altFtRaw / 3.28084 : null,  // store as metres for buildPopup
+    on_ground:      onGround,
+    velocity:       ac.gs != null ? ac.gs / 1.94384 : null,        // kn → m/s for buildPopup
+    heading:        ac.track,
+    vert_rate:      ac.baro_rate != null ? ac.baro_rate / 196.85 : null,  // fpm → m/s
   };
 }
 
 function pollADSB() {
   if (_adsbStopped) return;
-  var bb = BBOXES[_bboxIdx % BBOXES.length];
-  _bboxIdx++;
-  var url = '/api/opensky?lamin='+bb[0]+'&lomin='+bb[1]+'&lamax='+bb[2]+'&lomax='+bb[3];
+  var r = REGIONS[_regionIdx % REGIONS.length];
+  _regionIdx++;
+  var url = 'https://api.adsb.lol/v2/aircraft?lat='+r[0]+'&lon='+r[1]+'&dst='+r[2];
   fetch(url)
   .then(function(resp) {
     if (!resp.ok) throw new Error('HTTP '+resp.status);
@@ -4415,14 +4385,14 @@ function pollADSB() {
   })
   .then(function(data) {
     msgCount++;
-    var states = data.states || [];
+    var acList = data.ac || [];
     var parsed = 0;
-    states.forEach(function(s) {
-      var ac = parseState(s);
-      if (ac && ac.lat && ac.lon) { upsertAircraft(ac); parsed++; }
+    acList.forEach(function(ac) {
+      var d = parseAC(ac);
+      if (d) { upsertAircraft(d); parsed++; }
     });
-    if (msgCount % 5 === 0) dbg('Polls: '+msgCount+' · Aircraft: '+Object.keys(aircraft).length+' · Tile: '+(_bboxIdx%BBOXES.length+1)+'/'+BBOXES.length);
-    setStatus('polling', 'Tile '+((_bboxIdx-1)%BBOXES.length+1)+'/'+BBOXES.length+' · '+parsed+' positions · t='+data.time);
+    if (msgCount % 5 === 0) dbg('Polls: '+msgCount+' · Aircraft: '+Object.keys(aircraft).length+' · Region: '+(_regionIdx%REGIONS.length+1)+'/'+REGIONS.length);
+    setStatus('polling', 'Region '+((_regionIdx-1)%REGIONS.length+1)+'/'+REGIONS.length+' · '+parsed+' positions');
     _pollTimer = setTimeout(pollADSB, _pollInterval);
   })
   .catch(function(err) {
@@ -4431,16 +4401,16 @@ function pollADSB() {
   });
 }
 
-// ── INIT: No key needed — start polling immediately ───────────────────────
+// ── INIT ──────────────────────────────────────────────────────────────────
 function init() {
-  setStatus('init', 'Starting OpenSky poll…');
-  dbg('OpenSky Network · Anonymous · No key required · 10s tiles…');
+  setStatus('init', 'Starting adsb.lol poll…');
+  dbg('adsb.lol · No key · Direct fetch · 8s regions…');
   pollADSB();
 }
 
 function adsbStart() {
   _adsbStopped = false;
-  _bboxIdx = 0;
+  _regionIdx = 0;
   msgCount = 0;
   init();
 }
