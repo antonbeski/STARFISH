@@ -2843,7 +2843,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 <div class="glass" style="padding:0;overflow:hidden;border-radius:12px;content-visibility:auto;contain-intrinsic-size:0 700px;">
   <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span class="panel-label" style="margin:0;">ADS-B Live Map</span>
-    <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#aa6600;background:#fff8e8;border:1px solid #f5ddb8;border-radius:20px;padding:3px 10px;">ADS-B Exchange REST</span>
+    <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#aa6600;background:#fff8e8;border:1px solid #f5ddb8;border-radius:20px;padding:3px 10px;">adsb.lol · Free</span>
     <button id="adsb-toggle-btn" onclick="toggleADSB()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
     <span id="adsb-aircraft-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
@@ -3683,13 +3683,8 @@ def api_ais_key():
     return jsonify({"ok": True, "key": key})
 
 
-@app.route("/api/adsb-key")
-def api_adsb_key():
-    """Return ADS-B Exchange API key status without exposing it in the aircraft HTML."""
-    key = os.environ.get("ADSB_EXCHANGE_API_KEY", "").strip().strip("\"'")
-    if not key:
-        return jsonify({"ok": False, "reason": "ADSB_EXCHANGE_API_KEY env var not set"}), 503
-    return jsonify({"ok": True, "key": key})
+
+
 
 
 @app.route("/vessels")
@@ -4319,10 +4314,8 @@ function setStatus(state, detail) {
   var txt = document.getElementById('status-text');
   var states = {
     init:      {bg:'#ffaa33', text:'Initialising…'},
-    fetching:  {bg:'#ffaa33', text:'Fetching key…'},
-    polling:   {bg:'#44ff88', text:'Live · ADS-B Exchange'},
+    polling:   {bg:'#44ff88', text:'Live · adsb.lol'},
     error:     {bg:'#ff4444', text:'Error — Retrying…'},
-    nokey:     {bg:'#ff4444', text:'No API Key Set'},
     stopped:   {bg:'#ffaa33', text:'Stopped'}
   };
   var s = states[state] || {bg:'#6b7fa3', text:state};
@@ -4332,42 +4325,37 @@ function setStatus(state, detail) {
   else dbg(s.text);
 }
 
-// ── POLLING — ADS-B Exchange v2 REST ─────────────────────────────────────
-// Endpoint: https://adsbexchange-com1.p.rapidapi.com/v2/lat/{lat}/lon/{lon}/dist/{nm}/
-// We poll globally using a coarse bounding tile strategy, cycling through regions.
+// ── POLLING — adsb.lol free API (no key required) ────────────────────────
+// Endpoint: https://api.adsb.lol/v2/aircraft?lat={lat}&lon={lon}&dst={km}
+// Cycles through 12 global regions; adsb.lol recommends polling every 5-10s.
 var _adsbStopped = true;
 var _pollTimer   = null;
-var _apiKey      = null;
-var _pollInterval = 8000;   // ms between polls
+var _pollInterval = 8000;   // ms between polls (within 5-10s guideline)
 
 // Global coverage: cycle through 12 regions each poll tick
+// dst is in km for adsb.lol (vs nautical miles for ADS-B Exchange)
 var REGIONS = [
-  {lat:40,  lon:-95,  nm:2500},  // North America
-  {lat:51,  lon:10,   nm:2000},  // Europe
-  {lat:35,  lon:115,  nm:2500},  // East Asia
-  {lat:20,  lon:80,   nm:2000},  // South Asia
-  {lat:-15, lon:133,  nm:2000},  // Australia
-  {lat:55,  lon:60,   nm:2500},  // Russia / Central Asia
-  {lat:25,  lon:45,   nm:2000},  // Middle East
-  {lat:-5,  lon:20,   nm:2500},  // Africa
-  {lat:-20, lon:-60,  nm:2500},  // South America
-  {lat:65,  lon:-20,  nm:1500},  // North Atlantic / Greenland
-  {lat:35,  lon:135,  nm:1500},  // Japan / Korea
-  {lat:5,   lon:105,  nm:2000},  // SE Asia
+  {lat:40,  lon:-95,  dst:4500},  // North America
+  {lat:51,  lon:10,   dst:3700},  // Europe
+  {lat:35,  lon:115,  dst:4500},  // East Asia
+  {lat:20,  lon:80,   dst:3700},  // South Asia
+  {lat:-15, lon:133,  dst:3700},  // Australia
+  {lat:55,  lon:60,   dst:4500},  // Russia / Central Asia
+  {lat:25,  lon:45,   dst:3700},  // Middle East
+  {lat:-5,  lon:20,   dst:4500},  // Africa
+  {lat:-20, lon:-60,  dst:4500},  // South America
+  {lat:65,  lon:-20,  dst:2800},  // North Atlantic / Greenland
+  {lat:35,  lon:135,  dst:2800},  // Japan / Korea
+  {lat:5,   lon:105,  dst:3700},  // SE Asia
 ];
 var _regionIdx = 0;
 
 function pollADSB() {
-  if (_adsbStopped || !_apiKey) return;
+  if (_adsbStopped) return;
   var r = REGIONS[_regionIdx % REGIONS.length];
   _regionIdx++;
-  var url = 'https://adsbexchange-com1.p.rapidapi.com/v2/lat/'+r.lat+'/lon/'+r.lon+'/dist/'+r.nm+'/';
-  fetch(url, {
-    headers: {
-      'x-rapidapi-host': 'adsbexchange-com1.p.rapidapi.com',
-      'x-rapidapi-key':  _apiKey
-    }
-  })
+  var url = 'https://api.adsb.lol/v2/aircraft?lat='+r.lat+'&lon='+r.lon+'&dst='+r.dst;
+  fetch(url)
   .then(function(resp) {
     if (!resp.ok) throw new Error('HTTP '+resp.status);
     return resp.json();
@@ -4378,7 +4366,7 @@ function pollADSB() {
     acList.forEach(function(ac) {
       if (ac.lat && ac.lon) upsertAircraft(ac);
     });
-    if (msgCount % 5 === 0) dbg('Polls: '+msgCount+' · Aircraft: '+Object.keys(aircraft).length+' · Region: '+_regionIdx%REGIONS.length);
+    if (msgCount % 5 === 0) dbg('Polls: '+msgCount+' · Aircraft: '+Object.keys(aircraft).length+' · Region: '+(_regionIdx%REGIONS.length+1)+'/'+REGIONS.length);
     setStatus('polling', 'Last poll: '+acList.length+' aircraft · Region '+((_regionIdx-1)%REGIONS.length+1)+'/'+REGIONS.length);
     _pollTimer = setTimeout(pollADSB, _pollInterval);
   })
@@ -4388,41 +4376,17 @@ function pollADSB() {
   });
 }
 
-// ── INIT: Fetch key from server, then start polling ───────────────────────
+// ── INIT: No key needed — start polling immediately ───────────────────────
 function init() {
-  setStatus('fetching', 'GET /api/adsb-key …');
-  fetch('/api/adsb-key')
-    .then(function(r) {
-      if (!r.ok) return r.json().then(function(d){ throw new Error(d.reason || 'HTTP '+r.status); });
-      return r.json();
-    })
-    .then(function(data) {
-      if (!data.ok || !data.key) throw new Error(data.reason || 'Key missing in response');
-      _apiKey = data.key;
-      dbg('ADS-B Exchange key fetched OK · Starting poll…');
-      pollADSB();
-    })
-    .catch(function(err) {
-      setStatus('nokey', err.message);
-      var led = document.getElementById('status-led');
-      var txt = document.getElementById('status-text');
-      led.style.background = '#ffaa33';
-      txt.textContent = 'Live positions need ADSB_EXCHANGE_API_KEY';
-      dbg('Map visible — set ADSB_EXCHANGE_API_KEY env var to enable live ADS-B', err.message);
-      var info = L.control({position:'topright'});
-      info.onAdd = function() {
-        var d = L.DomUtil.create('div');
-        d.style.cssText = 'background:rgba(7,9,15,.88);color:#ffaa33;font-family:DM Mono,monospace;font-size:10px;letter-spacing:.06em;padding:8px 12px;border:1px solid rgba(255,170,50,.3);border-radius:6px;max-width:240px;line-height:1.5;';
-        d.innerHTML = '<strong>ADS-B LIVE FEED</strong><br>Set <code>ADSB_EXCHANGE_API_KEY</code><br>in env vars to enable<br>live aircraft positions.';
-        return d;
-      };
-      info.addTo(map);
-    });
+  setStatus('init', 'Starting adsb.lol poll…');
+  dbg('adsb.lol · No key required · Polling globally…');
+  pollADSB();
 }
 
 function adsbStart() {
   _adsbStopped = false;
   _regionIdx = 0;
+  msgCount = 0;
   init();
 }
 
