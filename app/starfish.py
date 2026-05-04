@@ -180,8 +180,9 @@ def rl_next_rpm_reset(key):
  
  
 # ══════════════════════════════════════════════════════════════════════════════
-# FRED MACRO DATA  (fredapi — free, no key required for public series)
+# FRED MACRO DATA  (official FRED REST API — key via FRED_API_KEY env var)
 # ══════════════════════════════════════════════════════════════════════════════
+_FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 _FRED_CACHE = {}
 _FRED_CACHE_TTL = 3600  # 1 hour
  
@@ -204,30 +205,37 @@ VISA_SMI_SERIES = {
  
  
 def fetch_fred_series(series_id, limit=3):
-    """Fetch latest observations for a FRED series using the public JSON API."""
+    """Fetch latest observations for a FRED series using the official FRED REST API."""
     cache_key = f"fred_{series_id}_{limit}"
     now = time.time()
     if cache_key in _FRED_CACHE and now - _FRED_CACHE[cache_key]["ts"] < _FRED_CACHE_TTL:
         return _FRED_CACHE[cache_key]["data"]
     try:
-        url = (f"https://fred.stlouisfed.org/graph/fredgraph.csv"
-               f"?id={series_id}&vintage_date={datetime.now().strftime('%Y-%m-%d')}")
-        resp = requests.get(url, timeout=8,
+        params = {
+            "series_id": series_id,
+            "api_key": _FRED_API_KEY,
+            "file_type": "json",
+            "sort_order": "desc",
+            "limit": limit,
+        }
+        url = "https://api.stlouisfed.org/fred/series/observations"
+        resp = requests.get(url, params=params, timeout=8,
                             headers={"User-Agent": "Mozilla/5.0 (compatible; Starfish/1.0)"})
-        if resp.status_code == 200 and resp.text:
-            lines = [l for l in resp.text.strip().splitlines() if l and not l.startswith("DATE")]
+        if resp.status_code == 200:
+            observations = resp.json().get("observations", [])
             rows = []
-            for line in lines[-limit:]:
-                parts = line.split(",")
-                if len(parts) >= 2 and parts[1].strip() not in (".", ""):
+            for obs in reversed(observations):  # oldest→newest
+                if obs.get("value") not in (".", "", None):
                     try:
-                        rows.append({"date": parts[0].strip(), "value": float(parts[1].strip())})
-                    except ValueError:
+                        rows.append({"date": obs["date"], "value": float(obs["value"])})
+                    except (ValueError, KeyError):
                         pass
             _FRED_CACHE[cache_key] = {"data": rows, "ts": now}
             return rows
-    except Exception:
-        pass
+        else:
+            print(f"[FRED] HTTP {resp.status_code} for {series_id}: {resp.text[:200]}")
+    except Exception as exc:
+        print(f"[FRED] Exception fetching {series_id}: {exc}")
     return []
  
  
