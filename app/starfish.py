@@ -3683,6 +3683,34 @@ def api_ais_key():
     return jsonify({"ok": True, "key": key})
 
 
+@app.route("/api/opensky")
+def api_opensky():
+    """Server-side proxy for OpenSky Network REST API.
+    OpenSky blocks direct browser fetch (CORS), so the iframe calls this
+    same-origin endpoint instead. Flask fetches from OpenSky server-side.
+    Query params: lamin, lomin, lamax, lomax (bounding box, all required).
+    """
+    lamin = request.args.get("lamin")
+    lomin = request.args.get("lomin")
+    lamax = request.args.get("lamax")
+    lomax = request.args.get("lomax")
+    if None in (lamin, lomin, lamax, lomax):
+        return jsonify({"error": "lamin, lomin, lamax, lomax required"}), 400
+    try:
+        r = requests.get(
+            "https://opensky-network.org/api/states/all",
+            params={"lamin": lamin, "lomin": lomin, "lamax": lamax, "lomax": lomax},
+            headers={"User-Agent": "Starfish/1.0"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return jsonify(r.json())
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "OpenSky timeout"}), 504
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
 
 
 
@@ -4379,8 +4407,7 @@ function pollADSB() {
   if (_adsbStopped) return;
   var bb = BBOXES[_bboxIdx % BBOXES.length];
   _bboxIdx++;
-  var url = 'https://opensky-network.org/api/states/all' +
-            '?lamin='+bb[0]+'&lomin='+bb[1]+'&lamax='+bb[2]+'&lomax='+bb[3];
+  var url = '/api/opensky?lamin='+bb[0]+'&lomin='+bb[1]+'&lamax='+bb[2]+'&lomax='+bb[3];
   fetch(url)
   .then(function(resp) {
     if (!resp.ok) throw new Error('HTTP '+resp.status);
