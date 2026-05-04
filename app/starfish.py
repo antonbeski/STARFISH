@@ -31,6 +31,85 @@ from plotly.subplots import make_subplots
 app = Flask(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ADS-B LIVE COLLECTOR — adsb.lol background thread
+# Polls https://api.adsb.lol/v2/aircraft every 5 s, rotating through 12 global
+# regions.  Data is stored in a thread-safe deque (latest 5 000 rows) AND
+# appended to  live_adsb_append.csv  on disk.
+# ══════════════════════════════════════════════════════════════════════════════
+import csv
+
+_ADSB_REGIONS = [
+    (40,  -95,  4500),   # North America
+    (51,   10,  3700),   # Europe
+    (35,  115,  4500),   # East Asia
+    (20,   80,  3700),   # South Asia
+    (-15, 133,  3700),   # Australia
+    (55,   60,  4500),   # Russia / Central Asia
+    (25,   45,  3700),   # Middle East
+    (-5,   20,  4500),   # Africa
+    (-20, -60,  4500),   # South America
+    (65,  -20,  2800),   # North Atlantic
+    (35,  135,  2800),   # Japan / Korea
+    (5,   105,  3700),   # SE Asia
+]
+_ADSB_CSV      = "live_adsb_append.csv"
+_ADSB_INTERVAL = 5          # seconds between polls
+_adsb_buffer   = deque(maxlen=5000)   # thread-safe ring buffer
+_adsb_lock     = threading.Lock()
+_adsb_region_idx = 0
+
+def _adsb_collector():
+    """Background thread: poll adsb.lol, buffer rows, append to CSV."""
+    global _adsb_region_idx
+    # Write CSV header once if file is new
+    try:
+        write_header = not os.path.exists(_ADSB_CSV) or os.path.getsize(_ADSB_CSV) == 0
+        with open(_ADSB_CSV, "a", newline="") as fh:
+            if write_header:
+                csv.writer(fh).writerow(
+                    ["ts", "hex", "flight", "lat", "lon", "alt_baro", "gs", "track"]
+                )
+    except Exception as exc:
+        print(f"[ADSB] CSV init error: {exc}")
+
+    while True:
+        try:
+            lat, lon, dst = _ADSB_REGIONS[_adsb_region_idx % len(_ADSB_REGIONS)]
+            _adsb_region_idx += 1
+            url = f"https://api.adsb.lol/v2/aircraft?lat={lat}&lon={lon}&dst={dst}"
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            now  = data.get("now") or datetime.utcnow().timestamp()
+            rows = []
+            for ac in (data.get("ac") or []):
+                if ac.get("lat") is None or ac.get("lon") is None:
+                    continue
+                rows.append([
+                    now,
+                    ac.get("hex", ""),
+                    (ac.get("flight") or "").strip(),
+                    ac.get("lat"),
+                    ac.get("lon"),
+                    ac.get("alt_baro"),
+                    ac.get("gs"),
+                    ac.get("track"),
+                ])
+            if rows:
+                with _adsb_lock:
+                    _adsb_buffer.extend(rows)
+                with open(_ADSB_CSV, "a", newline="") as fh:
+                    csv.writer(fh).writerows(rows)
+        except Exception as exc:
+            print(f"[ADSB] poll error: {exc}")
+        time.sleep(_ADSB_INTERVAL)
+
+def _start_adsb_collector():
+    t = threading.Thread(target=_adsb_collector, name="adsb-collector", daemon=True)
+    t.start()
+    print("[ADSB] collector thread started — writing to", _ADSB_CSV)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # COPERNICUS / SENTINEL HUB — LIVE SATELLITE IMAGERY
 # ══════════════════════════════════════════════════════════════════════════════
 _CDSE_USERNAME = os.environ.get("CDSE_USERNAME", "antbsk0@gmail.com")
@@ -4513,6 +4592,15 @@ def sentinel_proxy_tile():
         from flask import Response as FlaskResponse
         return FlaskResponse(EMPTY_PNG, content_type="image/png")
 
+@app.route("/adsb/data")
+def adsb_data():
+    """Return the latest buffered ADS-B rows as JSON for the frontend."""
+    limit = min(int(request.args.get("limit", 500)), 5000)
+    with _adsb_lock:
+        rows = list(_adsb_buffer)[-limit:]
+    cols = ["ts", "hex", "flight", "lat", "lon", "alt_baro", "gs", "track"]
+    return jsonify({"count": len(rows), "columns": cols, "rows": rows})
+
 @app.route("/debug")
 def debug():
     out, color = [], "#7fff7f"
@@ -4547,4 +4635,5 @@ if __name__ == "__main__":
     print("  http://127.0.0.1:5000")
     print("=" * 60)
     print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi\n")
+    _start_adsb_collector()
     app.run(debug=True, host="0.0.0.0", port=5000)
