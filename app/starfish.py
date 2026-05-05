@@ -4314,10 +4314,64 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
 .pv{color:#90a8c8;font-size:10px}
 .pbadge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:8px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;margin-bottom:5px}
 
-/* Mobile */
+/* Mobile — AIS-style: map on top (~55 vh), table scrolls below */
 @media(max-width:680px){
-  #sidebar{display:none}
-  #filter-bar .fbtn:nth-child(n+3){display:none}
+  html,body{overflow:auto}
+
+  #topbar{
+    height:44px;
+    padding:0 8px;gap:6px;
+  }
+  #filter-bar{gap:3px}
+  .fbtn{font-size:7px;padding:2px 6px}
+
+  #wrap{
+    position:relative;
+    top:auto;bottom:auto;left:auto;right:auto;
+    flex-direction:column;
+    width:100%;
+    /* push below fixed topbar */
+    margin-top:44px;
+    /* leave room for fixed statusbar */
+    margin-bottom:28px;
+  }
+
+  #map{
+    width:100%;
+    height:55vw;          /* ~AIS ratio: slightly taller than wide */
+    min-height:220px;
+    flex:none;
+  }
+
+  #sidebar{
+    display:flex;          /* was display:none — restore it */
+    width:100%;
+    flex-direction:column;
+    border-left:none;
+    border-top:1px solid rgba(255,255,255,.08);
+    /* sidebar table is naturally scrollable within the page flow */
+    max-height:none;
+    overflow:visible;
+  }
+
+  #sb-header{
+    padding:6px 10px;
+    position:sticky;top:44px;z-index:100;
+    background:#07090f;
+  }
+
+  #sb-list{
+    overflow-y:visible;   /* let the page scroll instead */
+  }
+
+  /* Make aircraft rows a bit more touch-friendly */
+  .acr{padding:8px 10px 9px}
+  .acs{font-size:12px}
+  .acf-v{font-size:10px}
+
+  #statusbar{
+    position:fixed;
+  }
 }
 </style>
 </head>
@@ -4393,7 +4447,19 @@ var INTERVAL = 8000;
 // doesn't see a 0x0 container and skip rendering.
 var wrap = document.getElementById('wrap');
 var mapEl = document.getElementById('map');
-mapEl.style.height = wrap.offsetHeight + 'px';
+
+function isMobile() { return window.innerWidth <= 680; }
+
+function setMapHeight() {
+  if (isMobile()) {
+    // Mobile: fixed vw-based height driven by CSS; just clear any inline override
+    mapEl.style.height = '';
+  } else {
+    // Desktop: fill the fixed-position wrap vertically
+    mapEl.style.height = wrap.offsetHeight + 'px';
+  }
+}
+setMapHeight();
 
 var map = L.map('map', {
   center: [30, 10], zoom: 3,
@@ -4407,7 +4473,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
 
 // Resize map when window resizes
 window.addEventListener('resize', function() {
-  mapEl.style.height = wrap.offsetHeight + 'px';
+  setMapHeight();
   map.invalidateSize();
 });
 
