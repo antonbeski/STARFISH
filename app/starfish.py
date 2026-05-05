@@ -2817,6 +2817,48 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
  
 <!-- ══════════════════════════════════════════
+     PREDICTION MARKETS
+═══════════════════════════════════════════ -->
+<div class="section-divider" id="pred-markets">
+  <div class="section-divider-line"></div>
+  <div class="section-label"><span class="dot" style="background:rgba(130,80,200,.8)"></span>Prediction Markets</div>
+  <div class="section-divider-line"></div>
+</div>
+
+<div class="glass" style="padding:22px 24px 24px;margin-bottom:18px">
+  <div class="panel-label">Market Consensus Search</div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+    <input id="pred-query" type="text" placeholder="Search e.g. Fed rate cut, Trump, Bitcoin ETF…"
+      style="flex:1;min-width:200px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:9px 14px;color:#fff;font-size:13px;outline:none"
+      onkeydown="if(event.key==='Enter')searchPredMarkets()"
+    />
+    <button onclick="searchPredMarkets()" id="pred-btn"
+      style="background:rgba(130,80,200,.75);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;padding:9px 20px;cursor:pointer;white-space:nowrap">
+      Search Markets
+    </button>
+  </div>
+  <div id="pred-status" style="font-size:12px;color:rgba(255,255,255,.45);margin-bottom:10px"></div>
+  <div id="pred-chart-wrap" style="display:none">
+    <div id="pred-chart" style="width:100%;height:340px"></div>
+  </div>
+  <div id="pred-table-wrap" style="display:none;margin-top:16px;overflow-x:auto">
+    <table id="pred-table" style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="border-bottom:1px solid rgba(255,255,255,.12)">
+          <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Platform</th>
+          <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Market</th>
+          <th style="text-align:right;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Prob %</th>
+          <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Outcome</th>
+          <th style="text-align:right;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Volume</th>
+        </tr>
+      </thead>
+      <tbody id="pred-tbody"></tbody>
+    </table>
+  </div>
+  <div id="pred-empty" style="display:none;text-align:center;padding:32px 0;color:rgba(255,255,255,.3);font-size:13px">No matching markets found.</div>
+</div>
+
+<!-- ══════════════════════════════════════════
      SECTION 2: SECTORS
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="sectors">
@@ -3170,6 +3212,84 @@ function renderAIResult(data){{
     '<div class="ai-secs">'+secHtml+'</div>';
 }}
  
+// ── Prediction Markets ────────────────────────────────────────────────────────
+async function searchPredMarkets(){{
+  var q=(document.getElementById('pred-query').value||'').trim();
+  if(!q)return;
+  var btn=document.getElementById('pred-btn');
+  var status=document.getElementById('pred-status');
+  btn.disabled=true; btn.textContent='Searching\u2026';
+  status.textContent='Fetching Manifold & PredScope\u2026';
+  document.getElementById('pred-chart-wrap').style.display='none';
+  document.getElementById('pred-table-wrap').style.display='none';
+  document.getElementById('pred-empty').style.display='none';
+
+  try{{
+    var r=await fetch('/api/prediction-markets?q='+encodeURIComponent(q));
+    var data=await r.json();
+    if(data.error){{status.textContent='Error: '+data.error;return;}}
+    var results=data.results||[];
+    status.textContent='Found '+results.length+' market(s) across '+data.sources+' source(s)';
+    if(!results.length){{document.getElementById('pred-empty').style.display='block';return;}}
+    renderPredChart(results);
+    renderPredTable(results);
+  }}catch(e){{
+    status.textContent='Network error: '+String(e);
+  }}finally{{
+    btn.disabled=false; btn.textContent='Search Markets';
+  }}
+}}
+
+function renderPredChart(results){{
+  var top=results.slice(0,12);
+  var labels=top.map(function(r){{
+    var t=r.title.length>38?r.title.slice(0,38)+'\u2026':r.title;
+    return '['+r.platform+'] '+t;
+  }});
+  var probs=top.map(function(r){{return r.probability;}});
+  var colors=top.map(function(r){{return r.platform==='Manifold'?'rgba(59,130,246,0.8)':'rgba(168,85,247,0.8)';}});
+
+  var trace={{
+    type:'bar', orientation:'h',
+    x:probs, y:labels,
+    marker:{{color:colors}},
+    text:probs.map(function(p){{return p.toFixed(1)+'%';}}),
+    textposition:'outside',
+    hovertemplate:'%{{y}}<br>Probability: %{{x:.1f}}%<extra></extra>',
+  }};
+  var layout={{
+    paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
+    font:{{color:'rgba(255,255,255,0.8)',size:11}},
+    margin:{{l:320,r:80,t:16,b:40}},
+    xaxis:{{title:'Probability (%)',range:[0,110],gridcolor:'rgba(255,255,255,.08)',tickcolor:'rgba(255,255,255,.3)',color:'rgba(255,255,255,.6)'}},
+    yaxis:{{automargin:true,tickcolor:'rgba(255,255,255,.3)',color:'rgba(255,255,255,.6)'}},
+    annotations:[
+      {{x:0,y:1.06,xref:'paper',yref:'paper',text:'<b style="color:rgba(59,130,246,.9)">&#9646; Manifold</b>&nbsp;&nbsp;<b style="color:rgba(168,85,247,.9)">&#9646; PredScope</b>',showarrow:false,font:{{size:11}},align:'left'}},
+    ],
+    bargap:0.3,
+  }};
+  Plotly.newPlot('pred-chart',[trace],layout,{{responsive:true,displayModeBar:false}});
+  document.getElementById('pred-chart-wrap').style.display='block';
+}}
+
+function renderPredTable(results){{
+  var tbody=document.getElementById('pred-tbody');
+  tbody.innerHTML=results.map(function(r){{
+    var pct=r.probability.toFixed(1);
+    var bar='<div style="display:inline-block;width:'+(r.probability*0.8)+'px;height:6px;border-radius:3px;background:'+(r.platform==='Manifold'?'rgba(59,130,246,.7)':'rgba(168,85,247,.7)')+';vertical-align:middle;margin-right:6px"></div>';
+    var vol=r.volume!=null?'$'+Number(r.volume).toLocaleString(undefined,{{maximumFractionDigits:0}}):'—';
+    var link=r.url?'<a href="'+r.url+'" target="_blank" style="color:rgba(255,255,255,.75);text-decoration:none">'+esc(r.title)+'</a>':esc(r.title);
+    return '<tr style="border-bottom:1px solid rgba(255,255,255,.06)">'+
+      '<td style="padding:7px 10px;color:'+(r.platform==='Manifold'?'rgba(59,130,246,.9)':'rgba(168,85,247,.9)')+'">'+esc(r.platform)+'</td>'+
+      '<td style="padding:7px 10px;max-width:280px;word-break:break-word">'+link+'</td>'+
+      '<td style="padding:7px 10px;text-align:right">'+bar+pct+'%</td>'+
+      '<td style="padding:7px 10px;color:rgba(255,255,255,.6)">'+esc(r.outcome_label)+'</td>'+
+      '<td style="padding:7px 10px;text-align:right;color:rgba(255,255,255,.5)">'+vol+'</td>'+
+    '</tr>';
+  }}).join('');
+  document.getElementById('pred-table-wrap').style.display='block';
+}}
+
 // ── Sector news ───────────────────────────────────────────────────────────────
 function selectAndFetch(id){{
   document.getElementById('sector-sel').value=id;
@@ -3710,6 +3830,98 @@ def api_ai_analysis():
     })
  
  
+
+@app.route("/api/prediction-markets")
+def api_prediction_markets():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"error": "query required"}), 400
+
+    results = []
+    sources = 0
+
+    # ── Manifold ──────────────────────────────────────────────────────────────
+    try:
+        r = requests.get(
+            "https://api.manifold.markets/v0/search-markets",
+            params={"term": q, "limit": 20, "filter": "open"},
+            timeout=10,
+            headers={"User-Agent": "Starfish/1.0"},
+        )
+        r.raise_for_status()
+        for m in (r.json() or []):
+            prob = m.get("probability")
+            if prob is None:
+                continue
+            results.append({
+                "platform":      "Manifold",
+                "title":         m.get("question") or m.get("slug", ""),
+                "market_id":     m.get("id", ""),
+                "url":           m.get("url", ""),
+                "probability":   round(float(prob) * 100, 2),
+                "outcome_label": "YES",
+                "volume":        m.get("volume"),
+            })
+        sources += 1
+    except Exception as exc:
+        print(f"[PredMarkets] Manifold error: {exc}")
+
+    # ── PredScope (Polymarket-based) ──────────────────────────────────────────
+    try:
+        r2 = requests.get(
+            "https://predscope.com/api/markets.json",
+            timeout=10,
+            headers={"User-Agent": "Starfish/1.0"},
+        )
+        r2.raise_for_status()
+        ql = q.lower()
+        for m in (r2.json() or []):
+            title = m.get("title") or m.get("question") or ""
+            if ql not in title.lower():
+                continue
+            outcomes = m.get("outcomes") or []
+            if not outcomes:
+                continue
+            # Pick "Yes" outcome or highest probability outcome
+            best = None
+            for o in outcomes:
+                ol = (o.get("title") or o.get("name") or "").lower()
+                op = o.get("probability")
+                if op is None:
+                    continue
+                if "yes" in ol:
+                    best = o
+                    break
+            if best is None:
+                best = max(outcomes, key=lambda o: o.get("probability", 0) if o.get("probability") is not None else 0)
+            prob = best.get("probability")
+            if prob is None:
+                continue
+            results.append({
+                "platform":      "PredScope",
+                "title":         title,
+                "market_id":     m.get("slug") or m.get("id", ""),
+                "url":           f"https://predscope.com/market/{m.get('slug','')}" if m.get("slug") else "",
+                "probability":   round(float(prob) * 100, 2),
+                "outcome_label": best.get("title") or best.get("name") or "YES",
+                "volume":        m.get("volume") or m.get("liquidity"),
+            })
+        sources += 1
+    except Exception as exc:
+        print(f"[PredMarkets] PredScope error: {exc}")
+
+    # ── Rank: exact title match first, then by distance from 50% ─────────────
+    def _rank(r):
+        exact = 1 if q.lower() in r["title"].lower() else 0
+        deviation = abs(r["probability"] - 50)
+        vol = float(r["volume"] or 0)
+        return (exact, deviation, vol)
+
+    results.sort(key=_rank, reverse=True)
+
+    return jsonify({"results": results, "sources": sources, "query": q})
+
+
 @app.route("/api/rate-limits")
 def api_rate_limits():
     return jsonify({
