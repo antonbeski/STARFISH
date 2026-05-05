@@ -4632,34 +4632,42 @@ function poll() {
   if (stopped) return;
   var reg = REGIONS[ridx % REGIONS.length];
   ridx++;
-  var url = '/adsb/proxy?lat='+reg[0]+'&lon='+reg[1]+'&dst='+reg[2];
+  // Fetch directly from adsb.lol in the browser — their API has CORS open.
+  // Fall back to Flask proxy only if the direct fetch fails (e.g. offline).
+  var directUrl = 'https://api.adsb.lol/v2/aircraft?lat='+reg[0]+'&lon='+reg[1]+'&dst='+reg[2];
+  var proxyUrl  = '/adsb/proxy?lat='+reg[0]+'&lon='+reg[1]+'&dst='+reg[2];
 
-  fetch(url)
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    })
-    .then(function(data) {
-      polls++;
-      var list = data.ac || [];
-      var parsed = 0;
-      list.forEach(function(o) {
-        var d = parseAC(o);
-        if (d) { upsert(d); parsed++; }
-      });
-      var src = data._source === 'buffer' ? ' (buffered)' : '';
-      setStatus('live', 'Live · adsb.lol');
-      setLed('live');
-      log('Poll #'+polls+src+' · Region '+(ridx%REGIONS.length+1)+'/'+REGIONS.length+' · +'+parsed+' positions · '+Object.keys(ac).length+' tracked');
-      document.getElementById('poll-count').textContent = 'Polls: '+polls;
-      updateUI();
-      timer = setTimeout(poll, INTERVAL);
-    })
-    .catch(function(err) {
-      setStatus('error', 'Error — retrying…');
-      log('Poll error: ' + err.message);
-      timer = setTimeout(poll, Math.min(INTERVAL*2, 30000));
+  function handleData(data, source) {
+    polls++;
+    var list = data.ac || [];
+    var parsed = 0;
+    list.forEach(function(o) {
+      var d = parseAC(o);
+      if (d) { upsert(d); parsed++; }
     });
+    setStatus('live', 'Live · adsb.lol');
+    setLed('live');
+    log('Poll #'+polls+' ['+source+'] · Region '+(ridx%REGIONS.length)+'/'+REGIONS.length+' · +'+parsed+' positions · '+Object.keys(ac).length+' tracked');
+    document.getElementById('poll-count').textContent = 'Polls: '+polls;
+    updateUI();
+    timer = setTimeout(poll, INTERVAL);
+  }
+
+  function tryProxy() {
+    fetch(proxyUrl)
+      .then(function(r) { if (!r.ok) throw new Error('proxy HTTP '+r.status); return r.json(); })
+      .then(function(data) { handleData(data, 'proxy'); })
+      .catch(function(err) {
+        setStatus('error', 'Error — retrying…');
+        log('Both direct and proxy failed: ' + err.message);
+        timer = setTimeout(poll, Math.min(INTERVAL*2, 30000));
+      });
+  }
+
+  fetch(directUrl)
+    .then(function(r) { if (!r.ok) throw new Error('direct HTTP '+r.status); return r.json(); })
+    .then(function(data) { handleData(data, 'direct'); })
+    .catch(function() { tryProxy(); });
 }
 
 function adsbStart() {
