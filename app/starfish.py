@@ -3282,14 +3282,14 @@ function renderPredTable(results){{
     var barW=Math.round(r.probability*0.7);
     var bar='<div style="display:inline-block;width:'+barW+'px;height:5px;border-radius:2px;background:#000;vertical-align:middle;margin-right:6px"></div>';
     var vol=r.volume!=null?'$'+Number(r.volume).toLocaleString(undefined,{{maximumFractionDigits:0}}):'—';
-    var link=r.url?'<a href="'+r.url+'" target="_blank" style="color:#000;text-decoration:none;font-weight:500" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">'+esc(r.title)+'</a>':esc(r.title);
+    var link=r.url?'<a href="'+r.url+'" target="_blank" class="news-card-read" style="display:inline;border:none;padding:0;background:none;font-size:.82rem;font-weight:500;text-transform:none;letter-spacing:0">'+esc(r.title)+'</a>':esc(r.title);
     var platformBadge='<span class="news-card-src">'+esc(r.platform)+'</span>';
     return '<tr style="border-bottom:1px solid #e5e5e5'+(i%2===0?';background:#f8f7f4':';background:#fff')+'">'+
       '<td style="padding:8px 10px">'+platformBadge+'</td>'+
       '<td style="padding:8px 10px;max-width:280px;word-break:break-word;color:#000;font-size:.82rem">'+link+'</td>'+
-      '<td style="padding:8px 10px;text-align:right;font-family:\'DM Mono\',monospace;font-size:.8rem;white-space:nowrap">'+bar+pct+'%</td>'+
+      '<td style="padding:8px 10px;text-align:right;font-family:monospace;font-size:.8rem;white-space:nowrap">'+bar+pct+'%</td>'+
       '<td style="padding:8px 10px;color:#555;font-size:.8rem">'+esc(r.outcome_label)+'</td>'+
-      '<td style="padding:8px 10px;text-align:right;font-family:\'DM Mono\',monospace;font-size:.78rem;color:#888">'+vol+'</td>'+
+      '<td style="padding:8px 10px;text-align:right;font-family:monospace;font-size:.78rem;color:#888">'+vol+'</td>'+
     '</tr>';
   }}).join('');
   document.getElementById('pred-table-wrap').style.display='block';
