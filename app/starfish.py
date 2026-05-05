@@ -2633,11 +2633,14 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       /* Prediction markets */
       #pred-chart{{height:260px!important}}
       #pred-chart-wrap{{margin-bottom:12px}}
-      #pred-table th,#pred-table td{{padding:6px 6px;font-size:.58rem}}
-      #pred-table th{{font-size:.5rem;letter-spacing:.06em}}
-      #pred-table td:nth-child(2){{max-width:120px;word-break:break-word}}
-      #pred-table td:nth-child(5){{display:none}}
-      #pred-table th:nth-child(5){{display:none}}
+      #pred-table{{font-size:.72rem}}
+      #pred-table th,#pred-table td{{padding:5px 5px}}
+      #pred-table th{{font-size:.48rem;letter-spacing:.04em}}
+      #pred-table col:first-child{{width:70px!important}}
+      #pred-table col:nth-child(3){{width:44px!important}}
+      #pred-table col:nth-child(4){{width:44px!important}}
+      #pred-table col:nth-child(5){{width:0!important;display:none}}
+      #pred-table td:nth-child(5),#pred-table th:nth-child(5){{display:none}}
 
       /* Sector news output */
       .sector-res-header{{flex-direction:column;align-items:flex-start;gap:6px;padding-bottom:10px;margin-bottom:12px}}
@@ -2720,9 +2723,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-pts{{grid-template-columns:1fr 1fr}}
       .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
       #vessel-iframe{{height:260px!important;max-height:260px!important;min-height:0}}
-      #pred-chart{{height:220px!important}}
-      #pred-table td:nth-child(4){{display:none}}
-      #pred-table th:nth-child(4){{display:none}}
+      #pred-chart{{height:200px!important}}
+      #pred-table col:nth-child(4){{width:0!important}}
+      #pred-table td:nth-child(4),#pred-table th:nth-child(4){{display:none}}
     }}
   </style>
 </head>
@@ -2856,14 +2859,21 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <div id="pred-chart" style="width:100%;height:340px"></div>
   </div>
   <div id="pred-table-wrap" style="display:none;overflow-x:auto">
-    <table id="pred-table" style="width:100%;border-collapse:collapse;font-size:.8rem">
+    <table id="pred-table" style="width:100%;border-collapse:collapse;font-size:.8rem;table-layout:fixed">
+      <colgroup>
+        <col style="width:90px">
+        <col>
+        <col style="width:54px">
+        <col style="width:56px">
+        <col style="width:70px">
+      </colgroup>
       <thead>
         <tr style="border-bottom:2px solid #000">
-          <th style="text-align:left;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Platform</th>
-          <th style="text-align:left;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Market</th>
-          <th style="text-align:right;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Prob %</th>
-          <th style="text-align:left;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Outcome</th>
-          <th style="text-align:right;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Volume</th>
+          <th style="text-align:left;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Platform</th>
+          <th style="text-align:left;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Market</th>
+          <th style="text-align:right;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Prob</th>
+          <th style="text-align:left;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Side</th>
+          <th style="text-align:right;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Volume</th>
         </tr>
       </thead>
       <tbody id="pred-tbody"></tbody>
@@ -3255,10 +3265,12 @@ async function searchPredMarkets(){{
 }}
 
 function renderPredChart(results){{
-  var top=results.slice(0,12);
+  var isMobile=window.innerWidth<600;
+  var maxLen=isMobile?22:42;
+  var top=results.slice(0,isMobile?8:12);
   var labels=top.map(function(r){{
-    var t=r.title.length>38?r.title.slice(0,38)+'\u2026':r.title;
-    return '['+r.platform+'] '+t;
+    var t=r.title.length>maxLen?r.title.slice(0,maxLen)+'\u2026':r.title;
+    return t;
   }});
   var probs=top.map(function(r){{return r.probability;}});
   var colors=top.map(function(r){{return r.platform==='Manifold'?'#000000':'#555555';}});
@@ -3268,19 +3280,20 @@ function renderPredChart(results){{
     x:probs, y:labels,
     marker:{{color:colors}},
     text:probs.map(function(p){{return p.toFixed(1)+'%';}}),
-    textposition:'outside',
-    textfont:{{color:'#000',size:11}},
+    textposition:isMobile?'inside':'auto',
+    insidetextanchor:'middle',
+    textfont:{{color:isMobile?'#fff':'#000',size:isMobile?9:11}},
+    cliponaxis:false,
     hovertemplate:'%{{y}}<br>Probability: %{{x:.1f}}%<extra></extra>',
   }};
+  var lMargin=isMobile?120:280;
+  var rMargin=isMobile?20:60;
   var layout={{
     paper_bgcolor:'#ffffff', plot_bgcolor:'#ffffff',
-    font:{{color:'#000000',size:11,family:'DM Sans,sans-serif'}},
-    margin:{{l:320,r:80,t:28,b:40}},
-    xaxis:{{title:'Probability (%)',range:[0,115],gridcolor:'#e5e5e5',tickcolor:'#888',color:'#555',linecolor:'#000'}},
-    yaxis:{{automargin:true,tickcolor:'#888',color:'#555',linecolor:'#000'}},
-    annotations:[
-      {{x:0,y:1.08,xref:'paper',yref:'paper',text:'<b>&#9646; Manifold</b>&nbsp;&nbsp;&nbsp;<span style="color:#555">&#9646; PredScope</span>',showarrow:false,font:{{size:11,color:'#000'}},align:'left'}},
-    ],
+    font:{{color:'#000000',size:isMobile?9:11,family:'DM Sans,sans-serif'}},
+    margin:{{l:lMargin,r:rMargin,t:24,b:36}},
+    xaxis:{{title:'',range:[0,100],gridcolor:'#e5e5e5',tickcolor:'#888',color:'#555',linecolor:'#000',ticksuffix:'%'}},
+    yaxis:{{automargin:false,tickcolor:'#888',color:'#555',linecolor:'#000',tickfont:{{size:isMobile?8:11}}}},
     bargap:0.3,
   }};
   Plotly.newPlot('pred-chart',[trace],layout,{{responsive:true,displayModeBar:false}});
@@ -3290,18 +3303,16 @@ function renderPredChart(results){{
 function renderPredTable(results){{
   var tbody=document.getElementById('pred-tbody');
   tbody.innerHTML=results.map(function(r,i){{
-    var pct=r.probability.toFixed(1);
-    var barW=Math.round(r.probability*0.7);
-    var bar='<div style="display:inline-block;width:'+barW+'px;height:5px;border-radius:2px;background:#000;vertical-align:middle;margin-right:6px"></div>';
+    var pct=r.probability.toFixed(1)+'%';
     var vol=r.volume!=null?'$'+Number(r.volume).toLocaleString(undefined,{{maximumFractionDigits:0}}):'—';
-    var link=r.url?'<a href="'+r.url+'" target="_blank" class="news-card-read" style="display:inline;border:none;padding:0;background:none;font-size:.82rem;font-weight:500;text-transform:none;letter-spacing:0">'+esc(r.title)+'</a>':esc(r.title);
-    var platformBadge='<span class="news-card-src">'+esc(r.platform)+'</span>';
+    var link=r.url?'<a href="'+r.url+'" target="_blank" class="news-card-read" style="display:inline;border:none;padding:0;background:none;font-size:.8rem;font-weight:500;text-transform:none;letter-spacing:0;white-space:normal;word-break:break-word">'+esc(r.title)+'</a>':'<span style="white-space:normal;word-break:break-word">'+esc(r.title)+'</span>';
+    var platformBadge='<span class="news-card-src" style="white-space:nowrap">'+esc(r.platform)+'</span>';
     return '<tr style="border-bottom:1px solid #e5e5e5'+(i%2===0?';background:#f8f7f4':';background:#fff')+'">'+
-      '<td style="padding:8px 10px">'+platformBadge+'</td>'+
-      '<td style="padding:8px 10px;max-width:280px;word-break:break-word;color:#000;font-size:.82rem">'+link+'</td>'+
-      '<td style="padding:8px 10px;text-align:right;font-family:monospace;font-size:.8rem;white-space:nowrap">'+bar+pct+'%</td>'+
-      '<td style="padding:8px 10px;color:#555;font-size:.8rem">'+esc(r.outcome_label)+'</td>'+
-      '<td style="padding:8px 10px;text-align:right;font-family:monospace;font-size:.78rem;color:#888">'+vol+'</td>'+
+      '<td style="padding:7px 8px;width:90px;vertical-align:top">'+platformBadge+'</td>'+
+      '<td style="padding:7px 8px;color:#000;font-size:.8rem;line-height:1.4;vertical-align:top">'+link+'</td>'+
+      '<td style="padding:7px 8px;text-align:right;font-family:monospace;font-size:.8rem;white-space:nowrap;width:54px;vertical-align:top">'+pct+'</td>'+
+      '<td style="padding:7px 8px;color:#555;font-size:.78rem;width:56px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:top">'+esc(r.outcome_label)+'</td>'+
+      '<td style="padding:7px 8px;text-align:right;font-family:monospace;font-size:.76rem;color:#888;white-space:nowrap;width:70px;vertical-align:top">'+vol+'</td>'+
     '</tr>';
   }}).join('');
   document.getElementById('pred-table-wrap').style.display='block';
