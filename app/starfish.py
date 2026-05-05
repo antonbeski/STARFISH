@@ -2630,6 +2630,15 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .s-tile-name{{font-size:.72rem}}
       .s-tile-sub{{font-size:.58rem}}
 
+      /* Prediction markets */
+      #pred-chart{{height:260px!important}}
+      #pred-chart-wrap{{margin-bottom:12px}}
+      #pred-table th,#pred-table td{{padding:6px 6px;font-size:.58rem}}
+      #pred-table th{{font-size:.5rem;letter-spacing:.06em}}
+      #pred-table td:nth-child(2){{max-width:120px;word-break:break-word}}
+      #pred-table td:nth-child(5){{display:none}}
+      #pred-table th:nth-child(5){{display:none}}
+
       /* Sector news output */
       .sector-res-header{{flex-direction:column;align-items:flex-start;gap:6px;padding-bottom:10px;margin-bottom:12px}}
       .sector-res-title{{font-size:.9rem}}
@@ -2711,6 +2720,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .ai-pts{{grid-template-columns:1fr 1fr}}
       .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
       #vessel-iframe{{height:260px!important;max-height:260px!important;min-height:0}}
+      #pred-chart{{height:220px!important}}
+      #pred-table td:nth-child(4){{display:none}}
+      #pred-table th:nth-child(4){{display:none}}
     }}
   </style>
 </head>
