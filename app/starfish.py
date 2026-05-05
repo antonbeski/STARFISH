@@ -2926,13 +2926,37 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <button id="adsb-toggle-btn" onclick="toggleADSB()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
     <span id="adsb-aircraft-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
-  <iframe id="aircraft-iframe" src="/aircraft" style="width:100%;height:660px;border:none;display:block;" title="Live Aircraft Tracker" loading="lazy"></iframe>
+  <iframe id="aircraft-iframe" src="/aircraft" style="width:100%;height:660px;border:none;display:block;" title="Live Aircraft Tracker"></iframe>
   <script>
   var _adsbRunning = false;
+  var _adsbIframeReady = false;
+  var _adsbPendingCmd = null;
+  var _adsbIframe = document.getElementById('aircraft-iframe');
+  // Mark iframe ready after load so postMessage is never lost
+  _adsbIframe.addEventListener('load', function() {{
+    _adsbIframeReady = true;
+    if (_adsbPendingCmd) {{
+      _adsbIframe.contentWindow.postMessage(_adsbPendingCmd, '*');
+      _adsbPendingCmd = null;
+    }}
+  }});
+  // Listen for badge updates FROM the iframe
+  window.addEventListener('message', function(e) {{
+    if (e.data && e.data.type === 'adsb:count') {{
+      var badge = document.getElementById('adsb-aircraft-badge');
+      if (badge) badge.textContent = e.data.count + ' live';
+    }}
+  }});
+  function _sendAdsbMsg(cmd) {{
+    if (_adsbIframeReady) {{
+      _adsbIframe.contentWindow.postMessage(cmd, '*');
+    }} else {{
+      _adsbPendingCmd = cmd;
+    }}
+  }}
   function toggleADSB() {{
     var btn = document.getElementById('adsb-toggle-btn');
     var badge = document.getElementById('adsb-aircraft-badge');
-    var iframe = document.getElementById('aircraft-iframe');
     if (!_adsbRunning) {{
       _adsbRunning = true;
       btn.textContent = '⏹ Stop';
@@ -2940,7 +2964,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       btn.style.background = 'rgba(0,200,100,.08)';
       btn.style.color = '#008844';
       badge.textContent = 'Connecting…';
-      iframe.contentWindow.postMessage('adsb:start', '*');
+      _sendAdsbMsg('adsb:start');
     }} else {{
       _adsbRunning = false;
       btn.innerHTML = '&#9654; Start';
@@ -2948,7 +2972,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       btn.style.background = 'rgba(255,100,100,.08)';
       btn.style.color = '#cc3333';
       badge.textContent = 'Stopped';
-      iframe.contentWindow.postMessage('adsb:stop', '*');
+      _sendAdsbMsg('adsb:stop');
     }}
   }}
   </script>
@@ -4198,7 +4222,39 @@ def aircraft():
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#07090f;overflow:hidden}
-#map{position:absolute;inset:38px 0 60px 0;background:#07090f}
+/* Layout: topbar 38px, debugbar 44px, rest split map + sidebar */
+#topbar{position:fixed;top:0;left:0;right:0;height:38px;z-index:1000;background:rgba(7,9,15,.97);border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;padding:0 14px;gap:10px;backdrop-filter:blur(10px)}
+#status-led{width:7px;height:7px;border-radius:50%;background:#ffaa33;flex-shrink:0;transition:background .3s}
+#status-text{font-size:10px;letter-spacing:.06em;color:#6b7fa3;text-transform:uppercase;white-space:nowrap}
+#aircraft-counter{font-size:10px;letter-spacing:.06em;color:#ffaa33;background:rgba(255,170,50,.07);border:1px solid rgba(255,170,50,.15);border-radius:20px;padding:2px 10px;white-space:nowrap}
+#filter-bar{margin-left:auto;display:flex;gap:6px}
+.fbtn{font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 9px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#6b7fa3;cursor:pointer;transition:all .15s;font-family:inherit}
+.fbtn:hover{border-color:#ffaa33;color:#ffaa33}
+.fbtn.on{background:rgba(255,170,50,.1);border-color:#ffaa33;color:#ffaa33}
+#debugbar{position:fixed;bottom:0;left:0;right:0;height:44px;z-index:1000;background:rgba(7,9,15,.97);border-top:1px solid rgba(255,255,255,.06);padding:5px 14px;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+#debug-line1{font-size:9px;letter-spacing:.05em;color:#4a6a9a}
+#debug-line2{font-size:9px;letter-spacing:.04em;color:#3a5070;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Map + sidebar split */
+#main-area{position:fixed;top:38px;bottom:44px;left:0;right:0;display:flex}
+#map{flex:1 1 0;min-width:0;background:#07090f}
+/* Sidebar */
+#sidebar{width:300px;flex-shrink:0;background:#07090f;border-left:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;overflow:hidden}
+#sidebar-header{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.06);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#4a6a9a;display:flex;justify-content:space-between;align-items:center}
+#sidebar-list{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1a2a3a transparent}
+#sidebar-list::-webkit-scrollbar{width:3px}
+#sidebar-list::-webkit-scrollbar-track{background:transparent}
+#sidebar-list::-webkit-scrollbar-thumb{background:#1a2a3a;border-radius:2px}
+.ac-row{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .12s}
+.ac-row:hover{background:rgba(255,170,50,.04)}
+.ac-row.selected{background:rgba(255,170,50,.08);border-left:2px solid #ffaa33}
+.ac-callsign{font-size:11px;font-weight:700;color:#ffaa33;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ac-hex{font-size:9px;color:#3a5a7a;letter-spacing:.06em}
+.ac-fields{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;margin-top:4px}
+.ac-field{font-size:9px;display:flex;flex-direction:column}
+.ac-field-key{color:#3a4a66;text-transform:uppercase;font-size:8px;letter-spacing:.08em}
+.ac-field-val{color:#8a9aba;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.type-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:4px;flex-shrink:0}
+/* Leaflet overrides */
 .leaflet-container{background:#07090f}
 .leaflet-control-zoom{border:1px solid rgba(255,255,255,.1)!important;background:#0d1117!important;border-radius:6px!important}
 .leaflet-control-zoom a{background:#0d1117!important;color:#6b7fa3!important;border-color:rgba(255,255,255,.08)!important;width:26px!important;height:26px!important;line-height:26px!important}
@@ -4209,30 +4265,20 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
 .leaflet-popup-tip-container{display:none}
 .leaflet-popup-content{margin:14px 16px;font-size:11px;line-height:1.8;font-family:'DM Mono',monospace,sans-serif}
 .leaflet-popup-close-button{color:#6b7fa3!important;font-size:16px!important;top:6px!important;right:8px!important}
-.popup-name{font-size:13px;font-weight:700;color:#ffaa33;letter-spacing:.04em;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.popup-name{font-size:13px;font-weight:700;color:#ffaa33;letter-spacing:.04em;margin-bottom:8px}
 .popup-row{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid rgba(255,255,255,.04);padding:2px 0}
-.popup-key{color:#4a5a7a;text-transform:uppercase;font-size:9px;letter-spacing:.1em;align-self:center}
+.popup-key{color:#4a5a7a;text-transform:uppercase;font-size:9px;letter-spacing:.1em}
 .popup-val{color:#a8b8d8;font-size:11px}
 .popup-type-badge{display:inline-block;padding:1px 7px;border-radius:3px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
-#topbar{position:fixed;top:0;left:0;right:0;height:38px;z-index:1000;background:rgba(7,9,15,.96);border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;padding:0 14px;gap:10px;backdrop-filter:blur(10px)}
-#status-led{width:7px;height:7px;border-radius:50%;background:#ffaa33;flex-shrink:0;transition:background .3s}
-#status-text{font-size:10px;letter-spacing:.06em;color:#6b7fa3;text-transform:uppercase}
-#aircraft-counter{font-size:10px;letter-spacing:.06em;color:#ffaa33;background:rgba(255,170,50,.07);border:1px solid rgba(255,170,50,.15);border-radius:20px;padding:2px 10px}
-#filter-bar{margin-left:auto;display:flex;gap:6px}
-.fbtn{font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 9px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#6b7fa3;cursor:pointer;transition:all .15s;font-family:inherit}
-.fbtn:hover{border-color:#ffaa33;color:#ffaa33}
-.fbtn.on{background:rgba(255,170,50,.1);border-color:#ffaa33;color:#ffaa33}
-#debugbar{position:fixed;bottom:0;left:0;right:0;height:60px;z-index:1000;background:rgba(7,9,15,.97);border-top:1px solid rgba(255,255,255,.06);padding:6px 14px;display:flex;flex-direction:column;gap:3px;overflow:hidden}
-#debug-line1{font-size:9px;letter-spacing:.05em;color:#4a6a9a;font-family:'DM Mono',monospace}
-#debug-line2{font-size:9px;letter-spacing:.04em;color:#3a5070;font-family:'DM Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@media(max-width:600px){
-  #topbar{height:38px;padding:0 8px;gap:5px;overflow:hidden}
-  #status-text{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:72px;flex-shrink:1}
-  #aircraft-counter{font-size:8px;padding:2px 6px;white-space:nowrap;flex-shrink:0}
-  #filter-bar{gap:3px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-shrink:1;min-width:0;scrollbar-width:none}
+/* Mobile: hide sidebar, show as bottom sheet */
+@media(max-width:700px){
+  #sidebar{display:none}
+  #topbar{padding:0 8px;gap:5px}
+  #status-text{font-size:8px;max-width:60px;overflow:hidden;text-overflow:ellipsis}
+  #aircraft-counter{font-size:8px;padding:2px 6px}
+  #filter-bar{gap:3px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   #filter-bar::-webkit-scrollbar{display:none}
   .fbtn{font-size:8px;padding:2px 6px;white-space:nowrap;flex-shrink:0}
-  #debugbar{height:44px;padding:4px 10px}
   #debug-line2{display:none}
 }
 </style>
@@ -4249,7 +4295,16 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
     <button class="fbtn" data-type="ground">Ground</button>
   </div>
 </div>
-<div id="map"></div>
+<div id="main-area">
+  <div id="map"></div>
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span>Live Aircraft</span>
+      <span id="sidebar-count" style="color:#ffaa33">—</span>
+    </div>
+    <div id="sidebar-list"></div>
+  </div>
+</div>
 <div id="debugbar">
   <div id="debug-line1">ADS-B tracker initialising…</div>
   <div id="debug-line2"></div>
@@ -4362,8 +4417,99 @@ function updateCounter() {
   var n = Object.keys(aircraft).length;
   var el = document.getElementById('aircraft-counter');
   el.textContent = n.toLocaleString() + ' aircraft';
-  try { var b=window.parent.document.getElementById('adsb-aircraft-badge'); if(b) b.textContent=n.toLocaleString()+' live'; } catch(e){}
+  try { window.parent.postMessage({type:'adsb:count', count: n.toLocaleString()}, '*'); } catch(e){}
+  renderSidebar();
 }
+
+var _selectedHex = null;
+
+function fmtAlt(d) {
+  if (d.on_ground) return 'Ground';
+  if (d.baro_alt != null) return Math.round(d.baro_alt * 3.28084).toLocaleString() + ' ft';
+  return '—';
+}
+function fmtSpd(d) {
+  return d.velocity != null ? Math.round(d.velocity * 1.94384) + ' kn' : '—';
+}
+function fmtHdg(d) {
+  return d.heading != null ? parseFloat(d.heading).toFixed(0) + '°' : '—';
+}
+function fmtVrt(d) {
+  if (d.vert_rate == null) return '—';
+  var fpm = Math.round(d.vert_rate * 196.85);
+  return (fpm > 0 ? '▲ ' : fpm < 0 ? '▼ ' : '') + Math.abs(fpm) + ' fpm';
+}
+function fmtLat(v) { return v != null ? parseFloat(v).toFixed(4) + '°' : '—'; }
+function fmtLon(v) { return v != null ? parseFloat(v).toFixed(4) + '°' : '—'; }
+function fmtAge(ts) {
+  var secs = Math.round((Date.now() - ts) / 1000);
+  return secs < 60 ? secs + 's ago' : Math.floor(secs/60) + 'm ago';
+}
+
+function renderSidebar() {
+  var list = document.getElementById('sidebar-list');
+  var countEl = document.getElementById('sidebar-count');
+  if (!list) return;
+  // Sort: selected first, then by callsign/hex, filter applied
+  var keys = Object.keys(aircraft).filter(function(h){
+    var v = aircraft[h];
+    return (activeFilter === 'all' || activeFilter === v.data.cls);
+  });
+  keys.sort(function(a,b){
+    if (a === _selectedHex) return -1;
+    if (b === _selectedHex) return 1;
+    var ca = aircraft[a].data.callsign || aircraft[a].data.hex || '';
+    var cb = aircraft[b].data.callsign || aircraft[b].data.hex || '';
+    return ca.localeCompare(cb);
+  });
+  countEl.textContent = keys.length;
+  // Render rows (cap at 200 for performance)
+  var visible = keys.slice(0, 200);
+  var html = '';
+  visible.forEach(function(hex) {
+    var v = aircraft[hex];
+    var d = v.data;
+    var meta = TYPE_META[d.cls] || TYPE_META.other;
+    var sel = hex === _selectedHex ? ' selected' : '';
+    var cs = (d.callsign && d.callsign.trim()) ? d.callsign.trim() : d.hex.toUpperCase();
+    html += '<div class="ac-row' + sel + '" data-hex="' + hex + '">' +
+      '<div style="display:flex;align-items:center;gap:5px">' +
+        '<span class="type-dot" style="background:' + meta.color + '"></span>' +
+        '<span class="ac-callsign">' + cs + '</span>' +
+        '<span class="ac-hex">' + d.hex.toUpperCase() + '</span>' +
+      '</div>' +
+      '<div class="ac-fields">' +
+        '<div class="ac-field"><span class="ac-field-key">Alt</span><span class="ac-field-val">' + fmtAlt(d) + '</span></div>' +
+        '<div class="ac-field"><span class="ac-field-key">Speed</span><span class="ac-field-val">' + fmtSpd(d) + '</span></div>' +
+        '<div class="ac-field"><span class="ac-field-key">Heading</span><span class="ac-field-val">' + fmtHdg(d) + '</span></div>' +
+        '<div class="ac-field"><span class="ac-field-key">Vert Rate</span><span class="ac-field-val">' + fmtVrt(d) + '</span></div>' +
+        '<div class="ac-field"><span class="ac-field-key">Lat</span><span class="ac-field-val">' + fmtLat(d.lat) + '</span></div>' +
+        '<div class="ac-field"><span class="ac-field-key">Lon</span><span class="ac-field-val">' + fmtLon(d.lon) + '</span></div>' +
+        '<div class="ac-field"><span class="ac-field-key">Type</span><span class="ac-field-val" style="color:' + meta.color + '">' + meta.label + '</span></div>' +
+        '<div class="ac-field"><span class="ac-field-key">Seen</span><span class="ac-field-val">' + fmtAge(v.lastSeen) + '</span></div>' +
+      '</div>' +
+    '</div>';
+  });
+  if (keys.length > 200) html += '<div style="padding:8px 12px;font-size:9px;color:#3a5070">+ '+(keys.length-200)+' more…</div>';
+  list.innerHTML = html;
+}
+
+// Sidebar click: fly map to aircraft
+document.getElementById('sidebar-list').addEventListener('click', function(e){
+  var row = e.target.closest('.ac-row');
+  if (!row) return;
+  var hex = row.dataset.hex;
+  if (!aircraft[hex]) return;
+  _selectedHex = hex;
+  var d = aircraft[hex].data;
+  map.setView([d.lat, d.lon], Math.max(map.getZoom(), 7), {animate:true});
+  aircraft[hex].marker.openPopup();
+  aircraft[hex].marker.setPopupContent(buildPopup(d));
+  renderSidebar();
+});
+
+// Refresh sidebar ages every 10s without full re-render
+setInterval(function() { if (Object.keys(aircraft).length > 0) renderSidebar(); }, 10000);
 
 // Expire aircraft not seen for 3 minutes
 setInterval(function(){
@@ -4388,6 +4534,7 @@ document.getElementById('filter-bar').addEventListener('click', function(e){
     if (vis && !v.shown)  { map.addLayer(v.marker);    v.shown=true; }
     if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
   });
+  renderSidebar();
 });
 
 // ── STATUS ────────────────────────────────────────────────────────────────
@@ -4538,7 +4685,12 @@ def adsb_proxy():
         with _adsb_lock:
             buf = list(_adsb_buffer)
         cols = ["ts","hex","flight","lat","lon","alt_baro","gs","track"]
-        ac = [dict(zip(cols, row)) for row in buf if row[3] and row[4]]
+        ac = []
+        for row in buf:
+            if row[3] and row[4]:
+                obj = dict(zip(cols, row))
+                obj["baro_rate"] = None   # not stored in buffer; prevents parseAC undefined
+                ac.append(obj)
         return jsonify({"ac": ac, "_source": "buffer",
                         "_upstream_status": r.status_code,
                         "_upstream_body": r.text[:200]})
