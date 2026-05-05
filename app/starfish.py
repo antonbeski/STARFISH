@@ -2821,41 +2821,43 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="pred-markets">
   <div class="section-divider-line"></div>
-  <div class="section-label"><span class="dot" style="background:rgba(130,80,200,.8)"></span>Prediction Markets</div>
+  <div class="section-label"><span class="dot" style="background:#000"></span>Prediction Markets</div>
   <div class="section-divider-line"></div>
 </div>
 
-<div class="glass" style="padding:22px 24px 24px;margin-bottom:18px">
+<div class="glass sector-panel">
   <div class="panel-label">Market Consensus Search</div>
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-    <input id="pred-query" type="text" placeholder="Search e.g. Fed rate cut, Trump, Bitcoin ETF…"
-      style="flex:1;min-width:200px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:9px 14px;color:#fff;font-size:13px;outline:none"
-      onkeydown="if(event.key==='Enter')searchPredMarkets()"
-    />
-    <button onclick="searchPredMarkets()" id="pred-btn"
-      style="background:rgba(130,80,200,.75);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;padding:9px 20px;cursor:pointer;white-space:nowrap">
+  <div class="sector-selector-row">
+    <div class="sector-select-wrap" style="background:#fff">
+      <span class="sel-prefix">Query</span>
+      <input id="pred-query" type="text" placeholder="e.g. Fed rate cut, Trump, Bitcoin ETF…"
+        style="flex:1;background:transparent;border:none;outline:none;padding:.75rem 1rem;font-family:inherit;font-size:.875rem;font-weight:500;color:#000;min-width:0"
+        onkeydown="if(event.key==='Enter')searchPredMarkets()"
+      />
+    </div>
+    <button onclick="searchPredMarkets()" id="pred-btn" class="btn-sector">
       Search Markets
     </button>
   </div>
-  <div id="pred-status" style="font-size:12px;color:rgba(255,255,255,.45);margin-bottom:10px"></div>
-  <div id="pred-chart-wrap" style="display:none">
+  <div id="pred-status" class="res-time-badge" style="margin-bottom:12px"></div>
+  <div id="pred-chart-wrap" style="display:none;background:#fff;border:2px solid #000;border-radius:var(--r);overflow:hidden;margin-bottom:16px">
     <div id="pred-chart" style="width:100%;height:340px"></div>
   </div>
-  <div id="pred-table-wrap" style="display:none;margin-top:16px;overflow-x:auto">
-    <table id="pred-table" style="width:100%;border-collapse:collapse;font-size:12px">
+  <div id="pred-table-wrap" style="display:none;overflow-x:auto">
+    <table id="pred-table" style="width:100%;border-collapse:collapse;font-size:.8rem">
       <thead>
-        <tr style="border-bottom:1px solid rgba(255,255,255,.12)">
-          <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Platform</th>
-          <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Market</th>
-          <th style="text-align:right;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Prob %</th>
-          <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Outcome</th>
-          <th style="text-align:right;padding:6px 10px;color:rgba(255,255,255,.5);font-weight:500">Volume</th>
+        <tr style="border-bottom:2px solid #000">
+          <th style="text-align:left;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Platform</th>
+          <th style="text-align:left;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Market</th>
+          <th style="text-align:right;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Prob %</th>
+          <th style="text-align:left;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Outcome</th>
+          <th style="text-align:right;padding:8px 10px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Volume</th>
         </tr>
       </thead>
       <tbody id="pred-tbody"></tbody>
     </table>
   </div>
-  <div id="pred-empty" style="display:none;text-align:center;padding:32px 0;color:rgba(255,255,255,.3);font-size:13px">No matching markets found.</div>
+  <div id="pred-empty" style="display:none;text-align:center;padding:40px 20px;color:#888;font-size:.85rem">No matching markets found.</div>
 </div>
 
 <!-- ══════════════════════════════════════════
@@ -3247,7 +3249,7 @@ function renderPredChart(results){{
     return '['+r.platform+'] '+t;
   }});
   var probs=top.map(function(r){{return r.probability;}});
-  var colors=top.map(function(r){{return r.platform==='Manifold'?'rgba(59,130,246,0.8)':'rgba(168,85,247,0.8)';}});
+  var colors=top.map(function(r){{return r.platform==='Manifold'?'#000000':'#555555';}});
 
   var trace={{
     type:'bar', orientation:'h',
@@ -3255,16 +3257,17 @@ function renderPredChart(results){{
     marker:{{color:colors}},
     text:probs.map(function(p){{return p.toFixed(1)+'%';}}),
     textposition:'outside',
+    textfont:{{color:'#000',size:11}},
     hovertemplate:'%{{y}}<br>Probability: %{{x:.1f}}%<extra></extra>',
   }};
   var layout={{
-    paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
-    font:{{color:'rgba(255,255,255,0.8)',size:11}},
-    margin:{{l:320,r:80,t:16,b:40}},
-    xaxis:{{title:'Probability (%)',range:[0,110],gridcolor:'rgba(255,255,255,.08)',tickcolor:'rgba(255,255,255,.3)',color:'rgba(255,255,255,.6)'}},
-    yaxis:{{automargin:true,tickcolor:'rgba(255,255,255,.3)',color:'rgba(255,255,255,.6)'}},
+    paper_bgcolor:'#ffffff', plot_bgcolor:'#ffffff',
+    font:{{color:'#000000',size:11,family:'DM Sans,sans-serif'}},
+    margin:{{l:320,r:80,t:28,b:40}},
+    xaxis:{{title:'Probability (%)',range:[0,115],gridcolor:'#e5e5e5',tickcolor:'#888',color:'#555',linecolor:'#000'}},
+    yaxis:{{automargin:true,tickcolor:'#888',color:'#555',linecolor:'#000'}},
     annotations:[
-      {{x:0,y:1.06,xref:'paper',yref:'paper',text:'<b style="color:rgba(59,130,246,.9)">&#9646; Manifold</b>&nbsp;&nbsp;<b style="color:rgba(168,85,247,.9)">&#9646; PredScope</b>',showarrow:false,font:{{size:11}},align:'left'}},
+      {{x:0,y:1.08,xref:'paper',yref:'paper',text:'<b>&#9646; Manifold</b>&nbsp;&nbsp;&nbsp;<span style="color:#555">&#9646; PredScope</span>',showarrow:false,font:{{size:11,color:'#000'}},align:'left'}},
     ],
     bargap:0.3,
   }};
@@ -3274,17 +3277,19 @@ function renderPredChart(results){{
 
 function renderPredTable(results){{
   var tbody=document.getElementById('pred-tbody');
-  tbody.innerHTML=results.map(function(r){{
+  tbody.innerHTML=results.map(function(r,i){{
     var pct=r.probability.toFixed(1);
-    var bar='<div style="display:inline-block;width:'+(r.probability*0.8)+'px;height:6px;border-radius:3px;background:'+(r.platform==='Manifold'?'rgba(59,130,246,.7)':'rgba(168,85,247,.7)')+';vertical-align:middle;margin-right:6px"></div>';
+    var barW=Math.round(r.probability*0.7);
+    var bar='<div style="display:inline-block;width:'+barW+'px;height:5px;border-radius:2px;background:#000;vertical-align:middle;margin-right:6px"></div>';
     var vol=r.volume!=null?'$'+Number(r.volume).toLocaleString(undefined,{{maximumFractionDigits:0}}):'—';
-    var link=r.url?'<a href="'+r.url+'" target="_blank" style="color:rgba(255,255,255,.75);text-decoration:none">'+esc(r.title)+'</a>':esc(r.title);
-    return '<tr style="border-bottom:1px solid rgba(255,255,255,.06)">'+
-      '<td style="padding:7px 10px;color:'+(r.platform==='Manifold'?'rgba(59,130,246,.9)':'rgba(168,85,247,.9)')+'">'+esc(r.platform)+'</td>'+
-      '<td style="padding:7px 10px;max-width:280px;word-break:break-word">'+link+'</td>'+
-      '<td style="padding:7px 10px;text-align:right">'+bar+pct+'%</td>'+
-      '<td style="padding:7px 10px;color:rgba(255,255,255,.6)">'+esc(r.outcome_label)+'</td>'+
-      '<td style="padding:7px 10px;text-align:right;color:rgba(255,255,255,.5)">'+vol+'</td>'+
+    var link=r.url?'<a href="'+r.url+'" target="_blank" style="color:#000;text-decoration:none;font-weight:500" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">'+esc(r.title)+'</a>':esc(r.title);
+    var platformBadge='<span class="news-card-src">'+esc(r.platform)+'</span>';
+    return '<tr style="border-bottom:1px solid #e5e5e5'+(i%2===0?';background:#f8f7f4':';background:#fff')+'">'+
+      '<td style="padding:8px 10px">'+platformBadge+'</td>'+
+      '<td style="padding:8px 10px;max-width:280px;word-break:break-word;color:#000;font-size:.82rem">'+link+'</td>'+
+      '<td style="padding:8px 10px;text-align:right;font-family:\'DM Mono\',monospace;font-size:.8rem;white-space:nowrap">'+bar+pct+'%</td>'+
+      '<td style="padding:8px 10px;color:#555;font-size:.8rem">'+esc(r.outcome_label)+'</td>'+
+      '<td style="padding:8px 10px;text-align:right;font-family:\'DM Mono\',monospace;font-size:.78rem;color:#888">'+vol+'</td>'+
     '</tr>';
   }}).join('');
   document.getElementById('pred-table-wrap').style.display='block';
