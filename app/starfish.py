@@ -4628,46 +4628,68 @@ document.getElementById('filter-bar').addEventListener('click', function(e) {
 });
 
 // ── POLL adsb.lol via Flask proxy ────────────────────────────────────────────
+// Try multiple ADS-B sources in parallel; use first that returns real aircraft.
+// All three APIs are CORS-enabled, no key required.
+function fetchFromSource(url) {
+  return fetch(url, {signal: AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined})
+    .then(function(r) { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(data) {
+      var list = data.ac || data.aircraft || data.states || [];
+      if (!Array.isArray(list) || list.length === 0) throw new Error('empty');
+      return {list: list, src: url};
+    });
+}
+
 function poll() {
   if (stopped) return;
   var reg = REGIONS[ridx % REGIONS.length];
   ridx++;
-  // Fetch directly from adsb.lol in the browser — their API has CORS open.
-  // Fall back to Flask proxy only if the direct fetch fails (e.g. offline).
-  var directUrl = 'https://api.adsb.lol/v2/aircraft?lat='+reg[0]+'&lon='+reg[1]+'&dst='+reg[2];
-  var proxyUrl  = '/adsb/proxy?lat='+reg[0]+'&lon='+reg[1]+'&dst='+reg[2];
+  var lat = reg[0], lon = reg[1], nm = 250; // 250 nm radius (~460 km)
 
-  function handleData(data, source) {
-    polls++;
-    var list = data.ac || [];
-    var parsed = 0;
-    list.forEach(function(o) {
-      var d = parseAC(o);
-      if (d) { upsert(d); parsed++; }
-    });
-    setStatus('live', 'Live · adsb.lol');
-    setLed('live');
-    log('Poll #'+polls+' ['+source+'] · Region '+(ridx%REGIONS.length)+'/'+REGIONS.length+' · +'+parsed+' positions · '+Object.keys(ac).length+' tracked');
-    document.getElementById('poll-count').textContent = 'Polls: '+polls;
-    updateUI();
-    timer = setTimeout(poll, INTERVAL);
-  }
+  // Build candidate URLs — three independent CORS-open APIs
+  var sources = [
+    'https://api.airplanes.live/v2/point/'+lat+'/'+lon+'/'+nm,
+    'https://api.adsb.lol/v2/aircraft?lat='+lat+'&lon='+lon+'&dst='+nm,
+    'https://api.adsb.fi/v1/aircraft?lat='+lat+'&lon='+lon+'&radius='+nm,
+  ];
 
-  function tryProxy() {
-    fetch(proxyUrl)
-      .then(function(r) { if (!r.ok) throw new Error('proxy HTTP '+r.status); return r.json(); })
-      .then(function(data) { handleData(data, 'proxy'); })
-      .catch(function(err) {
-        setStatus('error', 'Error — retrying…');
-        log('Both direct and proxy failed: ' + err.message);
-        timer = setTimeout(poll, Math.min(INTERVAL*2, 30000));
-      });
-  }
+  // Race all three — settle all, use first winner with actual aircraft
+  Promise.allSettled(sources.map(fetchFromSource)).then(function(results) {
+    if (stopped) return;
+    var winner = null;
+    for (var i = 0; i < results.length; i++) {
+      if (results[i].status === 'fulfilled') { winner = results[i].value; break; }
+    }
+    if (!winner) {
+      // All direct failed — fall back to Flask proxy (buffered server data)
+      var proxyUrl = '/adsb/proxy?lat='+lat+'&lon='+lon+'&dst='+nm;
+      fetch(proxyUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(data) { handleData(data.ac || [], 'proxy'); })
+        .catch(function(err) {
+          setStatus('error', 'No source — retrying…');
+          log('All sources failed. Retry in 15s.');
+          timer = setTimeout(poll, 15000);
+        });
+      return;
+    }
+    handleData(winner.list, winner.src.split('/')[2]); // show hostname as source
+  });
+}
 
-  fetch(directUrl)
-    .then(function(r) { if (!r.ok) throw new Error('direct HTTP '+r.status); return r.json(); })
-    .then(function(data) { handleData(data, 'direct'); })
-    .catch(function() { tryProxy(); });
+function handleData(list, source) {
+  polls++;
+  var parsed = 0;
+  list.forEach(function(o) {
+    var d = parseAC(o);
+    if (d) { upsert(d); parsed++; }
+  });
+  setStatus('live', 'Live · ' + source);
+  setLed('live');
+  log('Poll #'+polls+' ['+source+'] · Region '+(ridx%REGIONS.length)+'/'+REGIONS.length+' · +'+parsed+' · '+Object.keys(ac).length+' tracked');
+  document.getElementById('poll-count').textContent = 'Total: '+Object.keys(ac).length;
+  updateUI();
+  timer = setTimeout(poll, INTERVAL);
 }
 
 function adsbStart() {
