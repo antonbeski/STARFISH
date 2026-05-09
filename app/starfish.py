@@ -2946,7 +2946,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
 <div class="glass" style="padding:0;overflow:hidden;border-radius:12px;content-visibility:auto;contain-intrinsic-size:0 700px;">
   <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-    <span class="panel-label" style="margin:0;">AIS Live Map</span>
+    <span class="panel-label" style="margin:0;">AIS Data</span>
     <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#0077aa;background:#e8f6ff;border:1px solid #b8ddf5;border-radius:20px;padding:3px 10px;">AISStream WebSocket</span>
     <button id="ais-toggle-btn" onclick="toggleAIS()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
     <span id="ais-vessel-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
@@ -2987,7 +2987,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
 <div class="glass" style="padding:0;overflow:hidden;border-radius:12px;content-visibility:auto;contain-intrinsic-size:0 700px;">
   <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-    <span class="panel-label" style="margin:0;">ADS-B Live Map</span>
+    <span class="panel-label" style="margin:0;">ADS-B Data</span>
     <span style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#aa6600;background:#fff8e8;border:1px solid #f5ddb8;border-radius:20px;padding:3px 10px;">adsb.lol · Free</span>
     <button id="adsb-toggle-btn" onclick="toggleADSB()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
     <span id="adsb-aircraft-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
@@ -4562,8 +4562,9 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
     height:44px;
     padding:0 8px;gap:6px;
   }
-  #filter-bar{gap:3px}
-  .fbtn{font-size:7px;padding:2px 6px}
+  #filter-bar{gap:3px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:1;min-width:0}
+  #filter-bar::-webkit-scrollbar{display:none}
+  .fbtn{font-size:7px;padding:2px 6px;white-space:nowrap;flex-shrink:0}
 
   #wrap{
     position:relative;
