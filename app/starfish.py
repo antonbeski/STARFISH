@@ -2988,7 +2988,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span class="panel-label" style="margin:0;">ADS-B Live Map</span>
     <button id="adsb-toggle-btn" onclick="toggleADSB()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
-    <span id="adsb-aircraft-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
+    <span id="adsb-aircraft-badge" style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
   <iframe id="aircraft-iframe" src="/aircraft" style="width:100%;height:660px;border:none;display:block;" title="Live Aircraft Tracker"></iframe>
   <script>
@@ -4469,9 +4469,9 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
   backdrop-filter:blur(12px);
 }
 #status-led{width:7px;height:7px;border-radius:50%;background:#444;flex-shrink:0;transition:background .4s}
-#status-text{font-size:9px;letter-spacing:.08em;color:#5a7090;text-transform:uppercase;white-space:nowrap;flex-shrink:0}
+#status-text{display:none}
 #ac-counter{font-size:9px;letter-spacing:.07em;color:#ffaa33;background:rgba(255,170,50,.08);border:1px solid rgba(255,170,50,.18);border-radius:20px;padding:2px 9px;white-space:nowrap;flex-shrink:0}
-#filter-bar{margin-left:auto;display:flex;gap:5px;flex-shrink:0}
+#filter-bar{display:flex;gap:5px;flex-shrink:0}
 .fbtn{font-size:8px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#5a7090;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}
 .fbtn:hover{border-color:#ffaa33;color:#ffaa33}
 .fbtn.on{background:rgba(255,170,50,.1);border-color:rgba(255,170,50,.5);color:#ffaa33}
