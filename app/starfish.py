@@ -2874,16 +2874,16 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 ═══════════════════════════════════════════ -->
 <div class="glass panel" id="gbm-panel" style="margin-top:12px">
   <div class="panel-label">Monte Carlo Price Simulation (GBM)</div>
-  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px">
-    <div class="fg" style="min-width:120px;flex:1">
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:12px">
+    <div class="fg" style="min-width:80px;flex:1">
       <label style="font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#787b86">Ticker</label>
       <input id="gbm-ticker" type="text" value="{ticker}"
-        style="width:100%;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722"
+        style="width:100%;box-sizing:border-box;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722"
         autocapitalize="characters" spellcheck="false"/>
     </div>
-    <div class="fg" style="min-width:100px;flex:1">
+    <div class="fg" style="min-width:80px;flex:1">
       <label style="font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#787b86">Horizon (years)</label>
-      <select id="gbm-years" style="width:100%;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722">
+      <select id="gbm-years" style="width:100%;box-sizing:border-box;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722">
         <option value="1">1 year</option>
         <option value="2" selected>2 years</option>
         <option value="3">3 years</option>
@@ -2891,22 +2891,22 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
         <option value="10">10 years</option>
       </select>
     </div>
-    <div class="fg" style="min-width:100px;flex:1">
+    <div class="fg" style="min-width:80px;flex:1">
       <label style="font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#787b86">Scenarios</label>
-      <select id="gbm-scenarios" style="width:100%;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722">
+      <select id="gbm-scenarios" style="width:100%;box-sizing:border-box;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722">
         <option value="100">100</option>
         <option value="200" selected>200</option>
         <option value="500">500</option>
         <option value="1000">1000</option>
       </select>
     </div>
-    <button onclick="runGBM()" id="gbm-btn" class="btn" style="height:38px;align-self:flex-end">
+    <button onclick="runGBM()" id="gbm-btn" class="btn" style="height:38px;align-self:flex-end;white-space:nowrap;flex-shrink:0">
       &#9654; Run Simulation
     </button>
   </div>
-  <div id="gbm-status" style="font-size:.78rem;color:#787b86;min-height:18px;margin-bottom:6px"></div>
-  <div id="gbm-chart" style="width:100%;height:380px"></div>
-  <div id="gbm-hist"  style="width:100%;height:220px;margin-top:8px"></div>
+  <div id="gbm-status" style="font-size:.78rem;color:#787b86;min-height:0;margin-bottom:0"></div>
+  <div id="gbm-chart" style="width:100%;height:0;overflow:hidden;transition:height .3s ease"></div>
+  <div id="gbm-hist"  style="width:100%;height:0;overflow:hidden;margin-top:0;transition:height .3s ease"></div>
   <div id="gbm-stats" style="display:none;margin-top:10px;padding:10px 14px;background:#f5f7fa;border-radius:8px;font-size:.78rem;color:#131722;line-height:1.7"></div>
 </div>
 <script>
@@ -2928,6 +2928,15 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .then(function(r){{return r.json();}})
     .then(function(d){{
       if(d.error){{ status.textContent='Error: '+d.error; btn.disabled=false; return; }}
+      var chartEl = document.getElementById('gbm-chart');
+      var histEl  = document.getElementById('gbm-hist');
+      var isMobile = window.innerWidth < 600;
+      chartEl.style.height = isMobile ? '260px' : '380px';
+      chartEl.style.marginTop = '8px';
+      histEl.style.height  = isMobile ? '160px' : '220px';
+      histEl.style.marginTop = '8px';
+      status.style.minHeight = '18px';
+      status.style.marginBottom = '6px';
       renderGBM(d);
       btn.disabled=false;
       status.textContent='✓ ' + d.n_scenarios + ' paths · μ=' + (d.mu*100).toFixed(2) + '% · σ=' + (d.sigma*100).toFixed(2) + '%  (calibrated on 2y history)';
