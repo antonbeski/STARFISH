@@ -3150,19 +3150,19 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Calibration</span>' +
       '&ensp;μ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.mu*100).toFixed(2) + '%</strong>' +
       '&ensp;σ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.sigma*100).toFixed(2) + '%</strong>' +
-      '&ensp;Entry&thinsp;<strong style="color:#d1d4dc">' + d.s_0.toFixed(2) + '</strong>' +
+      '&ensp;Entry&thinsp;<strong style="color:#131722">' + d.s_0.toFixed(2) + '</strong>' +
       '&ensp;P(gain)&thinsp;<strong style="color:#26a69a">' + probGain + '%</strong>' +
       '<br>' +
       '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Terminal percentiles</span>' +
-      '&ensp;<span style="color:#ef5350;font-weight:600">P5</span>&thinsp;<strong style="color:#d1d4dc">' + p.p5.toFixed(2) + '</strong>&thinsp;' + pct(p.p5) +
-      '&ensp;<span style="color:#787b86;font-weight:600">P25</span>&thinsp;<strong style="color:#d1d4dc">' + p.p25.toFixed(2) + '</strong>&thinsp;' + pct(p.p25) +
-      '&ensp;<span style="color:#f9a825;font-weight:600">P50</span>&thinsp;<strong style="color:#d1d4dc">' + p.p50.toFixed(2) + '</strong>&thinsp;' + pct(p.p50) +
-      '&ensp;<span style="color:#787b86;font-weight:600">P75</span>&thinsp;<strong style="color:#d1d4dc">' + p.p75.toFixed(2) + '</strong>&thinsp;' + pct(p.p75) +
-      '&ensp;<span style="color:#26a69a;font-weight:600">P95</span>&thinsp;<strong style="color:#d1d4dc">' + p.p95.toFixed(2) + '</strong>&thinsp;' + pct(p.p95);
-    el.style.background    = 'rgba(42,46,57,0.18)';
-    el.style.border        = '1px solid rgba(42,46,57,0.5)';
+      '&ensp;<span style="color:#ef5350;font-weight:600">P5</span>&thinsp;<strong style="color:#131722">' + p.p5.toFixed(2) + '</strong>&thinsp;' + pct(p.p5) +
+      '&ensp;<span style="color:#787b86;font-weight:600">P25</span>&thinsp;<strong style="color:#131722">' + p.p25.toFixed(2) + '</strong>&thinsp;' + pct(p.p25) +
+      '&ensp;<span style="color:#f9a825;font-weight:600">P50</span>&thinsp;<strong style="color:#131722">' + p.p50.toFixed(2) + '</strong>&thinsp;' + pct(p.p50) +
+      '&ensp;<span style="color:#787b86;font-weight:600">P75</span>&thinsp;<strong style="color:#131722">' + p.p75.toFixed(2) + '</strong>&thinsp;' + pct(p.p75) +
+      '&ensp;<span style="color:#26a69a;font-weight:600">P95</span>&thinsp;<strong style="color:#131722">' + p.p95.toFixed(2) + '</strong>&thinsp;' + pct(p.p95);
+    el.style.background    = '#ffffff';
+    el.style.border        = '2px solid #131722';
     el.style.borderRadius  = '6px';
-    el.style.color         = '#787b86';
+    el.style.color         = '#131722';
     el.style.display       = 'block';
   }}
 }}());
