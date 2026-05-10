@@ -4090,7 +4090,7 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
 <body>
 <div id="topbar">
   <div id="status-led"></div>
-  <span id="status-text">Initialising…</span>
+  <span id="status-text"></span>
   <span id="vessel-counter">0 / 3,000</span>
   <button id="limit-btn" title="Increase vessel limit by 500">+500</button>
   <div id="filter-bar">
@@ -4104,7 +4104,7 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
 </div>
 <div id="map"></div>
 <div id="debugbar">
-  <div id="debug-line1">AIS tracker initialising…</div>
+  <div id="debug-line1"></div>
   <div id="debug-line2"></div>
 </div>
 <script>
