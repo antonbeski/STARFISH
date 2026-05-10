@@ -2936,78 +2936,190 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   }};
 
   function renderGBM(d){{
-    var layout_base = {{
-      paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
-      font:{{color:'#787b86',family:"'DM Sans',sans-serif",size:10}},
-      margin:{{l:55,r:20,t:38,b:36}},
-      xaxis:{{gridcolor:'rgba(42,46,57,0.15)',color:'#787b86',zeroline:false,showline:false}},
-      yaxis:{{gridcolor:'rgba(42,46,57,0.15)',color:'#787b86',zeroline:false,showline:false}},
-      hovermode:'closest',
-      legend:{{orientation:'h',y:1.08,x:0,font:{{size:9}}}}
+    // ── Standard Monte Carlo palette ──────────────────────────────────────────
+    // Individual paths: thin steel-blue with very low alpha (industry standard)
+    // Percentile bands: layered fills P5-P95 (outer, light) → P25-P75 (inner, darker)
+    // Median: bright gold (#F5C542) — universally recognised centre-line
+    // Current price: white dashed — clean reference without visual noise
+    // Histogram: diverging red-green split at S_0 (loss left / gain right)
+    var CLR = {{
+      path:       'rgba(100,149,237,0.055)', // cornflower-blue, very translucent
+      pathStroke: 0.7,
+      band95:     'rgba(100,149,237,0.10)',  // P5-P95 outer band
+      band50:     'rgba(100,149,237,0.22)',  // P25-P75 inner band
+      median:     '#F5C542',                 // gold — the expectation line
+      s0:         'rgba(255,255,255,0.75)',  // white dashed reference
+      gain:       'rgba(38,166,154,0.72)',   // teal for gains (above S_0)
+      loss:       'rgba(239,83,80,0.72)',    // red for losses (below S_0)
+      accent:     '#F5C542',
     }};
 
-    // Fan chart traces
-    var traces = [];
+    var layout_base = {{
+      paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(15,17,26,0.55)',
+      font:{{color:'#9ba3b8',family:"'DM Sans',sans-serif",size:10}},
+      margin:{{l:58,r:20,t:44,b:40}},
+      xaxis:{{gridcolor:'rgba(255,255,255,0.05)',color:'#6b7280',zeroline:false,showline:false,
+              tickfont:{{size:9}}}},
+      yaxis:{{gridcolor:'rgba(255,255,255,0.05)',color:'#6b7280',zeroline:false,showline:false,
+              tickfont:{{size:9}}}},
+      hovermode:'x unified',
+      legend:{{orientation:'h',y:1.06,x:0,font:{{size:9,color:'#9ba3b8'}},
+               bgcolor:'rgba(0,0,0,0)',borderwidth:0}}
+    }};
+
     var t = d.t_axis;
-    for(var i=0;i<d.paths.length;i++){{
+    var n = d.paths.length;
+
+    // ── Pre-compute per-timestep percentile arrays ────────────────────────────
+    function colAtPct(pct){{
+      return t.map(function(_,ti){{
+        var vals = d.paths.map(function(p){{return p[ti];}}).sort(function(a,b){{return a-b;}});
+        var idx  = Math.min(Math.floor(pct/100*vals.length), vals.length-1);
+        return vals[idx];
+      }});
+    }}
+    var p5  = colAtPct(5);
+    var p25 = colAtPct(25);
+    var p50 = colAtPct(50);
+    var p75 = colAtPct(75);
+    var p95 = colAtPct(95);
+
+    var traces = [];
+
+    // 1. Individual paths — drawn first so bands overlay them
+    for(var i=0;i<n;i++){{
       traces.push({{
         x:t, y:d.paths[i], mode:'lines',
-        line:{{color:'rgba(41,98,255,0.08)',width:1}},
+        line:{{color:CLR.path, width:CLR.pathStroke}},
         showlegend:false, hoverinfo:'skip'
       }});
     }}
-    // Median path
-    var medPath = t.map(function(_,ti){{
-      var vals = d.paths.map(function(p){{return p[ti];}});
-      vals.sort(function(a,b){{return a-b;}});
-      return vals[Math.floor(vals.length/2)];
+
+    // 2. P5-P95 outer confidence band (fill between p95 and p5)
+    traces.push({{
+      x:t, y:p95, mode:'lines',
+      line:{{color:'rgba(100,149,237,0.0)', width:0}},
+      fill:null, showlegend:false, hoverinfo:'skip', name:'_p95top'
     }});
     traces.push({{
-      x:t, y:medPath, mode:'lines', name:'Median',
-      line:{{color:'#26a69a',width:2}}, hovertemplate:'%{{y:.2f}}<extra>Median</extra>'
-    }});
-    // S_0 line
-    traces.push({{
-      x:[t[0],t[t.length-1]], y:[d.s_0,d.s_0], mode:'lines', name:'Current price',
-      line:{{color:'#ef5350',width:1.5,dash:'dash'}}, hoverinfo:'skip'
+      x:t, y:p5, mode:'lines',
+      line:{{color:'rgba(100,149,237,0.0)', width:0}},
+      fill:'tonexty', fillcolor:CLR.band95,
+      showlegend:false, hoverinfo:'skip', name:'90% band'
     }});
 
+    // 3. P25-P75 inner confidence band
+    traces.push({{
+      x:t, y:p75, mode:'lines',
+      line:{{color:'rgba(100,149,237,0.0)', width:0}},
+      fill:null, showlegend:false, hoverinfo:'skip', name:'_p75top'
+    }});
+    traces.push({{
+      x:t, y:p25, mode:'lines',
+      line:{{color:'rgba(100,149,237,0.0)', width:0}},
+      fill:'tonexty', fillcolor:CLR.band50,
+      showlegend:true, name:'50% band',
+      hoverinfo:'skip'
+    }});
+
+    // 4. P5 / P95 border lines (thin, dashed)
+    traces.push({{
+      x:t, y:p5, mode:'lines', name:'P5',
+      line:{{color:'rgba(239,83,80,0.6)', width:1, dash:'dot'}},
+      hovertemplate:'P5 %{{y:.2f}}<extra></extra>'
+    }});
+    traces.push({{
+      x:t, y:p95, mode:'lines', name:'P95',
+      line:{{color:'rgba(38,166,154,0.6)', width:1, dash:'dot'}},
+      hovertemplate:'P95 %{{y:.2f}}<extra></extra>'
+    }});
+
+    // 5. Median — gold, solid, prominent
+    traces.push({{
+      x:t, y:p50, mode:'lines', name:'Median (P50)',
+      line:{{color:CLR.median, width:2.5}},
+      hovertemplate:'Median %{{y:.2f}}<extra></extra>'
+    }});
+
+    // 6. Starting price reference — white dashed
+    traces.push({{
+      x:[t[0],t[t.length-1]], y:[d.s_0,d.s_0],
+      mode:'lines', name:'Current price',
+      line:{{color:CLR.s0, width:1.2, dash:'dash'}},
+      hoverinfo:'skip'
+    }});
+
+    var currency = (d.ticker.endsWith('.NS')||d.ticker.endsWith('.BO')) ? 'INR' : 'USD';
     Plotly.react('gbm-chart', traces, Object.assign({{}}, layout_base, {{
-      title:{{text: d.ticker + ' GBM Simulation · ' + d.n_years + 'y · ' + d.n_scenarios + ' paths',
-               font:{{size:11,color:'#787b86'}}, x:0}},
-      yaxis: Object.assign({{}}, layout_base.yaxis, {{title:'Price (' + (d.ticker.endsWith('.NS')||d.ticker.endsWith('.BO') ? 'INR' : 'USD') + ')'}})
+      title:{{
+        text:'<b>' + d.ticker + '</b>  Monte Carlo GBM · ' + d.n_years + 'y · ' + d.n_scenarios + ' paths',
+        font:{{size:12,color:'#c8ccda'}}, x:0.01, xanchor:'left'
+      }},
+      yaxis: Object.assign({{}}, layout_base.yaxis, {{title: currency}})
     }}), {{responsive:true}});
 
-    // Histogram of terminal prices
+    // ── Histogram with red/green split at S_0 ────────────────────────────────
     var terminal = d.terminal;
-    var histTrace = [{{
-      x: terminal, type:'histogram', nbinsx:60,
-      marker:{{color:'rgba(41,98,255,0.7)',line:{{color:'rgba(41,98,255,0.4)',width:0.5}}}},
-      name:'Terminal price'
-    }}];
-    Plotly.react('gbm-hist', histTrace, Object.assign({{}}, layout_base, {{
-      title:{{text:'Terminal Price Distribution (Year ' + d.n_years + ')',
-               font:{{size:11,color:'#787b86'}}, x:0}},
-      xaxis: Object.assign({{}}, layout_base.xaxis, {{title:'Price'}}),
+    // Split terminal prices into loss (< S_0) and gain (>= S_0) buckets
+    var loss = terminal.filter(function(v){{return v < d.s_0;}});
+    var gain = terminal.filter(function(v){{return v >= d.s_0;}});
+
+    var histTraces = [
+      {{
+        x: loss, type:'histogram', nbinsx:50,
+        marker:{{color:CLR.loss, line:{{color:'rgba(239,83,80,0.15)',width:0.3}}}},
+        name:'Below entry', legendgroup:'loss', opacity:0.9,
+        hovertemplate:'%{{x:.2f}}<br>Count: %{{y}}<extra>Loss</extra>'
+      }},
+      {{
+        x: gain, type:'histogram', nbinsx:50,
+        marker:{{color:CLR.gain, line:{{color:'rgba(38,166,154,0.15)',width:0.3}}}},
+        name:'Above entry', legendgroup:'gain', opacity:0.9,
+        hovertemplate:'%{{x:.2f}}<br>Count: %{{y}}<extra>Gain</extra>'
+      }}
+    ];
+
+    Plotly.react('gbm-hist', histTraces, Object.assign({{}}, layout_base, {{
+      barmode:'overlay',
+      title:{{
+        text:'<b>Terminal Price Distribution</b>  (Year ' + d.n_years + ')',
+        font:{{size:12,color:'#c8ccda'}}, x:0.01, xanchor:'left'
+      }},
+      xaxis: Object.assign({{}}, layout_base.xaxis, {{title: currency + ' at expiry'}}),
       yaxis: Object.assign({{}}, layout_base.yaxis, {{title:'Frequency'}}),
       shapes:[{{
         type:'line', x0:d.s_0, x1:d.s_0, y0:0, y1:1, yref:'paper',
-        line:{{color:'#ef5350',width:1.5,dash:'dash'}}
+        line:{{color:'rgba(255,255,255,0.7)',width:1.5,dash:'dash'}}
+      }}],
+      annotations:[{{
+        x:d.s_0, y:1.04, yref:'paper', xanchor:'center',
+        text:'Entry ' + d.s_0.toFixed(2),
+        showarrow:false, font:{{size:9,color:'rgba(255,255,255,0.6)'}}
       }}]
     }}), {{responsive:true}});
 
-    // Stats box
-    var p = d.percentiles;
-    var pct = function(v){{ return ((v - d.s_0)/d.s_0*100).toFixed(1); }};
+    // ── Stats bar ─────────────────────────────────────────────────────────────
+    var p  = d.percentiles;
+    var pct = function(v){{
+      var chg = ((v - d.s_0)/d.s_0*100);
+      var col = chg >= 0 ? '#26a69a' : '#ef5350';
+      return '<span style="color:'+col+'">' + (chg>=0?'+':'') + chg.toFixed(1) + '%</span>';
+    }};
+    var probGain = (gain.length / terminal.length * 100).toFixed(1);
     document.getElementById('gbm-stats').innerHTML =
-      '<strong>Terminal Price Percentiles</strong> &nbsp;|&nbsp; Start: <strong>' + d.s_0.toFixed(2) + '</strong>' +
-      ' &nbsp;|&nbsp; μ<sub>ann</sub>: <strong>' + (d.mu*100).toFixed(2) + '%</strong>' +
-      ' &nbsp;|&nbsp; σ<sub>ann</sub>: <strong>' + (d.sigma*100).toFixed(2) + '%</strong><br>' +
-      'P5: <span style="color:#ef5350"><strong>' + p.p5.toFixed(2) + '</strong></span> (' + pct(p.p5) + '%)' +
-      ' &nbsp; P25: <strong>' + p.p25.toFixed(2) + '</strong> (' + pct(p.p25) + '%)' +
-      ' &nbsp; P50: <span style="color:#26a69a"><strong>' + p.p50.toFixed(2) + '</strong></span> (' + pct(p.p50) + '%)' +
-      ' &nbsp; P75: <strong>' + p.p75.toFixed(2) + '</strong> (' + pct(p.p75) + '%)' +
-      ' &nbsp; P95: <span style="color:#2962ff"><strong>' + p.p95.toFixed(2) + '</strong></span> (' + pct(p.p95) + '%)';
+      '<span style="color:#9ba3b8;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase">Calibration</span>' +
+      '&ensp;μ<sub>ann</sub> <strong style="color:#F5C542">' + (d.mu*100).toFixed(2) + '%</strong>' +
+      '&ensp;σ<sub>ann</sub> <strong style="color:#F5C542">' + (d.sigma*100).toFixed(2) + '%</strong>' +
+      '&ensp;Entry <strong>' + d.s_0.toFixed(2) + '</strong>' +
+      '&ensp;P(gain) <strong style="color:#26a69a">' + probGain + '%</strong>' +
+      '<br><span style="color:#9ba3b8;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase">Terminal percentiles</span>' +
+      '&ensp;<span style="color:rgba(239,83,80,0.85)">P5</span> <strong>' + p.p5.toFixed(2) + '</strong> ' + pct(p.p5) +
+      '&ensp;<span style="color:#9ba3b8">P25</span> <strong>' + p.p25.toFixed(2) + '</strong> ' + pct(p.p25) +
+      '&ensp;<span style="color:#F5C542">P50</span> <strong>' + p.p50.toFixed(2) + '</strong> ' + pct(p.p50) +
+      '&ensp;<span style="color:#9ba3b8">P75</span> <strong>' + p.p75.toFixed(2) + '</strong> ' + pct(p.p75) +
+      '&ensp;<span style="color:rgba(38,166,154,0.85)">P95</span> <strong>' + p.p95.toFixed(2) + '</strong> ' + pct(p.p95);
+    document.getElementById('gbm-stats').style.cssText +=
+      ';background:rgba(15,17,26,0.6);border:1px solid rgba(255,255,255,0.07);color:#c8ccda;border-radius:8px';
     document.getElementById('gbm-stats').style.display = 'block';
   }}
 }}());
