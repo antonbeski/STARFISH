@@ -2936,46 +2936,60 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   }};
 
   function renderGBM(d){{
-    // ── Standard Monte Carlo palette ──────────────────────────────────────────
-    // Individual paths: thin steel-blue with very low alpha (industry standard)
-    // Percentile bands: layered fills P5-P95 (outer, light) → P25-P75 (inner, darker)
-    // Median: bright gold (#F5C542) — universally recognised centre-line
-    // Current price: white dashed — clean reference without visual noise
-    // Histogram: diverging red-green split at S_0 (loss left / gain right)
-    var CLR = {{
-      path:       'rgba(100,149,237,0.055)', // cornflower-blue, very translucent
-      pathStroke: 0.7,
-      band95:     'rgba(100,149,237,0.10)',  // P5-P95 outer band
-      band50:     'rgba(100,149,237,0.22)',  // P25-P75 inner band
-      median:     '#F5C542',                 // gold — the expectation line
-      s0:         'rgba(255,255,255,0.75)',  // white dashed reference
-      gain:       'rgba(38,166,154,0.72)',   // teal for gains (above S_0)
-      loss:       'rgba(239,83,80,0.72)',    // red for losses (below S_0)
-      accent:     '#F5C542',
-    }};
+    // ── Palette — matches Starfish app theme exactly ──────────────────────────
+    // Background: transparent (paper) / rgba(13,14,20,0) plot (matches stock chart)
+    // Grid:   rgba(42,46,57,0.6)  — same as _C["grid"] in build_chart
+    // Axis:   #787b86             — same as _C["axis"]
+    // Paths:  cornflower rgba(100,149,237,0.18) — visible but not overwhelming
+    // Band95: rgba(41,98,255,0.08)  — subtle outer cone (Starfish blue)
+    // Band50: rgba(41,98,255,0.18)  — visible inner IQR band
+    // Median: #f9a825 (amber/gold)  — same family as SMA20 in stock chart
+    // Entry:  #787b86 dashed        — neutral axis colour, no red/green bias
+    // Gain hist: #26a69a            — Starfish green
+    // Loss hist: #ef5350            — Starfish red
 
-    var layout_base = {{
-      paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(15,17,26,0.55)',
-      font:{{color:'#9ba3b8',family:"'DM Sans',sans-serif",size:10}},
-      margin:{{l:58,r:20,t:44,b:40}},
-      xaxis:{{gridcolor:'rgba(255,255,255,0.05)',color:'#6b7280',zeroline:false,showline:false,
-              tickfont:{{size:9}}}},
-      yaxis:{{gridcolor:'rgba(255,255,255,0.05)',color:'#6b7280',zeroline:false,showline:false,
-              tickfont:{{size:9}}}},
+    // Build real calendar x-axis: today + fractional years → Date strings
+    var now = new Date();
+    var tDates = d.t_axis.map(function(frac){{
+      var ms = now.getTime() + frac * 365.25 * 24 * 3600 * 1000;
+      return new Date(ms).toISOString().slice(0,10);
+    }});
+
+    // Shared layout — transparent bg, Starfish grid colours
+    var LY = {{
+      paper_bgcolor:'rgba(0,0,0,0)',
+      plot_bgcolor:'rgba(0,0,0,0)',
+      font:{{color:'#787b86', family:"'DM Sans',sans-serif", size:10}},
+      margin:{{l:62, r:20, t:48, b:44}},
+      xaxis:{{
+        gridcolor:'rgba(42,46,57,0.6)', color:'#787b86',
+        zeroline:false, showline:false,
+        tickfont:{{size:9,color:'#787b86'}},
+        tickformat:'%b %Y', type:'date'
+      }},
+      yaxis:{{
+        gridcolor:'rgba(42,46,57,0.6)', color:'#787b86',
+        zeroline:false, showline:false,
+        tickfont:{{size:9,color:'#787b86'}}
+      }},
       hovermode:'x unified',
-      legend:{{orientation:'h',y:1.06,x:0,font:{{size:9,color:'#9ba3b8'}},
-               bgcolor:'rgba(0,0,0,0)',borderwidth:0}}
+      hoverlabel:{{bgcolor:'rgba(255,255,255,0.97)',bordercolor:'rgba(120,123,134,0.3)',
+                   font:{{color:'#000',size:11}}}},
+      legend:{{
+        orientation:'h', y:1.07, x:0,
+        font:{{size:9,color:'#787b86'}},
+        bgcolor:'rgba(0,0,0,0)', borderwidth:0
+      }}
     }};
 
-    var t = d.t_axis;
+    var t = tDates;
     var n = d.paths.length;
 
-    // ── Pre-compute per-timestep percentile arrays ────────────────────────────
-    function colAtPct(pct){{
-      return t.map(function(_,ti){{
+    // ── Per-timestep percentile arrays (computed once) ────────────────────────
+    function colAtPct(pctVal){{
+      return d.t_axis.map(function(_,ti){{
         var vals = d.paths.map(function(p){{return p[ti];}}).sort(function(a,b){{return a-b;}});
-        var idx  = Math.min(Math.floor(pct/100*vals.length), vals.length-1);
-        return vals[idx];
+        return vals[Math.min(Math.floor(pctVal/100*vals.length), vals.length-1)];
       }});
     }}
     var p5  = colAtPct(5);
@@ -2986,141 +3000,170 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
     var traces = [];
 
-    // 1. Individual paths — drawn first so bands overlay them
+    // 1. Individual paths — cornflower, alpha raised so they read on white bg
     for(var i=0;i<n;i++){{
       traces.push({{
         x:t, y:d.paths[i], mode:'lines',
-        line:{{color:CLR.path, width:CLR.pathStroke}},
+        line:{{color:'rgba(100,149,237,0.18)', width:0.8}},
         showlegend:false, hoverinfo:'skip'
       }});
     }}
 
-    // 2. P5-P95 outer confidence band (fill between p95 and p5)
+    // 2. P5–P95 outer cone — Starfish blue, subtle fill, no border line
     traces.push({{
       x:t, y:p95, mode:'lines',
-      line:{{color:'rgba(100,149,237,0.0)', width:0}},
-      fill:null, showlegend:false, hoverinfo:'skip', name:'_p95top'
+      line:{{color:'rgba(0,0,0,0)', width:0}},
+      showlegend:false, hoverinfo:'skip'
     }});
     traces.push({{
       x:t, y:p5, mode:'lines',
-      line:{{color:'rgba(100,149,237,0.0)', width:0}},
-      fill:'tonexty', fillcolor:CLR.band95,
-      showlegend:false, hoverinfo:'skip', name:'90% band'
+      line:{{color:'rgba(0,0,0,0)', width:0}},
+      fill:'tonexty', fillcolor:'rgba(41,98,255,0.08)',
+      showlegend:false, hoverinfo:'skip', name:'90% cone'
     }});
 
-    // 3. P25-P75 inner confidence band
+    // 3. P25–P75 inner IQR band — denser fill, clearly visible
     traces.push({{
       x:t, y:p75, mode:'lines',
-      line:{{color:'rgba(100,149,237,0.0)', width:0}},
-      fill:null, showlegend:false, hoverinfo:'skip', name:'_p75top'
+      line:{{color:'rgba(0,0,0,0)', width:0}},
+      showlegend:false, hoverinfo:'skip'
     }});
     traces.push({{
       x:t, y:p25, mode:'lines',
-      line:{{color:'rgba(100,149,237,0.0)', width:0}},
-      fill:'tonexty', fillcolor:CLR.band50,
-      showlegend:true, name:'50% band',
-      hoverinfo:'skip'
+      line:{{color:'rgba(0,0,0,0)', width:0}},
+      fill:'tonexty', fillcolor:'rgba(41,98,255,0.20)',
+      showlegend:true, name:'50% band (IQR)', hoverinfo:'skip'
     }});
 
-    // 4. P5 / P95 border lines (thin, dashed)
+    // 4. P5 border — red dotted, 1.2px, fully opaque so it's readable
     traces.push({{
-      x:t, y:p5, mode:'lines', name:'P5',
-      line:{{color:'rgba(239,83,80,0.6)', width:1, dash:'dot'}},
-      hovertemplate:'P5 %{{y:.2f}}<extra></extra>'
-    }});
-    traces.push({{
-      x:t, y:p95, mode:'lines', name:'P95',
-      line:{{color:'rgba(38,166,154,0.6)', width:1, dash:'dot'}},
-      hovertemplate:'P95 %{{y:.2f}}<extra></extra>'
+      x:t, y:p5, mode:'lines', name:'P5  (bear)',
+      line:{{color:'#ef5350', width:1.2, dash:'dot'}},
+      hovertemplate:'P5 <b>%{{y:.2f}}</b><extra></extra>'
     }});
 
-    // 5. Median — gold, solid, prominent
+    // 5. P95 border — green dotted, 1.2px
+    traces.push({{
+      x:t, y:p95, mode:'lines', name:'P95 (bull)',
+      line:{{color:'#26a69a', width:1.2, dash:'dot'}},
+      hovertemplate:'P95 <b>%{{y:.2f}}</b><extra></extra>'
+    }});
+
+    // 6. Median — amber #f9a825 (SMA20 family), 2.5px, on top of everything
     traces.push({{
       x:t, y:p50, mode:'lines', name:'Median (P50)',
-      line:{{color:CLR.median, width:2.5}},
-      hovertemplate:'Median %{{y:.2f}}<extra></extra>'
+      line:{{color:'#f9a825', width:2.5}},
+      hovertemplate:'Median <b>%{{y:.2f}}</b><extra></extra>'
     }});
 
-    // 6. Starting price reference — white dashed
+    // 7. Entry price — neutral grey dashed, clearly labelled
     traces.push({{
       x:[t[0],t[t.length-1]], y:[d.s_0,d.s_0],
-      mode:'lines', name:'Current price',
-      line:{{color:CLR.s0, width:1.2, dash:'dash'}},
+      mode:'lines', name:'Entry ' + d.s_0.toFixed(2),
+      line:{{color:'#787b86', width:1.5, dash:'dash'}},
       hoverinfo:'skip'
     }});
 
     var currency = (d.ticker.endsWith('.NS')||d.ticker.endsWith('.BO')) ? 'INR' : 'USD';
-    Plotly.react('gbm-chart', traces, Object.assign({{}}, layout_base, {{
+
+    Plotly.react('gbm-chart', traces, Object.assign({{}}, LY, {{
       title:{{
-        text:'<b>' + d.ticker + '</b>  Monte Carlo GBM · ' + d.n_years + 'y · ' + d.n_scenarios + ' paths',
-        font:{{size:12,color:'#c8ccda'}}, x:0.01, xanchor:'left'
+        text:'<b style="color:#d1d4dc">' + d.ticker + '</b>' +
+             '<span style="color:#787b86">  Monte Carlo GBM · ' +
+             d.n_years + 'y horizon · ' + d.n_scenarios + ' paths</span>',
+        font:{{size:11}}, x:0.01, xanchor:'left'
       }},
-      yaxis: Object.assign({{}}, layout_base.yaxis, {{title: currency}})
+      yaxis: Object.assign({{}}, LY.yaxis, {{
+        title:{{text:currency, font:{{size:10,color:'#787b86'}}, standoff:8}}
+      }}),
+      xaxis: Object.assign({{}}, LY.xaxis, {{
+        title:{{text:'Date', font:{{size:10,color:'#787b86'}}, standoff:8}}
+      }})
     }}), {{responsive:true}});
 
-    // ── Histogram with red/green split at S_0 ────────────────────────────────
+    // ── Histogram — red/teal split, 35 bins, solid bars with border ──────────
     var terminal = d.terminal;
-    // Split terminal prices into loss (< S_0) and gain (>= S_0) buckets
-    var loss = terminal.filter(function(v){{return v < d.s_0;}});
+    var loss = terminal.filter(function(v){{return v <  d.s_0;}});
     var gain = terminal.filter(function(v){{return v >= d.s_0;}});
+    // Use same bin size for both so the bars interleave cleanly
+    var allMin = Math.min.apply(null,terminal);
+    var allMax = Math.max.apply(null,terminal);
+    var nBins  = 35;
+    var bSize  = (allMax - allMin) / nBins;
 
     var histTraces = [
       {{
-        x: loss, type:'histogram', nbinsx:50,
-        marker:{{color:CLR.loss, line:{{color:'rgba(239,83,80,0.15)',width:0.3}}}},
-        name:'Below entry', legendgroup:'loss', opacity:0.9,
-        hovertemplate:'%{{x:.2f}}<br>Count: %{{y}}<extra>Loss</extra>'
+        x: loss, type:'histogram',
+        xbins:{{start:allMin, end:d.s_0, size:bSize}},
+        marker:{{
+          color:'rgba(239,83,80,0.75)',
+          line:{{color:'rgba(239,83,80,0.4)', width:1}}
+        }},
+        name:'Below entry', hovertemplate:'%{{x:.2f}}  Count: %{{y}}<extra>Loss</extra>'
       }},
       {{
-        x: gain, type:'histogram', nbinsx:50,
-        marker:{{color:CLR.gain, line:{{color:'rgba(38,166,154,0.15)',width:0.3}}}},
-        name:'Above entry', legendgroup:'gain', opacity:0.9,
-        hovertemplate:'%{{x:.2f}}<br>Count: %{{y}}<extra>Gain</extra>'
+        x: gain, type:'histogram',
+        xbins:{{start:d.s_0, end:allMax+bSize, size:bSize}},
+        marker:{{
+          color:'rgba(38,166,154,0.75)',
+          line:{{color:'rgba(38,166,154,0.4)', width:1}}
+        }},
+        name:'Above entry', hovertemplate:'%{{x:.2f}}  Count: %{{y}}<extra>Gain</extra>'
       }}
     ];
 
-    Plotly.react('gbm-hist', histTraces, Object.assign({{}}, layout_base, {{
+    Plotly.react('gbm-hist', histTraces, Object.assign({{}}, LY, {{
       barmode:'overlay',
       title:{{
-        text:'<b>Terminal Price Distribution</b>  (Year ' + d.n_years + ')',
-        font:{{size:12,color:'#c8ccda'}}, x:0.01, xanchor:'left'
+        text:'<b style="color:#d1d4dc">Terminal Distribution</b>' +
+             '<span style="color:#787b86">  (Year ' + d.n_years + ')</span>',
+        font:{{size:11}}, x:0.01, xanchor:'left'
       }},
-      xaxis: Object.assign({{}}, layout_base.xaxis, {{title: currency + ' at expiry'}}),
-      yaxis: Object.assign({{}}, layout_base.yaxis, {{title:'Frequency'}}),
+      xaxis: Object.assign({{}}, LY.xaxis, {{
+        type:'linear', tickformat:'',
+        title:{{text:currency + ' at expiry', font:{{size:10,color:'#787b86'}}, standoff:8}}
+      }}),
+      yaxis: Object.assign({{}}, LY.yaxis, {{
+        title:{{text:'Count', font:{{size:10,color:'#787b86'}}, standoff:8}}
+      }}),
       shapes:[{{
         type:'line', x0:d.s_0, x1:d.s_0, y0:0, y1:1, yref:'paper',
-        line:{{color:'rgba(255,255,255,0.7)',width:1.5,dash:'dash'}}
+        line:{{color:'#787b86', width:1.5, dash:'dash'}}
       }}],
       annotations:[{{
-        x:d.s_0, y:1.04, yref:'paper', xanchor:'center',
-        text:'Entry ' + d.s_0.toFixed(2),
-        showarrow:false, font:{{size:9,color:'rgba(255,255,255,0.6)'}}
+        x:d.s_0, y:1.05, yref:'paper', xanchor:'center',
+        text:'<b>Entry ' + d.s_0.toFixed(2) + '</b>',
+        showarrow:false, font:{{size:9, color:'#787b86'}}
       }}]
     }}), {{responsive:true}});
 
-    // ── Stats bar ─────────────────────────────────────────────────────────────
-    var p  = d.percentiles;
+    // ── Stats bar — matches Starfish chip/badge styling ───────────────────────
+    var p   = d.percentiles;
     var pct = function(v){{
-      var chg = ((v - d.s_0)/d.s_0*100);
+      var chg = (v - d.s_0) / d.s_0 * 100;
       var col = chg >= 0 ? '#26a69a' : '#ef5350';
-      return '<span style="color:'+col+'">' + (chg>=0?'+':'') + chg.toFixed(1) + '%</span>';
+      return '<span style="color:'+col+';font-weight:600">' + (chg>=0?'+':'') + chg.toFixed(1) + '%</span>';
     }};
     var probGain = (gain.length / terminal.length * 100).toFixed(1);
-    document.getElementById('gbm-stats').innerHTML =
-      '<span style="color:#9ba3b8;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase">Calibration</span>' +
-      '&ensp;μ<sub>ann</sub> <strong style="color:#F5C542">' + (d.mu*100).toFixed(2) + '%</strong>' +
-      '&ensp;σ<sub>ann</sub> <strong style="color:#F5C542">' + (d.sigma*100).toFixed(2) + '%</strong>' +
-      '&ensp;Entry <strong>' + d.s_0.toFixed(2) + '</strong>' +
-      '&ensp;P(gain) <strong style="color:#26a69a">' + probGain + '%</strong>' +
-      '<br><span style="color:#9ba3b8;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase">Terminal percentiles</span>' +
-      '&ensp;<span style="color:rgba(239,83,80,0.85)">P5</span> <strong>' + p.p5.toFixed(2) + '</strong> ' + pct(p.p5) +
-      '&ensp;<span style="color:#9ba3b8">P25</span> <strong>' + p.p25.toFixed(2) + '</strong> ' + pct(p.p25) +
-      '&ensp;<span style="color:#F5C542">P50</span> <strong>' + p.p50.toFixed(2) + '</strong> ' + pct(p.p50) +
-      '&ensp;<span style="color:#9ba3b8">P75</span> <strong>' + p.p75.toFixed(2) + '</strong> ' + pct(p.p75) +
-      '&ensp;<span style="color:rgba(38,166,154,0.85)">P95</span> <strong>' + p.p95.toFixed(2) + '</strong> ' + pct(p.p95);
-    document.getElementById('gbm-stats').style.cssText +=
-      ';background:rgba(15,17,26,0.6);border:1px solid rgba(255,255,255,0.07);color:#c8ccda;border-radius:8px';
-    document.getElementById('gbm-stats').style.display = 'block';
+    var el = document.getElementById('gbm-stats');
+    el.innerHTML =
+      '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Calibration</span>' +
+      '&ensp;μ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.mu*100).toFixed(2) + '%</strong>' +
+      '&ensp;σ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.sigma*100).toFixed(2) + '%</strong>' +
+      '&ensp;Entry&thinsp;<strong style="color:#d1d4dc">' + d.s_0.toFixed(2) + '</strong>' +
+      '&ensp;P(gain)&thinsp;<strong style="color:#26a69a">' + probGain + '%</strong>' +
+      '<br>' +
+      '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Terminal percentiles</span>' +
+      '&ensp;<span style="color:#ef5350;font-weight:600">P5</span>&thinsp;<strong style="color:#d1d4dc">' + p.p5.toFixed(2) + '</strong>&thinsp;' + pct(p.p5) +
+      '&ensp;<span style="color:#787b86;font-weight:600">P25</span>&thinsp;<strong style="color:#d1d4dc">' + p.p25.toFixed(2) + '</strong>&thinsp;' + pct(p.p25) +
+      '&ensp;<span style="color:#f9a825;font-weight:600">P50</span>&thinsp;<strong style="color:#d1d4dc">' + p.p50.toFixed(2) + '</strong>&thinsp;' + pct(p.p50) +
+      '&ensp;<span style="color:#787b86;font-weight:600">P75</span>&thinsp;<strong style="color:#d1d4dc">' + p.p75.toFixed(2) + '</strong>&thinsp;' + pct(p.p75) +
+      '&ensp;<span style="color:#26a69a;font-weight:600">P95</span>&thinsp;<strong style="color:#d1d4dc">' + p.p95.toFixed(2) + '</strong>&thinsp;' + pct(p.p95);
+    el.style.background    = 'rgba(42,46,57,0.18)';
+    el.style.border        = '1px solid rgba(42,46,57,0.5)';
+    el.style.borderRadius  = '6px';
+    el.style.color         = '#787b86';
+    el.style.display       = 'block';
   }}
 }}());
 </script>
