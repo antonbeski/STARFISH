@@ -2060,6 +2060,57 @@ def build_chart(ticker, period, chart_type, indicators):
  
  
 # ══════════════════════════════════════════════════════════════════════════════
+# GEOMETRIC BROWNIAN MOTION SIMULATION
+# ══════════════════════════════════════════════════════════════════════════════
+def run_gbm(ticker, n_years=2, n_scenarios=200, steps_per_year=252):
+    """Compute GBM paths from historical mu/sigma calibrated on real price data."""
+    df, err = fetch_yfinance_data(ticker, "2y")
+    if err or df is None or df.empty:
+        # fallback defaults
+        mu, sigma, s_0 = 0.07, 0.20, 100.0
+    else:
+        cl = df["Close"].squeeze().dropna()
+        log_rets = np.log(cl / cl.shift(1)).dropna()
+        mu    = float(log_rets.mean() * steps_per_year)
+        sigma = float(log_rets.std()  * np.sqrt(steps_per_year))
+        s_0   = float(cl.iloc[-1])
+
+    dt     = 1.0 / steps_per_year
+    n_steps = int(n_years * steps_per_year)
+
+    # GBM: S_{t+dt} = S_t * exp((mu - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z)
+    z = np.random.standard_normal((n_steps, n_scenarios))
+    log_increments = (mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z
+    paths = s_0 * np.exp(np.vstack([np.zeros(n_scenarios), log_increments]).cumsum(axis=0))
+
+    t_axis = np.linspace(0, n_years, n_steps + 1).tolist()
+    terminal = paths[-1].tolist()
+    p5   = float(np.percentile(paths, 5,  axis=1)[-1])
+    p25  = float(np.percentile(paths, 25, axis=1)[-1])
+    p50  = float(np.percentile(paths, 50, axis=1)[-1])
+    p75  = float(np.percentile(paths, 75, axis=1)[-1])
+    p95  = float(np.percentile(paths, 95, axis=1)[-1])
+    # Return a sample of paths for the fan chart (max 80 to keep payload small)
+    sample_n = min(n_scenarios, 80)
+    idx = np.random.choice(n_scenarios, sample_n, replace=False)
+    sampled_paths = paths[:, idx].T.tolist()  # shape: sample_n x (n_steps+1)
+
+    return {
+        "ticker": ticker,
+        "s_0": round(s_0, 4),
+        "mu":  round(mu,  4),
+        "sigma": round(sigma, 4),
+        "n_years": n_years,
+        "n_scenarios": n_scenarios,
+        "t_axis": t_axis,
+        "paths": sampled_paths,
+        "terminal": terminal,
+        "percentiles": {"p5": round(p5,2), "p25": round(p25,2), "p50": round(p50,2),
+                        "p75": round(p75,2), "p95": round(p95,2)},
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN PAGE RENDERER
 # ══════════════════════════════════════════════════════════════════════════════
 DEFAULT_INDICATORS = {"sma","vol"}
@@ -2817,7 +2868,151 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
  
 <div class="glass chart-card">{content}</div>
- 
+
+<!-- ══════════════════════════════════════════
+     GBM MONTE CARLO SIMULATION
+═══════════════════════════════════════════ -->
+<div class="glass panel" id="gbm-panel" style="margin-top:12px">
+  <div class="panel-label">Monte Carlo Price Simulation (GBM)</div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px">
+    <div class="fg" style="min-width:120px;flex:1">
+      <label style="font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#787b86">Ticker</label>
+      <input id="gbm-ticker" type="text" value="{ticker}"
+        style="width:100%;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722"
+        autocapitalize="characters" spellcheck="false"/>
+    </div>
+    <div class="fg" style="min-width:100px;flex:1">
+      <label style="font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#787b86">Horizon (years)</label>
+      <select id="gbm-years" style="width:100%;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722">
+        <option value="1">1 year</option>
+        <option value="2" selected>2 years</option>
+        <option value="3">3 years</option>
+        <option value="5">5 years</option>
+        <option value="10">10 years</option>
+      </select>
+    </div>
+    <div class="fg" style="min-width:100px;flex:1">
+      <label style="font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#787b86">Scenarios</label>
+      <select id="gbm-scenarios" style="width:100%;background:#f5f7fa;border:1.5px solid #e0e3eb;border-radius:6px;padding:.5rem .75rem;font-size:.875rem;font-family:inherit;outline:none;color:#131722">
+        <option value="100">100</option>
+        <option value="200" selected>200</option>
+        <option value="500">500</option>
+        <option value="1000">1000</option>
+      </select>
+    </div>
+    <button onclick="runGBM()" id="gbm-btn" class="btn" style="height:38px;align-self:flex-end">
+      &#9654; Run Simulation
+    </button>
+  </div>
+  <div id="gbm-status" style="font-size:.78rem;color:#787b86;min-height:18px;margin-bottom:6px"></div>
+  <div id="gbm-chart" style="width:100%;height:380px"></div>
+  <div id="gbm-hist"  style="width:100%;height:220px;margin-top:8px"></div>
+  <div id="gbm-stats" style="display:none;margin-top:10px;padding:10px 14px;background:#f5f7fa;border-radius:8px;font-size:.78rem;color:#131722;line-height:1.7"></div>
+</div>
+<script>
+(function(){{
+  var Plotly = window.Plotly;
+  window.runGBM = function(){{
+    var ticker   = (document.getElementById('gbm-ticker').value||'AAPL').trim().toUpperCase();
+    var n_years  = parseInt(document.getElementById('gbm-years').value,10);
+    var n_scen   = parseInt(document.getElementById('gbm-scenarios').value,10);
+    var btn      = document.getElementById('gbm-btn');
+    var status   = document.getElementById('gbm-status');
+    btn.disabled = true;
+    status.textContent = 'Running simulation for ' + ticker + '…';
+    fetch('/api/gbm', {{
+      method:'POST',
+      headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify({{ticker:ticker, n_years:n_years, n_scenarios:n_scen}})
+    }})
+    .then(function(r){{return r.json();}})
+    .then(function(d){{
+      if(d.error){{ status.textContent='Error: '+d.error; btn.disabled=false; return; }}
+      renderGBM(d);
+      btn.disabled=false;
+      status.textContent='✓ ' + d.n_scenarios + ' paths · μ=' + (d.mu*100).toFixed(2) + '% · σ=' + (d.sigma*100).toFixed(2) + '%  (calibrated on 2y history)';
+    }})
+    .catch(function(e){{ status.textContent='Request failed: '+e; btn.disabled=false; }});
+  }};
+
+  function renderGBM(d){{
+    var layout_base = {{
+      paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
+      font:{{color:'#787b86',family:"'DM Sans',sans-serif",size:10}},
+      margin:{{l:55,r:20,t:38,b:36}},
+      xaxis:{{gridcolor:'rgba(42,46,57,0.15)',color:'#787b86',zeroline:false,showline:false}},
+      yaxis:{{gridcolor:'rgba(42,46,57,0.15)',color:'#787b86',zeroline:false,showline:false}},
+      hovermode:'closest',
+      legend:{{orientation:'h',y:1.08,x:0,font:{{size:9}}}}
+    }};
+
+    // Fan chart traces
+    var traces = [];
+    var t = d.t_axis;
+    for(var i=0;i<d.paths.length;i++){{
+      traces.push({{
+        x:t, y:d.paths[i], mode:'lines',
+        line:{{color:'rgba(41,98,255,0.08)',width:1}},
+        showlegend:false, hoverinfo:'skip'
+      }});
+    }}
+    // Median path
+    var medPath = t.map(function(_,ti){{
+      var vals = d.paths.map(function(p){{return p[ti];}});
+      vals.sort(function(a,b){{return a-b;}});
+      return vals[Math.floor(vals.length/2)];
+    }});
+    traces.push({{
+      x:t, y:medPath, mode:'lines', name:'Median',
+      line:{{color:'#26a69a',width:2}}, hovertemplate:'%{{y:.2f}}<extra>Median</extra>'
+    }});
+    // S_0 line
+    traces.push({{
+      x:[t[0],t[t.length-1]], y:[d.s_0,d.s_0], mode:'lines', name:'Current price',
+      line:{{color:'#ef5350',width:1.5,dash:'dash'}}, hoverinfo:'skip'
+    }});
+
+    Plotly.react('gbm-chart', traces, Object.assign({{}}, layout_base, {{
+      title:{{text: d.ticker + ' GBM Simulation · ' + d.n_years + 'y · ' + d.n_scenarios + ' paths',
+               font:{{size:11,color:'#787b86'}}, x:0}},
+      yaxis: Object.assign({{}}, layout_base.yaxis, {{title:'Price (' + (d.ticker.endsWith('.NS')||d.ticker.endsWith('.BO') ? 'INR' : 'USD') + ')'}})
+    }}), {{responsive:true}});
+
+    // Histogram of terminal prices
+    var terminal = d.terminal;
+    var histTrace = [{{
+      x: terminal, type:'histogram', nbinsx:60,
+      marker:{{color:'rgba(41,98,255,0.7)',line:{{color:'rgba(41,98,255,0.4)',width:0.5}}}},
+      name:'Terminal price'
+    }}];
+    Plotly.react('gbm-hist', histTrace, Object.assign({{}}, layout_base, {{
+      title:{{text:'Terminal Price Distribution (Year ' + d.n_years + ')',
+               font:{{size:11,color:'#787b86'}}, x:0}},
+      xaxis: Object.assign({{}}, layout_base.xaxis, {{title:'Price'}}),
+      yaxis: Object.assign({{}}, layout_base.yaxis, {{title:'Frequency'}}),
+      shapes:[{{
+        type:'line', x0:d.s_0, x1:d.s_0, y0:0, y1:1, yref:'paper',
+        line:{{color:'#ef5350',width:1.5,dash:'dash'}}
+      }}]
+    }}), {{responsive:true}});
+
+    // Stats box
+    var p = d.percentiles;
+    var pct = function(v){{ return ((v - d.s_0)/d.s_0*100).toFixed(1); }};
+    document.getElementById('gbm-stats').innerHTML =
+      '<strong>Terminal Price Percentiles</strong> &nbsp;|&nbsp; Start: <strong>' + d.s_0.toFixed(2) + '</strong>' +
+      ' &nbsp;|&nbsp; μ<sub>ann</sub>: <strong>' + (d.mu*100).toFixed(2) + '%</strong>' +
+      ' &nbsp;|&nbsp; σ<sub>ann</sub>: <strong>' + (d.sigma*100).toFixed(2) + '%</strong><br>' +
+      'P5: <span style="color:#ef5350"><strong>' + p.p5.toFixed(2) + '</strong></span> (' + pct(p.p5) + '%)' +
+      ' &nbsp; P25: <strong>' + p.p25.toFixed(2) + '</strong> (' + pct(p.p25) + '%)' +
+      ' &nbsp; P50: <span style="color:#26a69a"><strong>' + p.p50.toFixed(2) + '</strong></span> (' + pct(p.p50) + '%)' +
+      ' &nbsp; P75: <strong>' + p.p75.toFixed(2) + '</strong> (' + pct(p.p75) + '%)' +
+      ' &nbsp; P95: <span style="color:#2962ff"><strong>' + p.p95.toFixed(2) + '</strong></span> (' + pct(p.p95) + '%)';
+    document.getElementById('gbm-stats').style.display = 'block';
+  }}
+}}());
+</script>
+
 <!-- AI Analysis -->
 <div class="glass ai-panel">
   <div class="panel-label">AI Trading Analysis</div>
@@ -3856,6 +4051,19 @@ def api_ai_analysis():
     })
  
  
+
+@app.route("/api/gbm", methods=["POST"])
+def api_gbm():
+    body       = request.get_json(force=True) or {}
+    ticker     = (body.get("ticker", "AAPL") or "AAPL").strip().upper()
+    n_years    = max(1, min(int(body.get("n_years", 2)), 10))
+    n_scenarios = max(100, min(int(body.get("n_scenarios", 200)), 1000))
+    try:
+        result = run_gbm(ticker, n_years=n_years, n_scenarios=n_scenarios)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/prediction-markets")
 def api_prediction_markets():
