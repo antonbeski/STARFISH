@@ -159,6 +159,47 @@ extern "C" int adsb_count_valid(const double *lats, const double *lons, int n) {
     }
     return count;
 }
+
+// ── TRENDS ACCELERATION: z-score normalization over a window ─────────────────
+// Normalizes a series to zero mean and unit variance (rolling zscore).
+// out must be pre-allocated with n doubles.
+extern "C" void zscore_rolling(const double *x, int n, int w, double *out) {
+    for (int i = 0; i < n; i++) out[i] = 0.0;
+    for (int i = w - 1; i < n; i++) {
+        double sum = 0.0, sum2 = 0.0;
+        for (int j = i - w + 1; j <= i; j++) { sum += x[j]; sum2 += x[j]*x[j]; }
+        double mean = sum / w;
+        double var  = sum2 / w - mean * mean;
+        double sd   = var > 1e-12 ? sqrt(var) : 1.0;
+        out[i] = (x[i] - mean) / sd;
+    }
+}
+
+// Pearson correlation between two arrays of length n
+extern "C" double pearson_corr(const double *a, const double *b, int n) {
+    if (n < 2) return 0.0;
+    double ma=0, mb=0;
+    for (int i=0;i<n;i++){ma+=a[i];mb+=b[i];}
+    ma/=n; mb/=n;
+    double num=0,da=0,db=0;
+    for (int i=0;i<n;i++){
+        double ai=a[i]-ma, bi=b[i]-mb;
+        num+=ai*bi; da+=ai*ai; db+=bi*bi;
+    }
+    double denom=sqrt(da)*sqrt(db);
+    return denom<1e-12 ? 0.0 : num/denom;
+}
+
+// Simple linear trend slope via least-squares (returns slope)
+extern "C" double lintrend(const double *y, int n) {
+    if (n < 2) return 0.0;
+    double sx=0,sy=0,sxy=0,sx2=0;
+    for (int i=0;i<n;i++){
+        sx+=(double)i; sy+=y[i]; sxy+=(double)i*y[i]; sx2+=(double)i*(double)i;
+    }
+    double denom = n*sx2 - sx*sx;
+    return fabs(denom)<1e-12 ? 0.0 : (n*sxy - sx*sy)/denom;
+}
 """  # end _CPP_SRC
 
 # ── Rust source — parallel EWM + RSI via Rayon ───────────────────────────────
@@ -233,6 +274,54 @@ pub extern "C" fn xyz_bbox_rs(
         *lat_n = ((PI * (1.0 - 2.0 *  y      as f64 / n)).sinh()).atan() * (180.0 / PI);
         *lat_s = ((PI * (1.0 - 2.0 * (y + 1) as f64 / n)).sinh()).atan() * (180.0 / PI);
     }
+}
+
+/// Rolling Z-score normalization — Rust accelerated for trend series smoothing
+#[no_mangle]
+pub extern "C" fn zscore_rolling_rs(x: *const f64, n: usize, w: usize, out: *mut f64) {
+    let xs = unsafe { std::slice::from_raw_parts(x, n) };
+    let os = unsafe { std::slice::from_raw_parts_mut(out, n) };
+    for v in os.iter_mut() { *v = 0.0; }
+    if w == 0 || n < w { return; }
+    for i in (w-1)..n {
+        let slice = &xs[(i+1-w)..=i];
+        let mean = slice.iter().sum::<f64>() / w as f64;
+        let var  = slice.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / w as f64;
+        let sd   = if var > 1e-12 { var.sqrt() } else { 1.0 };
+        os[i] = (xs[i] - mean) / sd;
+    }
+}
+
+/// Pearson correlation — Rust accelerated
+#[no_mangle]
+pub extern "C" fn pearson_corr_rs(a: *const f64, b: *const f64, n: usize) -> f64 {
+    if n < 2 { return 0.0; }
+    let as_ = unsafe { std::slice::from_raw_parts(a, n) };
+    let bs  = unsafe { std::slice::from_raw_parts(b, n) };
+    let ma = as_.iter().sum::<f64>() / n as f64;
+    let mb = bs.iter().sum::<f64>() / n as f64;
+    let (mut num, mut da, mut db) = (0.0_f64, 0.0_f64, 0.0_f64);
+    for i in 0..n {
+        let ai = as_[i] - ma; let bi = bs[i] - mb;
+        num += ai * bi; da += ai * ai; db += bi * bi;
+    }
+    let denom = da.sqrt() * db.sqrt();
+    if denom < 1e-12 { 0.0 } else { num / denom }
+}
+
+/// Linear trend slope — Rust accelerated
+#[no_mangle]
+pub extern "C" fn lintrend_rs(y: *const f64, n: usize) -> f64 {
+    if n < 2 { return 0.0; }
+    let ys = unsafe { std::slice::from_raw_parts(y, n) };
+    let (mut sx, mut sy, mut sxy, mut sx2) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
+    for i in 0..n {
+        let fi = i as f64;
+        sx += fi; sy += ys[i]; sxy += fi * ys[i]; sx2 += fi * fi;
+    }
+    let nn = n as f64;
+    let denom = nn * sx2 - sx * sx;
+    if denom.abs() < 1e-12 { 0.0 } else { (nn * sxy - sx * sy) / denom }
 }
 """  # end _RUST_SRC
 
@@ -329,6 +418,23 @@ def _load_native():
                 ctypes.c_int,
             ]
             lib.adsb_count_valid.restype = ctypes.c_int
+            # zscore_rolling
+            lib.zscore_rolling.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            lib.zscore_rolling.restype = None
+            # pearson_corr
+            lib.pearson_corr.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.c_int,
+            ]
+            lib.pearson_corr.restype = ctypes.c_double
+            # lintrend
+            lib.lintrend.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+            ]
+            lib.lintrend.restype = ctypes.c_double
             _CPP_LIB = lib
             print("[ACCEL] C++ native library loaded ✓")
         except Exception as e:
@@ -370,6 +476,23 @@ def _load_native():
                 ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
             ]
             rlib.xyz_bbox_rs.restype = None
+            # zscore_rolling_rs
+            rlib.zscore_rolling_rs.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_size_t, ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            rlib.zscore_rolling_rs.restype = None
+            # pearson_corr_rs
+            rlib.pearson_corr_rs.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.c_size_t,
+            ]
+            rlib.pearson_corr_rs.restype = ctypes.c_double
+            # lintrend_rs
+            rlib.lintrend_rs.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_size_t,
+            ]
+            rlib.lintrend_rs.restype = ctypes.c_double
             _RUST_LIB = rlib
             print("[ACCEL] Rust native library loaded ✓")
         except Exception as e:
@@ -640,6 +763,352 @@ def rl_next_rpm_reset(key):
         return max(0, int(60 - (time.time() - _rl_state[key]["rpm"][0])))
  
  
+# ══════════════════════════════════════════════════════════════════════════════
+# GOOGLE TRENDS — BUSINESS & FINANCE (GLOBAL)
+# All queries are locked to category 7 (Finance) or 12 (Business & Industrial)
+# Users can pick any topic; pytrends fetches global interest data.
+# Native C++/Rust kernels accelerate all signal processing.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Finance & Business category IDs in Google Trends
+_GT_CAT_FINANCE  = 7    # Finance
+_GT_CAT_BUSINESS = 12   # Business & Industrial
+
+# Curated trending topics across both categories (shown as quick-launch chips)
+TRENDING_BUSINESS_FINANCE = [
+    # Markets & macro
+    "interest rates", "inflation", "Federal Reserve", "S&P 500", "stock market",
+    "recession", "GDP growth", "unemployment", "US dollar", "treasury bonds",
+    # Sectors
+    "artificial intelligence stocks", "semiconductor stocks", "energy stocks",
+    "bank earnings", "real estate market", "cryptocurrency",
+    # Companies
+    "Apple earnings", "Nvidia stock", "Tesla stock", "Amazon stock", "Microsoft stock",
+    # Finance themes
+    "IPO", "private equity", "hedge fund", "venture capital", "ESG investing",
+    # Business topics
+    "supply chain", "trade tariffs", "merger acquisition", "layoffs", "remote work",
+]
+
+_BF_CACHE: dict = {}
+_BF_CACHE_TTL = 1800  # 30 min
+
+
+def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") -> dict:
+    """
+    Fetch Google Trends for a Business/Finance topic, globally,
+    restricted to finance (cat=7) or business (cat=12) categories.
+    Returns rich analytics dict accelerated by native C++/Rust kernels.
+    """
+    cache_key = f"bf_{topic}_{timeframe}_{geo}"
+    now = time.time()
+    if cache_key in _BF_CACHE and now - _BF_CACHE[cache_key]["_ts"] < _BF_CACHE_TTL:
+        return _BF_CACHE[cache_key]
+
+    result = {
+        "topic": topic, "timeframe": timeframe, "geo": geo or "Global",
+        "finance": {}, "business": {},
+        "combined": {}, "analytics": {},
+        "related_queries": {}, "related_topics": {},
+        "error": None,
+    }
+
+    try:
+        from pytrends.request import TrendReq
+
+        pt = TrendReq(hl="en-US", tz=0, timeout=(8, 20), retries=2, backoff_factor=1.0)
+        kw_list = [topic[:100]]  # pytrends max 5 kws; use 1 for precision
+
+        # ── Finance category (cat=7) ──
+        try:
+            pt.build_payload(kw_list, cat=_GT_CAT_FINANCE,
+                             timeframe=timeframe, geo=geo, gprop="")
+            df_fin = pt.interest_over_time()
+        except Exception:
+            df_fin = None
+
+        # ── Business category (cat=12) ──
+        try:
+            pt.build_payload(kw_list, cat=_GT_CAT_BUSINESS,
+                             timeframe=timeframe, geo=geo, gprop="")
+            df_biz = pt.interest_over_time()
+            # Related queries & topics — best from business category
+            try:
+                rq = pt.related_queries()
+                result["related_queries"] = {
+                    "top":   rq.get(topic, {}).get("top", pd.DataFrame()).head(10).to_dict("records")
+                             if isinstance(rq.get(topic, {}).get("top"), pd.DataFrame) else [],
+                    "rising": rq.get(topic, {}).get("rising", pd.DataFrame()).head(10).to_dict("records")
+                             if isinstance(rq.get(topic, {}).get("rising"), pd.DataFrame) else [],
+                }
+            except Exception:
+                pass
+            try:
+                rt = pt.related_topics()
+                result["related_topics"] = {
+                    "top":   rt.get(topic, {}).get("top", pd.DataFrame()).head(8).to_dict("records")
+                             if isinstance(rt.get(topic, {}).get("top"), pd.DataFrame) else [],
+                    "rising": rt.get(topic, {}).get("rising", pd.DataFrame()).head(8).to_dict("records")
+                             if isinstance(rt.get(topic, {}).get("rising"), pd.DataFrame) else [],
+                }
+            except Exception:
+                pass
+        except Exception:
+            df_biz = None
+
+        def _extract(df):
+            if df is None or df.empty:
+                return None
+            col = kw_list[0] if kw_list[0] in df.columns else df.columns[0]
+            s = df[col].dropna()
+            return [(str(d.date()), int(v)) for d, v in s.items()]
+
+        fin_series = _extract(df_fin)
+        biz_series = _extract(df_biz)
+
+        # ── Combine: element-wise average when both available ──
+        def _series_to_np(s):
+            return np.array([v for _, v in s], dtype=np.float64) if s else None
+
+        fin_arr = _series_to_np(fin_series)
+        biz_arr = _series_to_np(biz_series)
+
+        if fin_arr is not None and biz_arr is not None:
+            n = min(len(fin_arr), len(biz_arr))
+            combined_arr = (fin_arr[:n] + biz_arr[:n]) / 2.0
+            combined_dates = [fin_series[i][0] for i in range(n)]
+            combined_series = [(combined_dates[i], round(float(combined_arr[i]), 1))
+                               for i in range(n)]
+        elif fin_arr is not None:
+            combined_arr = fin_arr
+            combined_series = fin_series
+        elif biz_arr is not None:
+            combined_arr = biz_arr
+            combined_series = biz_series
+        else:
+            combined_arr = None
+            combined_series = []
+
+        result["finance"]  = {"series": fin_series or [], "label": "Finance (Cat 7)"}
+        result["business"] = {"series": biz_series or [], "label": "Business (Cat 12)"}
+        result["combined"] = {"series": combined_series, "label": "Combined (B+F avg)"}
+
+        # ── Native-accelerated analytics ──
+        if combined_arr is not None and len(combined_arr) >= 4:
+            arr = combined_arr
+            n   = len(arr)
+
+            # Z-score momentum (native)
+            zscore = calc_zscore_rolling(arr, w=min(4, n))
+
+            # Linear trend slope (native)
+            slope = calc_lintrend(arr)
+
+            # Pearson corr between finance & business legs (native)
+            corr_fb = None
+            if fin_arr is not None and biz_arr is not None and len(fin_arr) > 4 and len(biz_arr) > 4:
+                nn = min(len(fin_arr), len(biz_arr))
+                corr_fb = round(calc_pearson(fin_arr[:nn], biz_arr[:nn]), 4)
+
+            current   = float(arr[-1])
+            peak      = float(arr.max())
+            trough    = float(arr.min())
+            avg       = float(arr.mean())
+            avg_4w    = float(arr[-4:].mean()) if n >= 4 else current
+            avg_12w   = float(arr[-12:].mean()) if n >= 12 else avg
+
+            momentum_z = float(zscore[-1]) if n >= 4 else 0.0
+
+            # Trend classification
+            slope_norm = slope / (avg + 1e-6)
+            if slope_norm > 0.01:
+                trend_label = "RISING"
+            elif slope_norm < -0.01:
+                trend_label = "FALLING"
+            else:
+                trend_label = "STABLE"
+
+            # Breakout detection: current > avg + 1.5σ
+            sigma = float(arr.std()) if n > 1 else 1.0
+            breakout = current > avg + 1.5 * sigma
+            oversold  = current < avg - 1.5 * sigma
+
+            result["analytics"] = {
+                "current":       round(current, 1),
+                "peak":          round(peak, 1),
+                "trough":        round(trough, 1),
+                "avg_all":       round(avg, 1),
+                "avg_4w":        round(avg_4w, 1),
+                "avg_12w":       round(avg_12w, 1),
+                "slope":         round(float(slope), 5),
+                "slope_norm":    round(slope_norm, 5),
+                "momentum_z":    round(momentum_z, 3),
+                "trend":         trend_label,
+                "breakout":      breakout,
+                "oversold":      oversold,
+                "sigma":         round(sigma, 2),
+                "corr_fin_biz":  corr_fb,
+                "zscore_series": [round(float(v), 3) for v in zscore],
+                "n_points":      n,
+                "accel_backend": "rust" if _RUST_LIB else ("cpp" if _CPP_LIB else "python"),
+            }
+
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    result["_ts"] = time.time()
+    _BF_CACHE[cache_key] = result
+    return result
+
+
+def build_trends_chart_html(trends_data: dict) -> str:
+    """
+    Build a full Plotly chart suite for a trends result dict:
+    - Row 1: Interest over time (Finance + Business + Combined)
+    - Row 2: Z-score momentum (native-computed)
+    - Row 3: Finance vs Business scatter (correlation)
+    - Row 4: Bar chart — top related queries
+    Returns an HTML div string (Plotly offline).
+    """
+    an   = trends_data.get("analytics", {})
+    fin  = trends_data.get("finance", {}).get("series", [])
+    biz  = trends_data.get("business", {}).get("series", [])
+    comb = trends_data.get("combined", {}).get("series", [])
+    rq   = trends_data.get("related_queries", {})
+    topic = trends_data.get("topic", "")
+
+    if not comb and not fin and not biz:
+        return '<div style="color:#888;padding:24px;text-align:center">No trend data available for this topic.</div>'
+
+    dates_comb = [x[0] for x in comb]
+    vals_comb  = [x[1] for x in comb]
+    dates_fin  = [x[0] for x in fin]
+    vals_fin   = [x[1] for x in fin]
+    dates_biz  = [x[0] for x in biz]
+    vals_biz   = [x[1] for x in biz]
+
+    # Z-score series aligned to combined dates
+    zs = an.get("zscore_series", [])
+
+    # Subplot layout
+    n_rows = 2 + (1 if fin and biz else 0) + (1 if rq.get("top") else 0)
+    row_h  = [0.50, 0.20]
+    titles = [
+        f"Google Trends — <b>{topic}</b> (Business & Finance, Global)",
+        "Z-Score Momentum (native C++/Rust)"
+    ]
+    if fin and biz:
+        row_h.append(0.15)
+        titles.append("Finance vs Business Correlation")
+    if rq.get("top"):
+        row_h.append(0.15)
+        titles.append("Top Related Queries")
+    # Normalise heights
+    s = sum(row_h)
+    row_h = [r / s for r in row_h]
+
+    fig = make_subplots(
+        rows=n_rows, cols=1,
+        shared_xaxes=False,
+        vertical_spacing=0.06,
+        row_heights=row_h,
+        subplot_titles=titles,
+    )
+
+    C = _C  # reuse existing colour palette
+
+    # ── Row 1: Interest over time ──
+    if vals_fin:
+        fig.add_trace(go.Scatter(
+            x=dates_fin, y=vals_fin, mode="lines", name="Finance (Cat 7)",
+            line=dict(color=C["sma50"], width=1.5, dash="dot"), opacity=0.8,
+        ), row=1, col=1)
+    if vals_biz:
+        fig.add_trace(go.Scatter(
+            x=dates_biz, y=vals_biz, mode="lines", name="Business (Cat 12)",
+            line=dict(color=C["sma20"], width=1.5, dash="dash"), opacity=0.8,
+        ), row=1, col=1)
+    if vals_comb:
+        fig.add_trace(go.Scatter(
+            x=dates_comb, y=vals_comb, mode="lines", name="Combined",
+            line=dict(color=C["white"], width=2.5),
+            fill="tozeroy", fillcolor="rgba(41,98,255,0.07)",
+        ), row=1, col=1)
+    # Breakout / oversold markers
+    if an.get("breakout"):
+        fig.add_hline(y=an["avg_all"] + 1.5 * an.get("sigma", 0),
+                      row=1, col=1,
+                      line=dict(color="rgba(38,166,154,.6)", width=1, dash="dot"))
+    if an.get("oversold"):
+        fig.add_hline(y=an["avg_all"] - 1.5 * an.get("sigma", 0),
+                      row=1, col=1,
+                      line=dict(color="rgba(239,83,80,.6)", width=1, dash="dot"))
+    fig.add_hline(y=an.get("avg_all", 50), row=1, col=1,
+                  line=dict(color="rgba(120,123,134,.4)", width=0.8, dash="dash"))
+
+    # ── Row 2: Z-score ──
+    if zs and dates_comb:
+        zlen = min(len(zs), len(dates_comb))
+        zcolors = [C["hp"] if v >= 0 else C["hn"] for v in zs[:zlen]]
+        fig.add_trace(go.Bar(
+            x=dates_comb[:zlen], y=zs[:zlen],
+            name="Z-Score", marker_color=zcolors, showlegend=False,
+        ), row=2, col=1)
+        fig.add_hline(y=0, row=2, col=1,
+                      line=dict(color="rgba(120,123,134,.5)", width=0.8, dash="dash"))
+        fig.add_hline(y=1.5, row=2, col=1,
+                      line=dict(color="rgba(38,166,154,.4)", width=0.8, dash="dot"))
+        fig.add_hline(y=-1.5, row=2, col=1,
+                      line=dict(color="rgba(239,83,80,.4)", width=0.8, dash="dot"))
+
+    cur_row = 3
+    # ── Row 3: Correlation scatter ──
+    if fin and biz and n_rows >= 3 and (not rq.get("top") or n_rows >= 4):
+        nn = min(len(vals_fin), len(vals_biz))
+        fig.add_trace(go.Scatter(
+            x=vals_fin[:nn], y=vals_biz[:nn],
+            mode="markers",
+            marker=dict(color=C["white"], size=5, opacity=0.6),
+            name="Fin vs Biz", showlegend=False,
+        ), row=cur_row, col=1)
+        cur_row += 1
+
+    # ── Row 4: Top related queries bar ──
+    if rq.get("top"):
+        top = rq["top"][:10]
+        qs  = [r.get("query", "") for r in top]
+        vs  = [r.get("value", 0) for r in top]
+        fig.add_trace(go.Bar(
+            x=vs, y=qs, orientation="h",
+            marker_color=C["sma20"], showlegend=False,
+            name="Related Queries",
+        ), row=cur_row, col=1)
+
+    # ── Layout ──
+    ax = dict(gridcolor=C["grid"], color=C["axis"], showline=False,
+              zeroline=False, tickfont=dict(size=9, color=C["text"]))
+    total_h = 220 + 160 * (n_rows - 1)
+    fig.update_layout(
+        height=total_h,
+        plot_bgcolor=C["bg"], paper_bgcolor=C["paper"],
+        font=dict(color=C["text"], family="'DM Sans',sans-serif", size=11),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+                    bgcolor="rgba(255,255,255,0)", font=dict(size=10)),
+        hovermode="x unified", margin=dict(l=55, r=20, t=55, b=30),
+        hoverlabel=dict(bgcolor="rgba(255,255,255,.97)",
+                        bordercolor="rgba(120,123,134,.3)",
+                        font=dict(color="#000")),
+    )
+    for i in range(1, n_rows + 1):
+        fig.update_layout(**{f"xaxis{'' if i == 1 else i}": {**ax}})
+        fig.update_layout(**{f"yaxis{'' if i == 1 else i}": {**ax}})
+    for ann in fig.layout.annotations:
+        ann.font.color = "#787b86"
+        ann.font.size  = 10
+
+    return pyo.plot(fig, output_type="div", include_plotlyjs=False)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # FRED MACRO DATA  (official FRED REST API — key via FRED_API_KEY env var)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1857,6 +2326,65 @@ def calc_support_resistance(c, window=20):
     resistance = highs.iloc[-1]
     support    = lows.iloc[-1]
     return support, resistance
+
+
+# ── NATIVE-ACCELERATED TREND MATH ─────────────────────────────────────────────
+def calc_zscore_rolling(arr, w=4):
+    """Rolling Z-score — Rust > C++ > NumPy fallback."""
+    a = np.ascontiguousarray(arr, dtype=np.float64)
+    n = len(a)
+    lib = _RUST_LIB or _CPP_LIB
+    if lib is not None:
+        ptr_in, _a = _c_arr(a)
+        ptr_out, out = _out_arr(n)
+        if _RUST_LIB:
+            _RUST_LIB.zscore_rolling_rs(ptr_in, ctypes.c_size_t(n), ctypes.c_size_t(int(w)), ptr_out)
+        else:
+            _CPP_LIB.zscore_rolling(ptr_in, ctypes.c_int(n), ctypes.c_int(int(w)), ptr_out)
+        return out
+    # NumPy fallback
+    out = np.zeros(n)
+    for i in range(w - 1, n):
+        sl = a[i - w + 1:i + 1]
+        sd = sl.std() or 1.0
+        out[i] = (a[i] - sl.mean()) / sd
+    return out
+
+
+def calc_pearson(a, b):
+    """Pearson correlation — Rust > C++ > NumPy fallback."""
+    a = np.ascontiguousarray(a, dtype=np.float64)
+    b = np.ascontiguousarray(b, dtype=np.float64)
+    n = min(len(a), len(b))
+    if n < 2:
+        return 0.0
+    a, b = a[:n], b[:n]
+    lib = _RUST_LIB or _CPP_LIB
+    if lib is not None:
+        pa, _a = _c_arr(a)
+        pb, _b = _c_arr(b)
+        if _RUST_LIB:
+            return float(_RUST_LIB.pearson_corr_rs(pa, pb, ctypes.c_size_t(n)))
+        else:
+            return float(_CPP_LIB.pearson_corr(pa, pb, ctypes.c_int(n)))
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def calc_lintrend(arr):
+    """Linear trend slope — Rust > C++ > NumPy fallback."""
+    a = np.ascontiguousarray(arr, dtype=np.float64)
+    n = len(a)
+    if n < 2:
+        return 0.0
+    lib = _RUST_LIB or _CPP_LIB
+    if lib is not None:
+        ptr, _a = _c_arr(a)
+        if _RUST_LIB:
+            return float(_RUST_LIB.lintrend_rs(ptr, ctypes.c_size_t(n)))
+        else:
+            return float(_CPP_LIB.lintrend(ptr, ctypes.c_int(n)))
+    x = np.arange(n, dtype=np.float64)
+    return float(np.polyfit(x, a, 1)[0])
  
  
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3267,6 +3795,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <nav class="header-nav">
     <a class="nav-link" href="#stocks">Stocks</a>
     <a class="nav-link" href="#sectors">Sectors</a>
+    <a class="nav-link" href="#bf-trends">Trends</a>
     <a class="nav-link" href="#live-news">Live News</a>
     <a class="nav-link" href="#vessels">Data</a>
   </nav>
@@ -3712,6 +4241,56 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     </table>
   </div>
   <div id="pred-empty" style="display:none;text-align:center;padding:40px 20px;color:#888;font-size:.85rem">No matching markets found.</div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     SECTION: GOOGLE TRENDS — BUSINESS & FINANCE
+═══════════════════════════════════════════ -->
+<div class="section-divider" id="bf-trends">
+  <div class="section-divider-line"></div>
+  <div class="section-label"><span class="dot" style="background:#2196f3"></span>Google Trends · Business &amp; Finance</div>
+  <div class="section-divider-line"></div>
+</div>
+
+<div class="glass sector-panel" id="bf-trends-panel">
+  <div class="panel-label">Trending Topics — Business &amp; Finance (Global)</div>
+
+  <!-- Search row -->
+  <div class="sector-selector-row" style="margin-bottom:14px">
+    <div class="sector-select-wrap" style="background:#fff">
+      <span class="sel-prefix">Topic</span>
+      <input id="bf-topic-input" type="text"
+             placeholder="e.g. interest rates, AI stocks, inflation…"
+             style="flex:1;background:transparent;border:none;outline:none;padding:.75rem 1rem;font-family:inherit;font-size:.875rem;font-weight:500;color:#000;min-width:0"
+             onkeydown="if(event.key==='Enter')fetchBFTrends()"/>
+    </div>
+    <select id="bf-timeframe" style="background:#fff;border:2px solid #000;border-radius:var(--rs);padding:0 34px 0 14px;font-size:.875rem;font-family:inherit;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'10\\' height=\\'6\\' viewBox=\\'0 0 10 6\\'%3E%3Cpath fill=\\'%23000\\' d=\\'M5 6L0 0z\\'/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 13px center;min-width:130px">
+      <option value="now 7-d">7 Days</option>
+      <option value="today 1-m">1 Month</option>
+      <option value="today 3-m">3 Months</option>
+      <option value="today 12-m" selected>12 Months</option>
+      <option value="today 5-y">5 Years</option>
+      <option value="all">All Time</option>
+    </select>
+    <button class="btn-sector" id="bf-fetch-btn" onclick="fetchBFTrends()">Analyse &#8594;</button>
+  </div>
+
+  <!-- Quick-launch topic chips -->
+  <div id="bf-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid #e5e5e5">
+    <span style="font-size:.58rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#888;align-self:center;margin-right:4px;flex-shrink:0">Quick</span>
+  </div>
+
+  <!-- Analytics summary badges (shown after fetch) -->
+  <div id="bf-summary" style="display:none;margin-bottom:16px"></div>
+
+  <!-- Chart container (Plotly divs injected here) -->
+  <div id="bf-chart-area" style="min-height:0"></div>
+
+  <!-- Related queries & topics -->
+  <div id="bf-related" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #e5e5e5"></div>
+
+  <!-- Status line -->
+  <div id="bf-status" style="font-size:.72rem;color:#888;margin-top:8px"></div>
 </div>
 
 <!-- ══════════════════════════════════════════
@@ -4282,6 +4861,132 @@ document.getElementById('ntabs').addEventListener('click',function(e){{
  
 loadCh('{fh}');
 
+// ── GOOGLE TRENDS — BUSINESS & FINANCE ───────────────────────────────────────
+// Quick-launch topics (rendered dynamically so Python constant stays DRY)
+var BF_TOPICS = {json.dumps(TRENDING_BUSINESS_FINANCE[:24])};
+(function initBFChips(){{
+  var box = document.getElementById('bf-chips');
+  if (!box) return;
+  BF_TOPICS.forEach(function(t){{
+    var btn = document.createElement('button');
+    btn.className = 'pill';
+    btn.textContent = t;
+    btn.onclick = function(){{ document.getElementById('bf-topic-input').value=t; fetchBFTrends(); }};
+    box.appendChild(btn);
+  }});
+}})();
+
+async function fetchBFTrends(){{
+  var topic = (document.getElementById('bf-topic-input').value||'').trim();
+  if(!topic){{document.getElementById('bf-topic-input').focus();return;}}
+  var tf = document.getElementById('bf-timeframe').value || 'today 12-m';
+  var btn = document.getElementById('bf-fetch-btn');
+  var status = document.getElementById('bf-status');
+  var chartArea = document.getElementById('bf-chart-area');
+  var summaryEl = document.getElementById('bf-summary');
+  var relatedEl = document.getElementById('bf-related');
+
+  btn.disabled=true; btn.textContent='Fetching\\u2026';
+  status.textContent='Fetching Google Trends for \\u201c'+topic+'\\u201d (Business & Finance, Global)\\u2026';
+  chartArea.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;padding:36px;gap:12px"><div class="sector-spinner"></div><span style="font-size:.78rem;color:#555">Pulling pytrends data + running C++/Rust analytics\\u2026</span></div>';
+  summaryEl.style.display='none';
+  relatedEl.style.display='none';
+
+  try{{
+    var resp = await fetch('/api/bf-trends', {{
+      method:'POST',
+      headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify({{topic:topic, timeframe:tf, geo:''}})
+    }});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    var data = await resp.json();
+    if(data.error) throw new Error(data.error);
+
+    // Inject chart HTML (contains Plotly divs + init JS from server)
+    chartArea.innerHTML = data.chart_html || '<div style="color:#888;padding:24px;text-align:center">No chart data.</div>';
+    // Re-run any inline scripts that Plotly offline inserts
+    chartArea.querySelectorAll('script').forEach(function(s){{
+      var ns=document.createElement('script'); ns.textContent=s.textContent; s.parentNode.replaceChild(ns,s);
+    }});
+
+    // Analytics summary bar
+    var an = data.analytics || {{}};
+    if(Object.keys(an).length){{
+      var trendColor = an.trend==='RISING'?'#26a69a':an.trend==='FALLING'?'#ef5350':'#888';
+      var accel = an.accel_backend||'python';
+      summaryEl.innerHTML =
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">'+
+          _bfBadge('Current','#000',an.current+'/100')+
+          _bfBadge('Peak','#555',an.peak+'/100')+
+          _bfBadge('Avg (all)','#555',an.avg_all+'/100')+
+          _bfBadge('Avg 4w','#555',an.avg_4w+'/100')+
+          _bfBadge('Trend',trendColor,an.trend)+
+          (an.breakout?'<span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 9px;border-radius:4px;border:1px solid rgba(38,166,154,.6);background:rgba(38,166,154,.1);color:#26a69a">BREAKOUT</span>':'')+
+          (an.oversold?'<span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 9px;border-radius:4px;border:1px solid rgba(239,83,80,.6);background:rgba(239,83,80,.1);color:#ef5350">OVERSOLD</span>':'')+
+          _bfBadge('Z-Score',Math.abs(an.momentum_z)>1.5?trendColor:'#888',an.momentum_z.toFixed(2))+
+          (an.corr_fin_biz!=null?_bfBadge('Fin/Biz Corr','#7b1fa2',an.corr_fin_biz.toFixed(3)):'')+
+          '<span style="font-size:.55rem;letter-spacing:.08em;text-transform:uppercase;color:#aaa;margin-left:auto">accel: '+esc(accel)+'</span>'+
+        '</div>';
+      summaryEl.style.display='block';
+    }}
+
+    // Related queries & topics
+    var rq = data.related_queries || {{}};
+    var rt = data.related_topics  || {{}};
+    var relHtml = '';
+    if((rq.top||[]).length||(rq.rising||[]).length){{
+      relHtml += '<div style="margin-bottom:12px"><span style="font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888">Related Queries</span>';
+      if((rq.top||[]).length){{
+        relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">';
+        (rq.top||[]).forEach(function(r){{
+          relHtml += '<span style="font-size:.68rem;border:1px solid #000;border-radius:20px;padding:3px 10px;background:#fff;color:#333;cursor:default">'+esc(r.query||r.topic_title||'')+'</span>';
+        }});
+        relHtml += '</div>';
+      }}
+      if((rq.rising||[]).length){{
+        relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">';
+        (rq.rising||[]).forEach(function(r){{
+          var val = r.value==='Breakout'?'&#8593;&#8593;':(r.value||'');
+          relHtml += '<span style="font-size:.65rem;border:1px solid #26a69a;border-radius:20px;padding:3px 10px;background:rgba(38,166,154,.07);color:#26a69a;cursor:default">&#8593; '+esc(r.query||r.topic_title||'')+' <small style=\\"opacity:.7\\">'+esc(String(val))+'</small></span>';
+        }});
+        relHtml += '</div>';
+      }}
+      relHtml += '</div>';
+    }}
+    if((rt.top||[]).length){{
+      relHtml += '<div style="margin-top:8px"><span style="font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888">Related Topics</span>';
+      relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">';
+      (rt.top||[]).forEach(function(r){{
+        relHtml += '<span style="font-size:.68rem;border:1px solid #000;border-radius:4px;padding:3px 10px;background:#f8f7f4;color:#333">'+esc(r.topic_title||r.query||'')+'</span>';
+      }});
+      relHtml += '</div></div>';
+    }}
+    if(relHtml){{relatedEl.innerHTML=relHtml;relatedEl.style.display='block';}}
+
+    status.textContent='\\u2713 '+esc(topic)+' | '+esc(tf)+' | '+((data.combined||{{}}).series||[]).length+' data points | accel: '+esc((data.analytics||{{}}).accel_backend||'python');
+  }} catch(e){{
+    chartArea.innerHTML='<div class="error-box">'+esc(String(e))+'</div>';
+    status.textContent='Error: '+esc(String(e));
+  }} finally{{
+    btn.disabled=false; btn.textContent='Analyse \\u2192';
+  }}
+}}
+
+function _bfBadge(label,color,val){{
+  return '<div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 12px;border:1px solid #e5e5e5;border-radius:4px;background:#fff;min-width:60px">'+
+    '<span style="font-size:.52rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#888">'+label+'</span>'+
+    '<span style="font-size:.85rem;font-weight:700;color:'+color+';font-family:\\'DM Mono\\',monospace">'+val+'</span>'+
+  '</div>';
+}}
+
+// Expose nav link handler so header link works
+document.querySelectorAll('.nav-link').forEach(function(l){{
+  if(l.getAttribute('href')==='#bf-trends') l.addEventListener('click',function(e){{
+    e.preventDefault();
+    document.getElementById('bf-trends').scrollIntoView({{behavior:'smooth'}});
+  }});
+}});
+
 // ── Satellite Imagery ─────────────────────────────────────────────────────────
 var satMaps = {{}};
 
@@ -4845,6 +5550,61 @@ def api_trends():
     if not query: return jsonify({"error": "q param required"}), 400
     data = fetch_google_trends([query], timeframe="today 3-m")
     return jsonify({"trends": data, "query": query})
+
+
+@app.route("/api/bf-trends", methods=["GET", "POST"])
+def api_bf_trends():
+    """
+    Business & Finance Google Trends endpoint.
+    GET  ?topic=...&timeframe=...&geo=...
+    POST {topic, timeframe, geo}
+    Returns rich analytics + chart HTML.
+    """
+    if request.method == "POST":
+        body = request.get_json(force=True) or {}
+        topic     = (body.get("topic") or "").strip()
+        timeframe = body.get("timeframe", "today 12-m")
+        geo       = body.get("geo", "")
+    else:
+        topic     = (request.args.get("topic") or "").strip()
+        timeframe = request.args.get("timeframe", "today 12-m")
+        geo       = request.args.get("geo", "")
+
+    if not topic:
+        return jsonify({"error": "topic is required"}), 400
+
+    # Validate timeframe whitelist to avoid injection
+    valid_tf = {
+        "now 1-H", "now 4-H", "now 1-d", "now 7-d",
+        "today 1-m", "today 3-m", "today 12-m",
+        "today 5-y", "all",
+    }
+    if timeframe not in valid_tf:
+        timeframe = "today 12-m"
+
+    data = fetch_bf_trends(topic, timeframe=timeframe, geo=geo)
+    if data.get("error"):
+        return jsonify({"error": data["error"]}), 502
+
+    # Build chart
+    chart_html = ""
+    try:
+        chart_html = build_trends_chart_html(data)
+    except Exception as exc:
+        chart_html = f'<div style="color:#c00;padding:12px">Chart error: {exc}</div>'
+
+    return jsonify({
+        "topic":           data["topic"],
+        "timeframe":       data["timeframe"],
+        "geo":             data["geo"],
+        "finance":         data["finance"],
+        "business":        data["business"],
+        "combined":        data["combined"],
+        "analytics":       data["analytics"],
+        "related_queries": data["related_queries"],
+        "related_topics":  data["related_topics"],
+        "chart_html":      chart_html,
+    })
  
  
 @app.route("/api/satellite")
