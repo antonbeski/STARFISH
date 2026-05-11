@@ -27,6 +27,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 import plotly.offline as pyo
 from plotly.subplots import make_subplots
+from pytrends.request import TrendReq
 
 app = Flask(__name__)
 
@@ -792,202 +793,110 @@ TRENDING_BUSINESS_FINANCE = [
 _BF_CACHE: dict = {}
 _BF_CACHE_TTL = 1800  # 30 min
 
-# ── Session pool ──────────────────────────────────────────────────────────────
-_GT_BASE      = "https://trends.google.com"
-_GT_EXPLORE   = _GT_BASE + "/trends/api/explore"
-_GT_MULTILINE = _GT_BASE + "/trends/api/widgetdata/multiline"
-_GT_RELATED   = _GT_BASE + "/trends/api/widgetdata/relatedsearches"
+# ── pytrends client factory ───────────────────────────────────────────────────
 
-_GT_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
-_GT_SESSION_LOCK = threading.Lock()
-_GT_SESSION_OBJ  = [None, 0.0]   # [session, created_ts]
-_GT_SESSION_TTL  = 600
+def _make_pytrends() -> TrendReq:
+    """Create a TrendReq instance with sane timeouts and retry/backoff."""
+    return TrendReq(
+        hl="en-US",
+        tz=330,           # IST (UTC +5:30) — getTimezoneOffset() = -330
+        timeout=(10, 25),
+        retries=3,
+        backoff_factor=1,
+    )
 
 
-def _gt_session() -> requests.Session:
-    """Return a cached requests.Session pre-warmed with Google cookies (NID, CONSENT)."""
-    now = time.time()
-    with _GT_SESSION_LOCK:
-        s, ts = _GT_SESSION_OBJ[0], _GT_SESSION_OBJ[1]
-        if s is None or now - ts > _GT_SESSION_TTL:
-            s = requests.Session()
-            s.headers.update({
-                "User-Agent":      _GT_UA,
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Referer":         "https://trends.google.com/trends/explore",
-            })
-            # Warm-up: visit explore so Google sets NID / CONSENT cookies.
-            try:
-                s.get("https://trends.google.com/trends/explore",
-                      timeout=10, params={"q": "stock market", "hl": "en-US"})
-            except Exception:
-                pass
-            _GT_SESSION_OBJ[0] = s
-            _GT_SESSION_OBJ[1] = now
-    return _GT_SESSION_OBJ[0]
-
-
-def _gt_get(url: str, params: dict, retries: int = 5) -> requests.Response:
-    """GET with exponential backoff on 429 / 5xx. Rebuilds session on repeated 429."""
-    for attempt in range(retries):
-        try:
-            r = _gt_session().get(url, params=params, timeout=25)
-            if r.status_code == 429:
-                with _GT_SESSION_LOCK:
-                    _GT_SESSION_OBJ[1] = 0.0   # force session rebuild
-                wait = min(60, (2 ** attempt) * random.uniform(2.0, 4.0))
-                time.sleep(wait)
-                continue
-            if r.status_code >= 500:
-                time.sleep(random.uniform(1.0, 2.5) * (attempt + 1))
-                continue
-            r.raise_for_status()
-            return r
-        except requests.RequestException:
-            if attempt == retries - 1:
-                raise
-            time.sleep(random.uniform(0.5, 1.5) * (attempt + 1))
-    raise RuntimeError(f"All {retries} retries failed for {url}")
-
-
-def _gt_parse(text: str) -> dict:
-    """)]}\'\\n prefix stripper then JSON parse."""
-    txt = text.lstrip()
-    if txt.startswith(")]}\'"):
-        txt = txt.split("\n", 1)[1] if "\n" in txt else txt[5:]
-    return json.loads(txt)
-
-
-def _gt_explore(keywords: list, timeframe: str, geo: str = "", cat: int = 0) -> list:
-    """Call /explore to obtain widget tokens for the requested keyword set."""
-    req_obj = {
-        "comparisonItem": [
-            {"keyword": kw[:100], "geo": geo, "time": timeframe}
-            for kw in keywords
-        ],
-        "category": cat,
-        "property": "",
-    }
-    params = {
-        "hl":  "en-US",
-        "tz":  "-330",
-        "req": json.dumps(req_obj, separators=(",", ":")),
-    }
-    r = _gt_get(_GT_EXPLORE, params)
-    return _gt_parse(r.text).get("widgets", [])
-
-
-def _gt_timeseries(widgets: list) -> list:
-    """Fetch full interest-over-time data via the TIMESERIES widget."""
-    w = next((x for x in widgets if x.get("id") == "TIMESERIES"), None)
-    if not w:
+def _pt_interest_over_time(topic: str, timeframe: str, geo: str, cat: int) -> list:
+    """
+    Fetch interest-over-time for one topic/category via pytrends.
+    Returns [(date_str, value), ...] or raises RuntimeError on failure.
+    """
+    pt = _make_pytrends()
+    pt.build_payload([topic], cat=cat, timeframe=timeframe, geo=geo, gprop="")
+    df = pt.interest_over_time()
+    if df.empty or topic not in df.columns:
         return []
-    params = {
-        "hl":    "en-US",
-        "tz":    "-330",
-        "req":   json.dumps(w["request"],  separators=(",", ":")),
-        "token": w["token"],
-    }
-    r = _gt_get(_GT_MULTILINE, params)
-    return _gt_parse(r.text).get("default", {}).get("timelineData", [])
-
-
-def _gt_related_queries(widgets: list) -> dict:
-    """Fetch top + rising related queries via RELATED_QUERIES widgets."""
-    result = {"top": [], "rising": []}
-    for w in [x for x in widgets if x.get("id") == "RELATED_QUERIES"][:2]:
-        params = {
-            "hl":    "en-US",
-            "tz":    "-330",
-            "req":   json.dumps(w["request"],  separators=(",", ":")),
-            "token": w["token"],
-        }
+    series = []
+    for ts, row in df.iterrows():
         try:
-            r = _gt_get(_GT_RELATED, params)
-            ranked_lists = _gt_parse(r.text).get("default", {}).get("rankedList", [])
-            for i, section in enumerate(ranked_lists[:2]):
-                bucket = "top" if i == 0 else "rising"
-                result[bucket] = [
-                    {"query": item.get("query", ""), "value": item.get("value", 0)}
-                    for item in section.get("rankedKeyword", [])[:10]
-                ]
+            series.append((str(ts.date()), int(row[topic])))
         except Exception:
             pass
-    return result
+    return series
 
 
-def _gt_related_topics(widgets: list) -> dict:
-    """Fetch top + rising related topics via RELATED_TOPICS widgets."""
-    result = {"top": [], "rising": []}
-    for w in [x for x in widgets if x.get("id") == "RELATED_TOPICS"][:1]:
-        params = {
-            "hl":    "en-US",
-            "tz":    "-330",
-            "req":   json.dumps(w["request"],  separators=(",", ":")),
-            "token": w["token"],
-        }
-        try:
-            r = _gt_get(_GT_RELATED, params)
-            ranked_lists = _gt_parse(r.text).get("default", {}).get("rankedList", [])
-            for i, section in enumerate(ranked_lists[:2]):
-                bucket = "top" if i == 0 else "rising"
-                result[bucket] = [
-                    {
-                        "topic": item.get("topic", {}).get("title", item.get("query", "")),
-                        "type":  item.get("topic", {}).get("type", ""),
-                        "value": item.get("value", 0),
-                    }
-                    for item in section.get("rankedKeyword", [])[:8]
-                ]
-        except Exception:
-            pass
-    return result
-
-
-def _gt_parse_timeline(timeline: list) -> list:
-    """Convert raw timelineData -> [(date_str, value), ...] full history."""
-    out = []
-    for pt_item in timeline:
-        date_str = (pt_item.get("formattedTime")
-                    or pt_item.get("formattedAxisTime", ""))
-        values = pt_item.get("value", [])
-        if values:
-            try:
-                out.append((date_str, int(values[0])))
-            except (ValueError, TypeError):
-                pass
-    return out
-
-
-def _gt_fetch_category(keywords: list, timeframe: str, geo: str, cat: int) -> dict:
-    """Fetch one category: explore -> timeseries + related queries + related topics."""
-    out = {
-        "series": [],
-        "related_queries": {"top": [], "rising": []},
-        "related_topics":  {"top": [], "rising": []},
-        "error": None,
-    }
+def _pt_related(topic: str, timeframe: str, geo: str) -> tuple:
+    """
+    Fetch related_queries + related_topics for a topic (cat=0, general).
+    Returns (related_queries_dict, related_topics_dict).
+    Both dicts have keys "top" and "rising", each a list of clean dicts.
+    """
+    rq_out = {"top": [], "rising": []}
+    rt_out = {"top": [], "rising": []}
     try:
-        widgets        = _gt_explore(keywords, timeframe, geo=geo, cat=cat)
-        timeline       = _gt_timeseries(widgets)
-        out["series"]           = _gt_parse_timeline(timeline)
-        out["related_queries"]  = _gt_related_queries(widgets)
-        out["related_topics"]   = _gt_related_topics(widgets)
-    except Exception as exc:
-        out["error"] = str(exc)
-    return out
+        pt = _make_pytrends()
+        pt.build_payload([topic], cat=0, timeframe=timeframe, geo=geo, gprop="")
+
+        # ── Related Queries ──────────────────────────────────────────────────
+        # pytrends returns: {keyword: {"top": DataFrame, "rising": DataFrame}}
+        # DataFrame columns: query, value
+        rq_raw = pt.related_queries()
+        kw_rq  = (rq_raw.get(topic) or {})
+
+        top_rq = kw_rq.get("top")
+        if top_rq is not None and not top_rq.empty:
+            for _, r in top_rq.head(10).iterrows():
+                rq_out["top"].append({
+                    "query": str(r.get("query", "")),
+                    "value": int(r.get("value", 0)),
+                })
+
+        rising_rq = kw_rq.get("rising")
+        if rising_rq is not None and not rising_rq.empty:
+            for _, r in rising_rq.head(10).iterrows():
+                raw_val = r.get("value", 0)
+                rq_out["rising"].append({
+                    "query": str(r.get("query", "")),
+                    # pytrends encodes breakout as 5000
+                    "value": "Breakout" if raw_val == 5000 else int(raw_val),
+                })
+
+        # ── Related Topics ───────────────────────────────────────────────────
+        # pytrends returns: {keyword: {"top": DataFrame, "rising": DataFrame}}
+        # DataFrame columns: topic_title, topic_type, value, ...
+        rt_raw = pt.related_topics()
+        kw_rt  = (rt_raw.get(topic) or {})
+
+        top_rt = kw_rt.get("top")
+        if top_rt is not None and not top_rt.empty:
+            for _, r in top_rt.head(8).iterrows():
+                rt_out["top"].append({
+                    "topic": str(r.get("topic_title", "")),
+                    "type":  str(r.get("topic_type", "")),
+                    "value": int(r.get("value", 0)),
+                })
+
+        rising_rt = kw_rt.get("rising")
+        if rising_rt is not None and not rising_rt.empty:
+            for _, r in rising_rt.head(8).iterrows():
+                raw_val = r.get("value", 0)
+                rt_out["rising"].append({
+                    "topic": str(r.get("topic_title", "")),
+                    "type":  str(r.get("topic_type", "")),
+                    "value": "Breakout" if raw_val == 5000 else int(raw_val),
+                })
+
+    except Exception:
+        pass   # related data is non-fatal — return empty dicts
+
+    return rq_out, rt_out
 
 
 def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") -> dict:
     """
-    Fetch Google Trends for a B/F topic via the direct widget API (no pytrends).
-    Finance (cat=7) + Business (cat=12) are fetched concurrently; full history
-    is returned.  Native C++/Rust kernels do all analytics.
+    Fetch Google Trends for a B/F topic via pytrends.
+    Finance (cat=7) + Business (cat=12) fetched concurrently; full history
+    returned.  Native C++/Rust kernels do all analytics.
     """
     cache_key = f"bf_{topic}_{timeframe}_{geo}"
     now = time.time()
@@ -1002,19 +911,23 @@ def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") ->
         "error": None,
     }
 
-    kw_list = [topic]
+    errors = []
 
-    # ── Parallel fetch: Finance + Business ───────────────────────────────────
+    # ── Parallel fetch: Finance (cat=7) + Business (cat=12) ─────────────────
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        fut_fin = ex.submit(_gt_fetch_category, kw_list, timeframe, geo, _GT_CAT_FINANCE)
-        fut_biz = ex.submit(_gt_fetch_category, kw_list, timeframe, geo, _GT_CAT_BUSINESS)
-        cat_fin = fut_fin.result()
-        cat_biz = fut_biz.result()
+        fut_fin = ex.submit(_pt_interest_over_time, topic, timeframe, geo, _GT_CAT_FINANCE)
+        fut_biz = ex.submit(_pt_interest_over_time, topic, timeframe, geo, _GT_CAT_BUSINESS)
+        try:
+            fin_series = fut_fin.result()
+        except Exception as e:
+            fin_series = []
+            errors.append(f"Finance: {e}")
+        try:
+            biz_series = fut_biz.result()
+        except Exception as e:
+            biz_series = []
+            errors.append(f"Business: {e}")
 
-    fin_series = cat_fin["series"]
-    biz_series = cat_biz["series"]
-
-    errors = [e for e in [cat_fin.get("error"), cat_biz.get("error")] if e]
     if errors and not fin_series and not biz_series:
         result["error"] = "; ".join(errors)
         result["_ts"] = time.time()
@@ -1023,11 +936,12 @@ def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") ->
     if errors:
         result["error"] = "; ".join(errors)   # non-fatal — partial data available
 
-    best_cat = cat_biz if len(biz_series) >= len(fin_series) else cat_fin
-    result["related_queries"] = best_cat["related_queries"]
-    result["related_topics"]  = best_cat["related_topics"]
+    # ── Related queries + topics (general, cat=0) ────────────────────────────
+    rq, rt = _pt_related(topic, timeframe, geo)
+    result["related_queries"] = rq
+    result["related_topics"]  = rt
 
-    # ── Combine ──────────────────────────────────────────────────────────────
+    # ── Combine Finance + Business ────────────────────────────────────────────
     def _to_np(s):
         return np.array([v for _, v in s], dtype=np.float64) if s else None
 
@@ -1331,8 +1245,7 @@ def fetch_all_macro():
  
  
 # ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
-# GOOGLE TRENDS — general keyword fetch  (reuses direct API scraper above)
+# GOOGLE TRENDS — general keyword fetch  (pytrends, up to 5 keywords)
 # ══════════════════════════════════════════════════════════════════════════════
 _TRENDS_CACHE = {}
 _TRENDS_CACHE_TTL = 1800
@@ -1340,31 +1253,32 @@ _TRENDS_CACHE_TTL = 1800
 
 def fetch_google_trends(keywords, timeframe="today 3-m"):
     """
-    Fetch search interest for up to 5 keywords via the direct widget API.
+    Fetch search interest for up to 5 keywords via pytrends.
     Returns full history per keyword for trend analysis (no tail truncation).
+    pytrends returns a DataFrame indexed by date; columns = keyword names.
     """
     cache_key = f"trends_{'_'.join(keywords)}_{timeframe}"
     now = time.time()
     if cache_key in _TRENDS_CACHE and now - _TRENDS_CACHE[cache_key]["ts"] < _TRENDS_CACHE_TTL:
         return _TRENDS_CACHE[cache_key]["data"]
     try:
-        widgets  = _gt_explore(keywords[:5], timeframe, geo="", cat=0)
-        timeline = _gt_timeseries(widgets)
+        pt = _make_pytrends()
+        pt.build_payload(keywords[:5], cat=0, timeframe=timeframe, geo="", gprop="")
+        df = pt.interest_over_time()
 
-        if not timeline:
+        if df.empty:
             return {}
 
         result = {}
-        for idx, kw in enumerate(keywords[:5]):
+        for kw in keywords[:5]:
+            if kw not in df.columns:
+                continue
             series_vals = []
-            for pt_item in timeline:
-                date_str = pt_item.get("formattedTime") or pt_item.get("formattedAxisTime", "")
-                values   = pt_item.get("value", [])
-                if idx < len(values):
-                    try:
-                        series_vals.append((date_str, int(values[idx])))
-                    except (ValueError, TypeError):
-                        pass
+            for ts, val in df[kw].items():
+                try:
+                    series_vals.append((str(ts.date()), int(val)))
+                except Exception:
+                    pass
             if series_vals:
                 vals_only = [v for _, v in series_vals]
                 result[kw] = {
