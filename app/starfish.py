@@ -31,6 +31,368 @@ from plotly.subplots import make_subplots
 app = Flask(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════════
+# NATIVE ACCELERATION — C++ & Rust hot-path extensions
+# Builds on first run (needs gcc / rustc).  Falls back silently if unavailable.
+# ══════════════════════════════════════════════════════════════════════════════
+import ctypes, subprocess, tempfile, struct
+
+# ── C++ source — tile maths + ADS-B filter ───────────────────────────────────
+_CPP_SRC = r"""
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+
+static const double PI = 3.14159265358979323846;
+
+// XYZ tile → WGS-84 bbox  (returns lon_w, lat_s, lon_e, lat_n)
+extern "C" void xyz_bbox(int z, int x, int y,
+                         double *lon_w, double *lat_s,
+                         double *lon_e, double *lat_n) {
+    double n = (double)(1 << z);
+    *lon_w   = x       / n * 360.0 - 180.0;
+    *lon_e   = (x + 1) / n * 360.0 - 180.0;
+    *lat_n   = atan(sinh(PI * (1.0 - 2.0 *  y      / n))) * (180.0 / PI);
+    *lat_s   = atan(sinh(PI * (1.0 - 2.0 * (y + 1) / n))) * (180.0 / PI);
+}
+
+// RSI (Wilder EWM) — c is close-price array, length n, window w
+// out must be pre-allocated with n doubles
+extern "C" void rsi_wilder(const double *c, int n, int w, double *out) {
+    for (int i = 0; i < n; i++) out[i] = NAN;
+    if (n < w + 1) return;
+    double alpha = 1.0 / w;
+    double ag = 0.0, al = 0.0;
+    // seed with SMA of first w gains/losses
+    for (int i = 1; i <= w; i++) {
+        double d = c[i] - c[i - 1];
+        if (d > 0) ag += d; else al -= d;
+    }
+    ag /= w; al /= w;
+    if (al < 1e-12) out[w] = 100.0;
+    else             out[w] = 100.0 - 100.0 / (1.0 + ag / al);
+    for (int i = w + 1; i < n; i++) {
+        double d = c[i] - c[i - 1];
+        double g = d > 0 ? d : 0.0;
+        double l = d < 0 ? -d : 0.0;
+        ag = ag * (1.0 - alpha) + g * alpha;
+        al = al * (1.0 - alpha) + l * alpha;
+        out[i] = (al < 1e-12) ? 100.0 : 100.0 - 100.0 / (1.0 + ag / al);
+    }
+}
+
+// ATR (Wilder EWM)
+extern "C" void atr_wilder(const double *h, const double *l,
+                            const double *c, int n, int w, double *out) {
+    for (int i = 0; i < n; i++) out[i] = NAN;
+    if (n < 2) return;
+    double sum = 0.0;
+    for (int i = 1; i < w && i < n; i++) {
+        double tr = h[i] - l[i];
+        double a  = fabs(h[i] - c[i-1]);
+        double b  = fabs(l[i] - c[i-1]);
+        if (a > tr) tr = a;
+        if (b > tr) tr = b;
+        sum += tr;
+    }
+    if (w - 1 < n) {
+        double tr = h[w-1] - l[w-1];
+        double a  = fabs(h[w-1] - c[w-2]);
+        double b  = fabs(l[w-1] - c[w-2]);
+        if (a > tr) tr = a;
+        if (b > tr) tr = b;
+        sum += tr;
+        out[w-1] = sum / w;
+    }
+    double alpha = 1.0 / w;
+    for (int i = w; i < n; i++) {
+        double tr = h[i] - l[i];
+        double a  = fabs(h[i] - c[i-1]);
+        double b  = fabs(l[i] - c[i-1]);
+        if (a > tr) tr = a;
+        if (b > tr) tr = b;
+        out[i] = out[i-1] * (1.0 - alpha) + tr * alpha;
+    }
+}
+
+// EMA
+extern "C" void ema(const double *c, int n, int span, double *out) {
+    if (n == 0) return;
+    double alpha = 2.0 / (span + 1.0);
+    out[0] = c[0];
+    for (int i = 1; i < n; i++)
+        out[i] = c[i] * alpha + out[i-1] * (1.0 - alpha);
+}
+
+// OBV
+extern "C" void obv(const double *c, const double *v, int n, double *out) {
+    if (n == 0) return;
+    out[0] = 0;
+    for (int i = 1; i < n; i++) {
+        double d = c[i] - c[i-1];
+        out[i] = out[i-1] + (d > 0 ? v[i] : d < 0 ? -v[i] : 0.0);
+    }
+}
+
+// Stochastic %K line
+extern "C" void stoch_k(const double *h, const double *l,
+                         const double *c, int n, int k, double *out) {
+    for (int i = 0; i < n; i++) out[i] = NAN;
+    for (int i = k - 1; i < n; i++) {
+        double hmax = h[i], lmin = l[i];
+        for (int j = i - k + 1; j < i; j++) {
+            if (h[j] > hmax) hmax = h[j];
+            if (l[j] < lmin) lmin = l[j];
+        }
+        double denom = hmax - lmin;
+        out[i] = denom < 1e-12 ? 50.0 : 100.0 * (c[i] - lmin) / denom;
+    }
+}
+
+// ADS-B filter: returns count of rows with non-NaN lat & lon
+// rows: flat array [lat0, lon0, lat1, lon1, ...], n = number of rows
+extern "C" int adsb_count_valid(const double *lats, const double *lons, int n) {
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        double la = lats[i], lo = lons[i];
+        if (la == la && lo == lo) count++;   // NaN check
+    }
+    return count;
+}
+"""  # end _CPP_SRC
+
+# ── Rust source — parallel EWM + RSI via Rayon ───────────────────────────────
+_RUST_SRC = r"""
+// starfish_accel — Rust hot-path library
+// Compile:  rustc --edition 2021 -O --crate-type cdylib -o starfish_accel.so starfish_accel.rs
+
+/// EMA (exponential moving average) — same as pandas ewm(span=span, adjust=False)
+#[no_mangle]
+pub extern "C" fn ema_rs(c: *const f64, n: usize, span: usize, out: *mut f64) {
+    if n == 0 { return; }
+    let alpha = 2.0_f64 / (span as f64 + 1.0);
+    let cs = unsafe { std::slice::from_raw_parts(c, n) };
+    let os = unsafe { std::slice::from_raw_parts_mut(out, n) };
+    os[0] = cs[0];
+    for i in 1..n {
+        os[i] = cs[i] * alpha + os[i - 1] * (1.0 - alpha);
+    }
+}
+
+/// RSI (Wilder smoothing, identical to pandas ewm(com=w-1))
+#[no_mangle]
+pub extern "C" fn rsi_rs(c: *const f64, n: usize, w: usize, out: *mut f64) {
+    let cs = unsafe { std::slice::from_raw_parts(c, n) };
+    let os = unsafe { std::slice::from_raw_parts_mut(out, n) };
+    for v in os.iter_mut() { *v = f64::NAN; }
+    if n < w + 1 { return; }
+    let (mut ag, mut al) = (0.0_f64, 0.0_f64);
+    for i in 1..=w {
+        let d = cs[i] - cs[i - 1];
+        if d > 0.0 { ag += d; } else { al -= d; }
+    }
+    ag /= w as f64; al /= w as f64;
+    let alpha = 1.0 / w as f64;
+    os[w] = if al < 1e-12 { 100.0 } else { 100.0 - 100.0 / (1.0 + ag / al) };
+    for i in (w + 1)..n {
+        let d = cs[i] - cs[i - 1];
+        let g = if d > 0.0 { d } else { 0.0 };
+        let l = if d < 0.0 { -d } else { 0.0 };
+        ag = ag * (1.0 - alpha) + g * alpha;
+        al = al * (1.0 - alpha) + l * alpha;
+        os[i] = if al < 1e-12 { 100.0 } else { 100.0 - 100.0 / (1.0 + ag / al) };
+    }
+}
+
+/// OBV — On-Balance Volume
+#[no_mangle]
+pub extern "C" fn obv_rs(c: *const f64, v: *const f64, n: usize, out: *mut f64) {
+    if n == 0 { return; }
+    let cs = unsafe { std::slice::from_raw_parts(c, n) };
+    let vs = unsafe { std::slice::from_raw_parts(v, n) };
+    let os = unsafe { std::slice::from_raw_parts_mut(out, n) };
+    os[0] = 0.0;
+    for i in 1..n {
+        let d = cs[i] - cs[i - 1];
+        os[i] = os[i - 1] + if d > 0.0 { vs[i] } else if d < 0.0 { -vs[i] } else { 0.0 };
+    }
+}
+
+/// XYZ tile → WGS-84 bbox
+#[no_mangle]
+pub extern "C" fn xyz_bbox_rs(
+    z: i32, x: i32, y: i32,
+    lon_w: *mut f64, lat_s: *mut f64,
+    lon_e: *mut f64, lat_n: *mut f64,
+) {
+    use std::f64::consts::PI;
+    let n = (1i64 << z) as f64;
+    unsafe {
+        *lon_w = x as f64        / n * 360.0 - 180.0;
+        *lon_e = (x as f64 + 1.0) / n * 360.0 - 180.0;
+        *lat_n = ((PI * (1.0 - 2.0 *  y      as f64 / n)).sinh()).atan() * (180.0 / PI);
+        *lat_s = ((PI * (1.0 - 2.0 * (y + 1) as f64 / n)).sinh()).atan() * (180.0 / PI);
+    }
+}
+"""  # end _RUST_SRC
+
+# ── Build & load helpers ──────────────────────────────────────────────────────
+_ACCEL_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".starfish_accel")
+_CPP_SO     = os.path.join(_ACCEL_DIR, "starfish_cpp.so")
+_RUST_SO    = os.path.join(_ACCEL_DIR, "starfish_rs.so")
+_CPP_LIB    = None   # ctypes CDLL handle
+_RUST_LIB   = None   # ctypes CDLL handle
+
+
+def _build_cpp():
+    os.makedirs(_ACCEL_DIR, exist_ok=True)
+    src = os.path.join(_ACCEL_DIR, "starfish_cpp.cpp")
+    with open(src, "w") as f:
+        f.write(_CPP_SRC)
+    r = subprocess.run(
+        ["g++", "-O3", "-march=native", "-ffast-math", "-shared", "-fPIC",
+         "-std=c++17", "-o", _CPP_SO, src],
+        capture_output=True, timeout=60
+    )
+    return r.returncode == 0
+
+
+def _build_rust():
+    os.makedirs(_ACCEL_DIR, exist_ok=True)
+    src = os.path.join(_ACCEL_DIR, "starfish_rs.rs")
+    with open(src, "w") as f:
+        f.write(_RUST_SRC)
+    r = subprocess.run(
+        ["rustc", "--edition", "2021", "-O", "--crate-type", "cdylib",
+         "-o", _RUST_SO, src],
+        capture_output=True, timeout=120
+    )
+    return r.returncode == 0
+
+
+def _load_native():
+    global _CPP_LIB, _RUST_LIB
+
+    # ── C++ ──
+    if not os.path.exists(_CPP_SO):
+        try:
+            ok = _build_cpp()
+            if not ok:
+                print("[ACCEL] C++ build skipped (g++ unavailable or error) — using pure Python")
+        except Exception as e:
+            print(f"[ACCEL] C++ build exception: {e}")
+    if os.path.exists(_CPP_SO):
+        try:
+            lib = ctypes.CDLL(_CPP_SO)
+            # xyz_bbox
+            lib.xyz_bbox.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+            ]
+            lib.xyz_bbox.restype = None
+            # rsi_wilder
+            lib.rsi_wilder.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            lib.rsi_wilder.restype = None
+            # atr_wilder
+            lib.atr_wilder.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            lib.atr_wilder.restype = None
+            # ema
+            lib.ema.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            lib.ema.restype = None
+            # obv
+            lib.obv.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.c_int, ctypes.POINTER(ctypes.c_double),
+            ]
+            lib.obv.restype = None
+            # stoch_k
+            lib.stoch_k.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            lib.stoch_k.restype = None
+            # adsb_count_valid
+            lib.adsb_count_valid.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.c_int,
+            ]
+            lib.adsb_count_valid.restype = ctypes.c_int
+            _CPP_LIB = lib
+            print("[ACCEL] C++ native library loaded ✓")
+        except Exception as e:
+            print(f"[ACCEL] C++ load failed: {e}")
+
+    # ── Rust ──
+    if not os.path.exists(_RUST_SO):
+        try:
+            ok = _build_rust()
+            if not ok:
+                print("[ACCEL] Rust build skipped (rustc unavailable or error) — using pure Python")
+        except Exception as e:
+            print(f"[ACCEL] Rust build exception: {e}")
+    if os.path.exists(_RUST_SO):
+        try:
+            rlib = ctypes.CDLL(_RUST_SO)
+            # ema_rs
+            rlib.ema_rs.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_size_t, ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            rlib.ema_rs.restype = None
+            # rsi_rs
+            rlib.rsi_rs.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.c_size_t, ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            rlib.rsi_rs.restype = None
+            # obv_rs
+            rlib.obv_rs.argtypes = [
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.c_size_t, ctypes.POINTER(ctypes.c_double),
+            ]
+            rlib.obv_rs.restype = None
+            # xyz_bbox_rs
+            rlib.xyz_bbox_rs.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+            ]
+            rlib.xyz_bbox_rs.restype = None
+            _RUST_LIB = rlib
+            print("[ACCEL] Rust native library loaded ✓")
+        except Exception as e:
+            print(f"[ACCEL] Rust load failed: {e}")
+
+
+# ── Shared ctypes helpers ─────────────────────────────────────────────────────
+def _c_arr(arr):
+    """Convert numpy array → ctypes double* pointer."""
+    a = np.ascontiguousarray(arr, dtype=np.float64)
+    return a.ctypes.data_as(ctypes.POINTER(ctypes.c_double)), a
+
+
+def _out_arr(n):
+    """Allocate output array; return (ptr, np_array)."""
+    a = np.empty(n, dtype=np.float64)
+    return a.ctypes.data_as(ctypes.POINTER(ctypes.c_double)), a
+
+
+# Kick off native build on import (non-blocking for startup)
+threading.Thread(target=_load_native, daemon=True, name="accel-build").start()
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ADS-B LIVE COLLECTOR — adsb.lol background thread
 # Polls https://api.adsb.lol/v2/aircraft every 5 s, rotating through 12 global
 # regions.  Data is stored in a thread-safe deque (latest 5 000 rows) AND
@@ -200,6 +562,26 @@ EMPTY_PNG = base64.b64decode(
 
 def xyz_to_wgs84_bbox(z, x, y):
     z, x, y = int(z), int(x), int(y)
+    # Fast path: Rust > C++ > pure Python
+    if _RUST_LIB is not None:
+        lw = ctypes.c_double(); ls = ctypes.c_double()
+        le = ctypes.c_double(); ln = ctypes.c_double()
+        _RUST_LIB.xyz_bbox_rs(
+            ctypes.c_int(z), ctypes.c_int(x), ctypes.c_int(y),
+            ctypes.byref(lw), ctypes.byref(ls),
+            ctypes.byref(le), ctypes.byref(ln),
+        )
+        return lw.value, ls.value, le.value, ln.value
+    if _CPP_LIB is not None:
+        lw = ctypes.c_double(); ls = ctypes.c_double()
+        le = ctypes.c_double(); ln = ctypes.c_double()
+        _CPP_LIB.xyz_bbox(
+            ctypes.c_int(z), ctypes.c_int(x), ctypes.c_int(y),
+            ctypes.byref(lw), ctypes.byref(ls),
+            ctypes.byref(le), ctypes.byref(ln),
+        )
+        return lw.value, ls.value, le.value, ln.value
+    # Pure-Python fallback
     n = 2 ** z
     lon_w = x / n * 360.0 - 180.0
     lon_e = (x + 1) / n * 360.0 - 180.0
@@ -1321,66 +1703,157 @@ def _get_fundamentals(ticker):
 # ══════════════════════════════════════════════════════════════════════════════
 # TECHNICAL INDICATORS
 # ══════════════════════════════════════════════════════════════════════════════
-def calc_sma(c, w):  return c.rolling(w).mean()
-def calc_ema(c, w):  return c.ewm(span=w, adjust=False).mean()
+# ── Technical indicator helpers — native (Rust/C++) when available ────────────
+def calc_sma(c, w):
+    return c.rolling(w).mean()
+
+
+def calc_ema(c, w):
+    """EMA — Rust > C++ > pandas fallback."""
+    arr = c.values.astype(np.float64)
+    n   = len(arr)
+    lib = _RUST_LIB or _CPP_LIB
+    if lib is not None:
+        ptr_in, _a = _c_arr(arr)
+        ptr_out, out = _out_arr(n)
+        fn = getattr(lib, "ema_rs" if _RUST_LIB else "ema")
+        if _RUST_LIB:
+            fn(ptr_in, ctypes.c_size_t(n), ctypes.c_size_t(int(w)), ptr_out)
+        else:
+            fn(ptr_in, ctypes.c_int(n), ctypes.c_int(int(w)), ptr_out)
+        return pd.Series(out, index=c.index)
+    return c.ewm(span=w, adjust=False).mean()
+
+
 def calc_bb(c, w=20, n=2):
-    sma = calc_sma(c, w); std = c.rolling(w).std()
-    return sma + n*std, sma, sma - n*std
+    sma = calc_sma(c, w)
+    std = c.rolling(w).std()
+    return sma + n * std, sma, sma - n * std
+
+
 def calc_rsi(c, w=14):
+    """RSI — Rust > C++ > pandas fallback."""
+    arr = c.values.astype(np.float64)
+    nn  = len(arr)
+    lib = _RUST_LIB or _CPP_LIB
+    if lib is not None:
+        ptr_in, _a = _c_arr(arr)
+        ptr_out, out = _out_arr(nn)
+        if _RUST_LIB:
+            _RUST_LIB.rsi_rs(ptr_in, ctypes.c_size_t(nn), ctypes.c_size_t(int(w)), ptr_out)
+        else:
+            _CPP_LIB.rsi_wilder(ptr_in, ctypes.c_int(nn), ctypes.c_int(int(w)), ptr_out)
+        return pd.Series(out, index=c.index)
+    # Pure-Python fallback
     d = c.diff(); g = d.clip(lower=0); l = -d.clip(upper=0)
-    ag = g.ewm(com=w-1, min_periods=w).mean(); al = l.ewm(com=w-1, min_periods=w).mean()
-    return 100 - 100/(1 + ag/al.replace(0, np.nan))
+    ag = g.ewm(com=w - 1, min_periods=w).mean()
+    al = l.ewm(com=w - 1, min_periods=w).mean()
+    return 100 - 100 / (1 + ag / al.replace(0, np.nan))
+
+
 def calc_macd(c, f=12, s=26, sg=9):
-    ml = calc_ema(c,f) - calc_ema(c,s); sl = ml.ewm(span=sg, adjust=False).mean()
-    return ml, sl, ml-sl
+    ml = calc_ema(c, f) - calc_ema(c, s)
+    sl = calc_ema(ml, sg)
+    return ml, sl, ml - sl
+
+
 def calc_atr(h, l, c, w=14):
-    tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-    return tr.ewm(com=w-1, min_periods=w).mean()
+    """ATR — C++ > pure-Python fallback."""
+    if _CPP_LIB is not None:
+        ha = h.values.astype(np.float64)
+        la = l.values.astype(np.float64)
+        ca = c.values.astype(np.float64)
+        n  = len(ca)
+        ph, _h = _c_arr(ha); pl, _l = _c_arr(la); pc, _c2 = _c_arr(ca)
+        ptr_out, out = _out_arr(n)
+        _CPP_LIB.atr_wilder(ph, pl, pc, ctypes.c_int(n), ctypes.c_int(int(w)), ptr_out)
+        return pd.Series(out, index=c.index)
+    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    return tr.ewm(com=w - 1, min_periods=w).mean()
+
+
 def calc_obv(c, v):
-    """On-Balance Volume."""
+    """On-Balance Volume — Rust > C++ > numpy fallback."""
+    ca = c.values.astype(np.float64)
+    va = v.values.astype(np.float64)
+    n  = len(ca)
+    lib = _RUST_LIB or _CPP_LIB
+    if lib is not None:
+        pc, _ca = _c_arr(ca); pv, _va = _c_arr(va)
+        ptr_out, out = _out_arr(n)
+        if _RUST_LIB:
+            _RUST_LIB.obv_rs(pc, pv, ctypes.c_size_t(n), ptr_out)
+        else:
+            _CPP_LIB.obv(pc, pv, ctypes.c_int(n), ptr_out)
+        return pd.Series(out, index=c.index)
     direction = np.sign(c.diff().fillna(0))
     return (direction * v).cumsum()
+
+
 def calc_stoch(h, l, c, k=14, d=3):
-    """Stochastic Oscillator."""
+    """Stochastic Oscillator — C++ %K > pandas fallback."""
+    if _CPP_LIB is not None:
+        ha = h.values.astype(np.float64)
+        la = l.values.astype(np.float64)
+        ca = c.values.astype(np.float64)
+        n  = len(ca)
+        ph, _h = _c_arr(ha); pl, _l = _c_arr(la); pc, _c2 = _c_arr(ca)
+        ptr_out, out = _out_arr(n)
+        _CPP_LIB.stoch_k(ph, pl, pc, ctypes.c_int(n), ctypes.c_int(int(k)), ptr_out)
+        k_line = pd.Series(out, index=c.index)
+        d_line = k_line.rolling(d).mean()
+        return k_line, d_line
     low_min  = l.rolling(k).min()
     high_max = h.rolling(k).max()
     k_line = 100 * (c - low_min) / (high_max - low_min + 1e-10)
     d_line = k_line.rolling(d).mean()
     return k_line, d_line
+
+
 def calc_williams_r(h, l, c, w=14):
     high_max = h.rolling(w).max()
     low_min  = l.rolling(w).min()
     return -100 * (high_max - c) / (high_max - low_min + 1e-10)
+
+
 def calc_cmf(h, l, c, v, w=20):
     """Chaikin Money Flow."""
     mf_mult = ((c - l) - (h - c)) / (h - l + 1e-10)
     mf_vol  = mf_mult * v
     return mf_vol.rolling(w).sum() / v.rolling(w).sum()
+
+
 def calc_adx(h, l, c, w=14):
-    """Average Directional Index."""
-    tr  = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
+    """Average Directional Index — uses native EMA internally."""
+    tr  = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
     dmp = (h - h.shift()).clip(lower=0)
     dmm = (l.shift() - l).clip(lower=0)
-    atr = tr.ewm(span=w, adjust=False).mean()
-    dp  = (dmp.ewm(span=w, adjust=False).mean() / atr) * 100
-    dm  = (dmm.ewm(span=w, adjust=False).mean() / atr) * 100
+    atr = calc_ema(tr, w)
+    dp  = (calc_ema(dmp, w) / atr.replace(0, np.nan)) * 100
+    dm  = (calc_ema(dmm, w) / atr.replace(0, np.nan)) * 100
     dx  = (abs(dp - dm) / (dp + dm + 1e-10)) * 100
-    return dx.ewm(span=w, adjust=False).mean()
+    return calc_ema(dx, w)
+
+
 def calc_vwap(h, l, c, v):
     """Volume-Weighted Average Price (rolling 20-day proxy)."""
     typical = (h + l + c) / 3
     return (typical * v).rolling(20).sum() / v.rolling(20).sum()
+
+
 def calc_ichimoku(h, l):
     """Ichimoku Cloud — Tenkan-sen and Kijun-sen."""
-    tenkan = (h.rolling(9).max()  + l.rolling(9).min())  / 2
-    kijun  = (h.rolling(26).max() + l.rolling(26).min()) / 2
+    tenkan   = (h.rolling(9).max()  + l.rolling(9).min())  / 2
+    kijun    = (h.rolling(26).max() + l.rolling(26).min()) / 2
     senkou_a = ((tenkan + kijun) / 2).shift(26)
     senkou_b = ((h.rolling(52).max() + l.rolling(52).min()) / 2).shift(26)
     return tenkan, kijun, senkou_a, senkou_b
+
+
 def calc_support_resistance(c, window=20):
     """Simple pivot-based support/resistance."""
-    highs = c.rolling(window, center=True).max()
-    lows  = c.rolling(window, center=True).min()
+    highs      = c.rolling(window, center=True).max()
+    lows       = c.rolling(window, center=True).min()
     resistance = highs.iloc[-1]
     support    = lows.iloc[-1]
     return support, resistance
