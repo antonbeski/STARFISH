@@ -816,7 +816,19 @@ def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") ->
     try:
         from pytrends.request import TrendReq
 
-        pt = TrendReq(hl="en-US", tz=0, timeout=(8, 20), retries=2, backoff_factor=1.0)
+        _GT_HEADERS = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        pt = TrendReq(
+            hl="en-US", tz=0, timeout=(10, 30),
+            retries=3, backoff_factor=2.0,
+            requests_args={"headers": _GT_HEADERS},
+        )
         kw_list = [topic[:100]]  # pytrends max 5 kws; use 1 for precision
 
         # ── Finance category (cat=7) ──
@@ -824,6 +836,7 @@ def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") ->
             pt.build_payload(kw_list, cat=_GT_CAT_FINANCE,
                              timeframe=timeframe, geo=geo, gprop="")
             df_fin = pt.interest_over_time()
+            time.sleep(random.uniform(0.8, 1.5))   # avoid 429 between category calls
         except Exception:
             df_fin = None
 
@@ -1205,7 +1218,19 @@ def fetch_google_trends(keywords, timeframe="today 3-m"):
         return _TRENDS_CACHE[cache_key]["data"]
     try:
         from pytrends.request import TrendReq
-        pt = TrendReq(hl="en-US", tz=0, timeout=(5, 15), retries=1, backoff_factor=0.5)
+        _GT_HEADERS = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        pt = TrendReq(
+            hl="en-US", tz=0, timeout=(10, 30),
+            retries=3, backoff_factor=2.0,
+            requests_args={"headers": _GT_HEADERS},
+        )
         pt.build_payload(keywords[:5], cat=0, timeframe=timeframe, geo="", gprop="")
         df = pt.interest_over_time()
         if df is not None and not df.empty:
@@ -1220,13 +1245,12 @@ def fetch_google_trends(keywords, timeframe="today 3-m"):
                             "peak":    int(series.max()),
                             "trend":   "rising" if series.iloc[-1] > series.iloc[-5] else "falling"
                                        if len(series) > 5 else "stable",
-                            "history": [(str(d.date()), int(v)) for d, v in series.tail(12).items()],
+                            "history": [(str(d.date()), int(v)) for d, v in series.items()],
                         }
             _TRENDS_CACHE[cache_key] = {"data": result, "ts": now}
             return result
-    except Exception:
-        pass
-    return {}
+    except Exception as exc:
+        return {"_error": str(exc)}
  
  
 def get_ticker_trend_keywords(ticker, name):
@@ -5583,7 +5607,15 @@ def api_bf_trends():
         timeframe = "today 12-m"
 
     data = fetch_bf_trends(topic, timeframe=timeframe, geo=geo)
-    if data.get("error"):
+
+    # Only hard-fail when there is genuinely zero data AND an error.
+    # Partial data (e.g. one category succeeded) is still useful for analysis.
+    has_data = (
+        bool(data.get("finance", {}).get("series"))
+        or bool(data.get("business", {}).get("series"))
+        or bool(data.get("combined", {}).get("series"))
+    )
+    if data.get("error") and not has_data:
         return jsonify({"error": data["error"]}), 502
 
     # Build chart
