@@ -764,41 +764,230 @@ def rl_next_rpm_reset(key):
  
  
 # ══════════════════════════════════════════════════════════════════════════════
-# GOOGLE TRENDS — BUSINESS & FINANCE (GLOBAL)
-# All queries are locked to category 7 (Finance) or 12 (Business & Industrial)
-# Users can pick any topic; pytrends fetches global interest data.
-# Native C++/Rust kernels accelerate all signal processing.
+# ══════════════════════════════════════════════════════════════════════════════
+# GOOGLE TRENDS — DIRECT WIDGET API SCRAPER  (no pytrends dependency)
+# Hits the same undocumented JSON endpoints a browser uses.
+# • Cookie-warmed session rebuilt every 10 min
+# • Exponential back-off on 429 / 5xx
+# • Finance (cat=7) + Business (cat=12) fetched in parallel threads
+# • Full series history — no tail() truncation
+# • Native C++/Rust kernels accelerate all signal processing
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Finance & Business category IDs in Google Trends
 _GT_CAT_FINANCE  = 7    # Finance
 _GT_CAT_BUSINESS = 12   # Business & Industrial
 
-# Curated trending topics across both categories (shown as quick-launch chips)
+# Curated trending topics (shown as quick-launch chips)
 TRENDING_BUSINESS_FINANCE = [
-    # Markets & macro
     "interest rates", "inflation", "Federal Reserve", "S&P 500", "stock market",
     "recession", "GDP growth", "unemployment", "US dollar", "treasury bonds",
-    # Sectors
     "artificial intelligence stocks", "semiconductor stocks", "energy stocks",
     "bank earnings", "real estate market", "cryptocurrency",
-    # Companies
     "Apple earnings", "Nvidia stock", "Tesla stock", "Amazon stock", "Microsoft stock",
-    # Finance themes
     "IPO", "private equity", "hedge fund", "venture capital", "ESG investing",
-    # Business topics
     "supply chain", "trade tariffs", "merger acquisition", "layoffs", "remote work",
 ]
 
 _BF_CACHE: dict = {}
 _BF_CACHE_TTL = 1800  # 30 min
 
+# ── Session pool ──────────────────────────────────────────────────────────────
+_GT_BASE      = "https://trends.google.com"
+_GT_EXPLORE   = _GT_BASE + "/trends/api/explore"
+_GT_MULTILINE = _GT_BASE + "/trends/api/widgetdata/multiline"
+_GT_RELATED   = _GT_BASE + "/trends/api/widgetdata/relatedsearches"
+
+_GT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+_GT_SESSION_LOCK = threading.Lock()
+_GT_SESSION_OBJ  = [None, 0.0]   # [session, created_ts]
+_GT_SESSION_TTL  = 600
+
+
+def _gt_session() -> requests.Session:
+    """Return a cached requests.Session pre-warmed with Google cookies (NID, CONSENT)."""
+    now = time.time()
+    with _GT_SESSION_LOCK:
+        s, ts = _GT_SESSION_OBJ[0], _GT_SESSION_OBJ[1]
+        if s is None or now - ts > _GT_SESSION_TTL:
+            s = requests.Session()
+            s.headers.update({
+                "User-Agent":      _GT_UA,
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Referer":         "https://trends.google.com/trends/explore",
+            })
+            # Warm-up: visit explore so Google sets NID / CONSENT cookies.
+            try:
+                s.get("https://trends.google.com/trends/explore",
+                      timeout=10, params={"q": "stock market", "hl": "en-US"})
+            except Exception:
+                pass
+            _GT_SESSION_OBJ[0] = s
+            _GT_SESSION_OBJ[1] = now
+    return _GT_SESSION_OBJ[0]
+
+
+def _gt_get(url: str, params: dict, retries: int = 5) -> requests.Response:
+    """GET with exponential backoff on 429 / 5xx. Rebuilds session on repeated 429."""
+    for attempt in range(retries):
+        try:
+            r = _gt_session().get(url, params=params, timeout=25)
+            if r.status_code == 429:
+                with _GT_SESSION_LOCK:
+                    _GT_SESSION_OBJ[1] = 0.0   # force session rebuild
+                wait = min(60, (2 ** attempt) * random.uniform(2.0, 4.0))
+                time.sleep(wait)
+                continue
+            if r.status_code >= 500:
+                time.sleep(random.uniform(1.0, 2.5) * (attempt + 1))
+                continue
+            r.raise_for_status()
+            return r
+        except requests.RequestException:
+            if attempt == retries - 1:
+                raise
+            time.sleep(random.uniform(0.5, 1.5) * (attempt + 1))
+    raise RuntimeError(f"All {retries} retries failed for {url}")
+
+
+def _gt_parse(text: str) -> dict:
+    """)]}\'\\n prefix stripper then JSON parse."""
+    txt = text.lstrip()
+    if txt.startswith(")]}\'"):
+        txt = txt.split("\n", 1)[1] if "\n" in txt else txt[5:]
+    return json.loads(txt)
+
+
+def _gt_explore(keywords: list, timeframe: str, geo: str = "", cat: int = 0) -> list:
+    """Call /explore to obtain widget tokens for the requested keyword set."""
+    req_obj = {
+        "comparisonItem": [
+            {"keyword": kw[:100], "geo": geo, "time": timeframe}
+            for kw in keywords
+        ],
+        "category": cat,
+        "property": "",
+    }
+    params = {
+        "hl":  "en-US",
+        "tz":  "-330",
+        "req": json.dumps(req_obj, separators=(",", ":")),
+    }
+    r = _gt_get(_GT_EXPLORE, params)
+    return _gt_parse(r.text).get("widgets", [])
+
+
+def _gt_timeseries(widgets: list) -> list:
+    """Fetch full interest-over-time data via the TIMESERIES widget."""
+    w = next((x for x in widgets if x.get("id") == "TIMESERIES"), None)
+    if not w:
+        return []
+    params = {
+        "hl":    "en-US",
+        "tz":    "-330",
+        "req":   json.dumps(w["request"],  separators=(",", ":")),
+        "token": w["token"],
+    }
+    r = _gt_get(_GT_MULTILINE, params)
+    return _gt_parse(r.text).get("default", {}).get("timelineData", [])
+
+
+def _gt_related_queries(widgets: list) -> dict:
+    """Fetch top + rising related queries via RELATED_QUERIES widgets."""
+    result = {"top": [], "rising": []}
+    for w in [x for x in widgets if x.get("id") == "RELATED_QUERIES"][:2]:
+        params = {
+            "hl":    "en-US",
+            "tz":    "-330",
+            "req":   json.dumps(w["request"],  separators=(",", ":")),
+            "token": w["token"],
+        }
+        try:
+            r = _gt_get(_GT_RELATED, params)
+            ranked_lists = _gt_parse(r.text).get("default", {}).get("rankedList", [])
+            for i, section in enumerate(ranked_lists[:2]):
+                bucket = "top" if i == 0 else "rising"
+                result[bucket] = [
+                    {"query": item.get("query", ""), "value": item.get("value", 0)}
+                    for item in section.get("rankedKeyword", [])[:10]
+                ]
+        except Exception:
+            pass
+    return result
+
+
+def _gt_related_topics(widgets: list) -> dict:
+    """Fetch top + rising related topics via RELATED_TOPICS widgets."""
+    result = {"top": [], "rising": []}
+    for w in [x for x in widgets if x.get("id") == "RELATED_TOPICS"][:1]:
+        params = {
+            "hl":    "en-US",
+            "tz":    "-330",
+            "req":   json.dumps(w["request"],  separators=(",", ":")),
+            "token": w["token"],
+        }
+        try:
+            r = _gt_get(_GT_RELATED, params)
+            ranked_lists = _gt_parse(r.text).get("default", {}).get("rankedList", [])
+            for i, section in enumerate(ranked_lists[:2]):
+                bucket = "top" if i == 0 else "rising"
+                result[bucket] = [
+                    {
+                        "topic": item.get("topic", {}).get("title", item.get("query", "")),
+                        "type":  item.get("topic", {}).get("type", ""),
+                        "value": item.get("value", 0),
+                    }
+                    for item in section.get("rankedKeyword", [])[:8]
+                ]
+        except Exception:
+            pass
+    return result
+
+
+def _gt_parse_timeline(timeline: list) -> list:
+    """Convert raw timelineData -> [(date_str, value), ...] full history."""
+    out = []
+    for pt_item in timeline:
+        date_str = (pt_item.get("formattedTime")
+                    or pt_item.get("formattedAxisTime", ""))
+        values = pt_item.get("value", [])
+        if values:
+            try:
+                out.append((date_str, int(values[0])))
+            except (ValueError, TypeError):
+                pass
+    return out
+
+
+def _gt_fetch_category(keywords: list, timeframe: str, geo: str, cat: int) -> dict:
+    """Fetch one category: explore -> timeseries + related queries + related topics."""
+    out = {
+        "series": [],
+        "related_queries": {"top": [], "rising": []},
+        "related_topics":  {"top": [], "rising": []},
+        "error": None,
+    }
+    try:
+        widgets        = _gt_explore(keywords, timeframe, geo=geo, cat=cat)
+        timeline       = _gt_timeseries(widgets)
+        out["series"]           = _gt_parse_timeline(timeline)
+        out["related_queries"]  = _gt_related_queries(widgets)
+        out["related_topics"]   = _gt_related_topics(widgets)
+    except Exception as exc:
+        out["error"] = str(exc)
+    return out
+
 
 def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") -> dict:
     """
-    Fetch Google Trends for a Business/Finance topic, globally,
-    restricted to finance (cat=7) or business (cat=12) categories.
-    Returns rich analytics dict accelerated by native C++/Rust kernels.
+    Fetch Google Trends for a B/F topic via the direct widget API (no pytrends).
+    Finance (cat=7) + Business (cat=12) are fetched concurrently; full history
+    is returned.  Native C++/Rust kernels do all analytics.
     """
     cache_key = f"bf_{topic}_{timeframe}_{geo}"
     now = time.time()
@@ -813,165 +1002,103 @@ def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") ->
         "error": None,
     }
 
-    try:
-        from pytrends.request import TrendReq
+    kw_list = [topic]
 
-        _GT_HEADERS = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
+    # ── Parallel fetch: Finance + Business ───────────────────────────────────
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        fut_fin = ex.submit(_gt_fetch_category, kw_list, timeframe, geo, _GT_CAT_FINANCE)
+        fut_biz = ex.submit(_gt_fetch_category, kw_list, timeframe, geo, _GT_CAT_BUSINESS)
+        cat_fin = fut_fin.result()
+        cat_biz = fut_biz.result()
+
+    fin_series = cat_fin["series"]
+    biz_series = cat_biz["series"]
+
+    errors = [e for e in [cat_fin.get("error"), cat_biz.get("error")] if e]
+    if errors and not fin_series and not biz_series:
+        result["error"] = "; ".join(errors)
+        result["_ts"] = time.time()
+        _BF_CACHE[cache_key] = result
+        return result
+    if errors:
+        result["error"] = "; ".join(errors)   # non-fatal — partial data available
+
+    best_cat = cat_biz if len(biz_series) >= len(fin_series) else cat_fin
+    result["related_queries"] = best_cat["related_queries"]
+    result["related_topics"]  = best_cat["related_topics"]
+
+    # ── Combine ──────────────────────────────────────────────────────────────
+    def _to_np(s):
+        return np.array([v for _, v in s], dtype=np.float64) if s else None
+
+    fin_arr = _to_np(fin_series)
+    biz_arr = _to_np(biz_series)
+
+    if fin_arr is not None and biz_arr is not None:
+        n = min(len(fin_arr), len(biz_arr))
+        combined_arr    = (fin_arr[:n] + biz_arr[:n]) / 2.0
+        combined_dates  = [fin_series[i][0] for i in range(n)]
+        combined_series = [(combined_dates[i], round(float(combined_arr[i]), 1)) for i in range(n)]
+    elif fin_arr is not None:
+        combined_arr, combined_series = fin_arr, fin_series
+    elif biz_arr is not None:
+        combined_arr, combined_series = biz_arr, biz_series
+    else:
+        combined_arr, combined_series = None, []
+
+    result["finance"]  = {"series": fin_series, "label": "Finance (Cat 7)"}
+    result["business"] = {"series": biz_series, "label": "Business (Cat 12)"}
+    result["combined"] = {"series": combined_series, "label": "Combined (B+F avg)"}
+
+    # ── Native-accelerated analytics ─────────────────────────────────────────
+    if combined_arr is not None and len(combined_arr) >= 4:
+        arr = combined_arr
+        n   = len(arr)
+
+        zscore     = calc_zscore_rolling(arr, w=min(4, n))
+        slope      = calc_lintrend(arr)
+        corr_fb    = None
+        if fin_arr is not None and biz_arr is not None and min(len(fin_arr), len(biz_arr)) > 4:
+            nn = min(len(fin_arr), len(biz_arr))
+            corr_fb = round(calc_pearson(fin_arr[:nn], biz_arr[:nn]), 4)
+
+        current = float(arr[-1])
+        peak    = float(arr.max())
+        trough  = float(arr.min())
+        avg     = float(arr.mean())
+        avg_4w  = float(arr[-4:].mean())  if n >= 4  else current
+        avg_12w = float(arr[-12:].mean()) if n >= 12 else avg
+
+        slope_norm  = slope / (avg + 1e-6)
+        trend_label = "RISING" if slope_norm > 0.01 else ("FALLING" if slope_norm < -0.01 else "STABLE")
+        sigma    = float(arr.std()) if n > 1 else 1.0
+        breakout = bool(current > avg + 1.5 * sigma)
+        oversold = bool(current < avg - 1.5 * sigma)
+
+        result["analytics"] = {
+            "current":       round(current, 1),
+            "peak":          round(peak, 1),
+            "trough":        round(trough, 1),
+            "avg_all":       round(avg, 1),
+            "avg_4w":        round(avg_4w, 1),
+            "avg_12w":       round(avg_12w, 1),
+            "slope":         round(float(slope), 5),
+            "slope_norm":    round(slope_norm, 5),
+            "momentum_z":    round(float(zscore[-1]) if n >= 4 else 0.0, 3),
+            "trend":         trend_label,
+            "breakout":      breakout,
+            "oversold":      oversold,
+            "sigma":         round(sigma, 2),
+            "corr_fin_biz":  corr_fb,
+            "zscore_series": [round(float(v), 3) for v in zscore],
+            "n_points":      n,
+            "accel_backend": "rust" if _RUST_LIB else ("cpp" if _CPP_LIB else "python"),
         }
-        pt = TrendReq(
-            hl="en-US", tz=0, timeout=(10, 30),
-            retries=3, backoff_factor=2.0,
-            requests_args={"headers": _GT_HEADERS},
-        )
-        kw_list = [topic[:100]]  # pytrends max 5 kws; use 1 for precision
-
-        # ── Finance category (cat=7) ──
-        try:
-            pt.build_payload(kw_list, cat=_GT_CAT_FINANCE,
-                             timeframe=timeframe, geo=geo, gprop="")
-            df_fin = pt.interest_over_time()
-            time.sleep(random.uniform(0.8, 1.5))   # avoid 429 between category calls
-        except Exception:
-            df_fin = None
-
-        # ── Business category (cat=12) ──
-        try:
-            pt.build_payload(kw_list, cat=_GT_CAT_BUSINESS,
-                             timeframe=timeframe, geo=geo, gprop="")
-            df_biz = pt.interest_over_time()
-            # Related queries & topics — best from business category
-            try:
-                rq = pt.related_queries()
-                result["related_queries"] = {
-                    "top":   rq.get(topic, {}).get("top", pd.DataFrame()).head(10).to_dict("records")
-                             if isinstance(rq.get(topic, {}).get("top"), pd.DataFrame) else [],
-                    "rising": rq.get(topic, {}).get("rising", pd.DataFrame()).head(10).to_dict("records")
-                             if isinstance(rq.get(topic, {}).get("rising"), pd.DataFrame) else [],
-                }
-            except Exception:
-                pass
-            try:
-                rt = pt.related_topics()
-                result["related_topics"] = {
-                    "top":   rt.get(topic, {}).get("top", pd.DataFrame()).head(8).to_dict("records")
-                             if isinstance(rt.get(topic, {}).get("top"), pd.DataFrame) else [],
-                    "rising": rt.get(topic, {}).get("rising", pd.DataFrame()).head(8).to_dict("records")
-                             if isinstance(rt.get(topic, {}).get("rising"), pd.DataFrame) else [],
-                }
-            except Exception:
-                pass
-        except Exception:
-            df_biz = None
-
-        def _extract(df):
-            if df is None or df.empty:
-                return None
-            col = kw_list[0] if kw_list[0] in df.columns else df.columns[0]
-            s = df[col].dropna()
-            return [(str(d.date()), int(v)) for d, v in s.items()]
-
-        fin_series = _extract(df_fin)
-        biz_series = _extract(df_biz)
-
-        # ── Combine: element-wise average when both available ──
-        def _series_to_np(s):
-            return np.array([v for _, v in s], dtype=np.float64) if s else None
-
-        fin_arr = _series_to_np(fin_series)
-        biz_arr = _series_to_np(biz_series)
-
-        if fin_arr is not None and biz_arr is not None:
-            n = min(len(fin_arr), len(biz_arr))
-            combined_arr = (fin_arr[:n] + biz_arr[:n]) / 2.0
-            combined_dates = [fin_series[i][0] for i in range(n)]
-            combined_series = [(combined_dates[i], round(float(combined_arr[i]), 1))
-                               for i in range(n)]
-        elif fin_arr is not None:
-            combined_arr = fin_arr
-            combined_series = fin_series
-        elif biz_arr is not None:
-            combined_arr = biz_arr
-            combined_series = biz_series
-        else:
-            combined_arr = None
-            combined_series = []
-
-        result["finance"]  = {"series": fin_series or [], "label": "Finance (Cat 7)"}
-        result["business"] = {"series": biz_series or [], "label": "Business (Cat 12)"}
-        result["combined"] = {"series": combined_series, "label": "Combined (B+F avg)"}
-
-        # ── Native-accelerated analytics ──
-        if combined_arr is not None and len(combined_arr) >= 4:
-            arr = combined_arr
-            n   = len(arr)
-
-            # Z-score momentum (native)
-            zscore = calc_zscore_rolling(arr, w=min(4, n))
-
-            # Linear trend slope (native)
-            slope = calc_lintrend(arr)
-
-            # Pearson corr between finance & business legs (native)
-            corr_fb = None
-            if fin_arr is not None and biz_arr is not None and len(fin_arr) > 4 and len(biz_arr) > 4:
-                nn = min(len(fin_arr), len(biz_arr))
-                corr_fb = round(calc_pearson(fin_arr[:nn], biz_arr[:nn]), 4)
-
-            current   = float(arr[-1])
-            peak      = float(arr.max())
-            trough    = float(arr.min())
-            avg       = float(arr.mean())
-            avg_4w    = float(arr[-4:].mean()) if n >= 4 else current
-            avg_12w   = float(arr[-12:].mean()) if n >= 12 else avg
-
-            momentum_z = float(zscore[-1]) if n >= 4 else 0.0
-
-            # Trend classification
-            slope_norm = slope / (avg + 1e-6)
-            if slope_norm > 0.01:
-                trend_label = "RISING"
-            elif slope_norm < -0.01:
-                trend_label = "FALLING"
-            else:
-                trend_label = "STABLE"
-
-            # Breakout detection: current > avg + 1.5σ
-            sigma = float(arr.std()) if n > 1 else 1.0
-            breakout = current > avg + 1.5 * sigma
-            oversold  = current < avg - 1.5 * sigma
-
-            result["analytics"] = {
-                "current":       round(current, 1),
-                "peak":          round(peak, 1),
-                "trough":        round(trough, 1),
-                "avg_all":       round(avg, 1),
-                "avg_4w":        round(avg_4w, 1),
-                "avg_12w":       round(avg_12w, 1),
-                "slope":         round(float(slope), 5),
-                "slope_norm":    round(slope_norm, 5),
-                "momentum_z":    round(momentum_z, 3),
-                "trend":         trend_label,
-                "breakout":      breakout,
-                "oversold":      oversold,
-                "sigma":         round(sigma, 2),
-                "corr_fin_biz":  corr_fb,
-                "zscore_series": [round(float(v), 3) for v in zscore],
-                "n_points":      n,
-                "accel_backend": "rust" if _RUST_LIB else ("cpp" if _CPP_LIB else "python"),
-            }
-
-    except Exception as exc:
-        result["error"] = str(exc)
 
     result["_ts"] = time.time()
     _BF_CACHE[cache_key] = result
     return result
+
 
 
 def build_trends_chart_html(trends_data: dict) -> str:
@@ -1204,55 +1331,59 @@ def fetch_all_macro():
  
  
 # ══════════════════════════════════════════════════════════════════════════════
-# GOOGLE TRENDS (pytrends — unofficial, free)
+# ══════════════════════════════════════════════════════════════════════════════
+# GOOGLE TRENDS — general keyword fetch  (reuses direct API scraper above)
 # ══════════════════════════════════════════════════════════════════════════════
 _TRENDS_CACHE = {}
 _TRENDS_CACHE_TTL = 1800
- 
- 
+
+
 def fetch_google_trends(keywords, timeframe="today 3-m"):
-    """Fetch search interest from Google Trends for given keywords."""
+    """
+    Fetch search interest for up to 5 keywords via the direct widget API.
+    Returns full history per keyword for trend analysis (no tail truncation).
+    """
     cache_key = f"trends_{'_'.join(keywords)}_{timeframe}"
     now = time.time()
     if cache_key in _TRENDS_CACHE and now - _TRENDS_CACHE[cache_key]["ts"] < _TRENDS_CACHE_TTL:
         return _TRENDS_CACHE[cache_key]["data"]
     try:
-        from pytrends.request import TrendReq
-        _GT_HEADERS = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        pt = TrendReq(
-            hl="en-US", tz=0, timeout=(10, 30),
-            retries=3, backoff_factor=2.0,
-            requests_args={"headers": _GT_HEADERS},
-        )
-        pt.build_payload(keywords[:5], cat=0, timeframe=timeframe, geo="", gprop="")
-        df = pt.interest_over_time()
-        if df is not None and not df.empty:
-            result = {}
-            for kw in keywords[:5]:
-                if kw in df.columns:
-                    series = df[kw].dropna()
-                    if not series.empty:
-                        result[kw] = {
-                            "current": int(series.iloc[-1]),
-                            "avg_30d": round(float(series.tail(4).mean()), 1),
-                            "peak":    int(series.max()),
-                            "trend":   "rising" if series.iloc[-1] > series.iloc[-5] else "falling"
-                                       if len(series) > 5 else "stable",
-                            "history": [(str(d.date()), int(v)) for d, v in series.items()],
-                        }
+        widgets  = _gt_explore(keywords[:5], timeframe, geo="", cat=0)
+        timeline = _gt_timeseries(widgets)
+
+        if not timeline:
+            return {}
+
+        result = {}
+        for idx, kw in enumerate(keywords[:5]):
+            series_vals = []
+            for pt_item in timeline:
+                date_str = pt_item.get("formattedTime") or pt_item.get("formattedAxisTime", "")
+                values   = pt_item.get("value", [])
+                if idx < len(values):
+                    try:
+                        series_vals.append((date_str, int(values[idx])))
+                    except (ValueError, TypeError):
+                        pass
+            if series_vals:
+                vals_only = [v for _, v in series_vals]
+                result[kw] = {
+                    "current": vals_only[-1],
+                    "avg_30d": round(sum(vals_only[-4:]) / min(4, len(vals_only)), 1),
+                    "peak":    max(vals_only),
+                    "trend":   ("rising"  if len(vals_only) > 5 and vals_only[-1] > vals_only[-6]
+                                else "falling" if len(vals_only) > 5 and vals_only[-1] < vals_only[-6]
+                                else "stable"),
+                    "history": series_vals,   # FULL history, not tail(12)
+                }
+        if result:
             _TRENDS_CACHE[cache_key] = {"data": result, "ts": now}
-            return result
+        return result
     except Exception as exc:
         return {"_error": str(exc)}
- 
- 
+
+
+
 def get_ticker_trend_keywords(ticker, name):
     """Build relevant search keywords for a ticker."""
     base = ticker.replace(".NS", "").replace(".BO", "")
@@ -5607,11 +5738,10 @@ def api_bf_trends():
         timeframe = "today 12-m"
 
     data = fetch_bf_trends(topic, timeframe=timeframe, geo=geo)
-
-    # Only hard-fail when there is genuinely zero data AND an error.
-    # Partial data (e.g. one category succeeded) is still useful for analysis.
+    # Only hard-fail when there is zero data AND an error.
+    # Partial data (one category succeeded) is still useful for analysis.
     has_data = (
-        bool(data.get("finance", {}).get("series"))
+        bool(data.get("finance",  {}).get("series"))
         or bool(data.get("business", {}).get("series"))
         or bool(data.get("combined", {}).get("series"))
     )
