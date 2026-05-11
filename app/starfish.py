@@ -4955,9 +4955,9 @@ async function fetchBFTrends(){{
   var summaryEl = document.getElementById('bf-summary');
   var relatedEl = document.getElementById('bf-related');
 
-  btn.disabled=true; btn.textContent='Fetching\\u2026';
-  status.textContent='Fetching Google Trends for \\u201c'+topic+'\\u201d (Business & Finance, Global)\\u2026';
-  chartArea.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;padding:36px;gap:12px"><div class="sector-spinner"></div><span style="font-size:.78rem;color:#555">Pulling pytrends data + running C++/Rust analytics\\u2026</span></div>';
+  btn.disabled=true; btn.textContent='Fetching…';
+  status.textContent='Fetching Google Trends for “'+topic+'” (Business & Finance, Global)…';
+  chartArea.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;padding:36px;gap:12px"><div class="sector-spinner"></div><span style="font-size:.78rem;color:#555">Pulling pytrends data + running C++/Rust analytics…</span></div>';
   summaryEl.style.display='none';
   relatedEl.style.display='none';
 
@@ -5060,12 +5060,12 @@ async function fetchBFTrends(){{
 
     if(relHtml){{relatedEl.innerHTML=relHtml;relatedEl.style.display='block';}}
 
-    status.textContent='\\u2713 '+esc(topic)+' | '+esc(tf)+' | '+((data.combined||{{}}).series||[]).length+' data points | accel: '+esc((data.analytics||{{}}).accel_backend||'python');
+    status.textContent='✓ '+esc(topic)+' | '+esc(tf)+' | '+((data.combined||{{}}).series||[]).length+' data points | accel: '+esc((data.analytics||{{}}).accel_backend||'python');
   }} catch(e){{
     chartArea.innerHTML='<div class="error-box">'+esc(String(e))+'</div>';
     status.textContent='Error: '+esc(String(e));
   }} finally{{
-    btn.disabled=false; btn.textContent='Analyse \\u2192';
+    btn.disabled=false; btn.textContent='Analyse →';
   }}
 }}
 
