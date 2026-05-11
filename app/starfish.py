@@ -796,128 +796,173 @@ _BF_CACHE_TTL = 1800  # 30 min
 
 def fetch_bf_trends(topic: str, timeframe: str = "today 12-m", geo: str = "") -> dict:
     """
-    Fetch Google Trends for a Business/Finance topic, globally,
-    restricted to finance (cat=7) or business (cat=12) categories.
-    Returns rich analytics dict accelerated by native C++/Rust kernels.
+    Fetch Google Trends for a Business/Finance topic, globally.
+    Tries Finance (cat=7) and Business (cat=12) categories separately,
+    falls back to uncategorised global search if both fail.
+    Never raises — always returns a result dict (error field may be set).
     """
     cache_key = f"bf_{topic}_{timeframe}_{geo}"
     now = time.time()
-    if cache_key in _BF_CACHE and now - _BF_CACHE[cache_key]["_ts"] < _BF_CACHE_TTL:
+    if cache_key in _BF_CACHE and now - _BF_CACHE[cache_key].get("_ts", 0) < _BF_CACHE_TTL:
         return _BF_CACHE[cache_key]
 
     result = {
         "topic": topic, "timeframe": timeframe, "geo": geo or "Global",
-        "finance": {}, "business": {},
-        "combined": {}, "analytics": {},
-        "related_queries": {}, "related_topics": {},
-        "error": None,
+        "finance": {"series": [], "label": "Finance (Cat 7)"},
+        "business": {"series": [], "label": "Business (Cat 12)"},
+        "combined": {"series": [], "label": "Combined"},
+        "analytics": {}, "related_queries": {}, "related_topics": {},
+        "error": None, "_ts": time.time(),
     }
 
-    try:
-        from pytrends.request import TrendReq
-
-        pt = TrendReq(hl="en-US", tz=0, timeout=(8, 20), retries=2, backoff_factor=1.0)
-        kw_list = [topic[:100]]  # pytrends max 5 kws; use 1 for precision
-
-        # ── Finance category (cat=7) ──
+    def _build_and_fetch(pt, kw_list, cat, timeframe, geo):
+        """Single pytrends call with its own exception isolation."""
         try:
-            pt.build_payload(kw_list, cat=_GT_CAT_FINANCE,
-                             timeframe=timeframe, geo=geo, gprop="")
-            df_fin = pt.interest_over_time()
-        except Exception:
-            df_fin = None
-
-        # ── Business category (cat=12) ──
-        try:
-            pt.build_payload(kw_list, cat=_GT_CAT_BUSINESS,
-                             timeframe=timeframe, geo=geo, gprop="")
-            df_biz = pt.interest_over_time()
-            # Related queries & topics — best from business category
-            try:
-                rq = pt.related_queries()
-                result["related_queries"] = {
-                    "top":   rq.get(topic, {}).get("top", pd.DataFrame()).head(10).to_dict("records")
-                             if isinstance(rq.get(topic, {}).get("top"), pd.DataFrame) else [],
-                    "rising": rq.get(topic, {}).get("rising", pd.DataFrame()).head(10).to_dict("records")
-                             if isinstance(rq.get(topic, {}).get("rising"), pd.DataFrame) else [],
-                }
-            except Exception:
-                pass
-            try:
-                rt = pt.related_topics()
-                result["related_topics"] = {
-                    "top":   rt.get(topic, {}).get("top", pd.DataFrame()).head(8).to_dict("records")
-                             if isinstance(rt.get(topic, {}).get("top"), pd.DataFrame) else [],
-                    "rising": rt.get(topic, {}).get("rising", pd.DataFrame()).head(8).to_dict("records")
-                             if isinstance(rt.get(topic, {}).get("rising"), pd.DataFrame) else [],
-                }
-            except Exception:
-                pass
-        except Exception:
-            df_biz = None
-
-        def _extract(df):
+            pt.build_payload(kw_list, cat=cat, timeframe=timeframe,
+                             geo=geo, gprop="")
+            df = pt.interest_over_time()
             if df is None or df.empty:
                 return None
             col = kw_list[0] if kw_list[0] in df.columns else df.columns[0]
             s = df[col].dropna()
             return [(str(d.date()), int(v)) for d, v in s.items()]
+        except Exception:
+            return None
 
-        fin_series = _extract(df_fin)
-        biz_series = _extract(df_biz)
+    def _build_and_fetch_nocategory(pt, kw_list, timeframe, geo):
+        """Fallback: no category filter — plain global search."""
+        try:
+            pt.build_payload(kw_list, cat=0, timeframe=timeframe,
+                             geo=geo, gprop="")
+            df = pt.interest_over_time()
+            if df is None or df.empty:
+                return None
+            col = kw_list[0] if kw_list[0] in df.columns else df.columns[0]
+            s = df[col].dropna()
+            return [(str(d.date()), int(v)) for d, v in s.items()]
+        except Exception:
+            return None
 
-        # ── Combine: element-wise average when both available ──
-        def _series_to_np(s):
-            return np.array([v for _, v in s], dtype=np.float64) if s else None
+    try:
+        from pytrends.request import TrendReq
+        # Longer timeouts + 3 retries to handle Google rate limits
+        pt = TrendReq(hl="en-US", tz=0, timeout=(10, 30),
+                      retries=3, backoff_factor=2.0)
+        kw_list = [topic[:100]]
 
-        fin_arr = _series_to_np(fin_series)
-        biz_arr = _series_to_np(biz_series)
+        # ── Fetch Finance (cat=7) ──
+        fin_series = _build_and_fetch(pt, kw_list, _GT_CAT_FINANCE, timeframe, geo)
+        time.sleep(0.5)  # small pause to avoid 429
 
-        if fin_arr is not None and biz_arr is not None:
-            n = min(len(fin_arr), len(biz_arr))
-            combined_arr = (fin_arr[:n] + biz_arr[:n]) / 2.0
-            combined_dates = [fin_series[i][0] for i in range(n)]
-            combined_series = [(combined_dates[i], round(float(combined_arr[i]), 1))
-                               for i in range(n)]
-        elif fin_arr is not None:
-            combined_arr = fin_arr
-            combined_series = fin_series
-        elif biz_arr is not None:
-            combined_arr = biz_arr
-            combined_series = biz_series
-        else:
-            combined_arr = None
-            combined_series = []
+        # ── Fetch Business (cat=12) ──
+        biz_series = _build_and_fetch(pt, kw_list, _GT_CAT_BUSINESS, timeframe, geo)
+        time.sleep(0.5)
+
+        # ── Fetch related queries/topics if biz succeeded ──
+        if biz_series:
+            try:
+                rq = pt.related_queries()
+                kw = kw_list[0]
+                result["related_queries"] = {
+                    "top":    (rq.get(kw, {}).get("top") or pd.DataFrame()).head(10).to_dict("records"),
+                    "rising": (rq.get(kw, {}).get("rising") or pd.DataFrame()).head(10).to_dict("records"),
+                }
+            except Exception:
+                pass
+            try:
+                rt = pt.related_topics()
+                kw = kw_list[0]
+                result["related_topics"] = {
+                    "top":    (rt.get(kw, {}).get("top") or pd.DataFrame()).head(8).to_dict("records"),
+                    "rising": (rt.get(kw, {}).get("rising") or pd.DataFrame()).head(8).to_dict("records"),
+                }
+            except Exception:
+                pass
+
+        # ── Fallback: if both category fetches failed, try uncategorised ──
+        if not fin_series and not biz_series:
+            time.sleep(1.0)
+            fallback = _build_and_fetch_nocategory(pt, kw_list, timeframe, geo)
+            if fallback:
+                fin_series = fallback  # treat as finance leg
+            else:
+                result["error"] = (
+                    "Google Trends returned no data for this topic/timeframe. "
+                    "Try a shorter timeframe (e.g. 3 Months) or a more popular topic."
+                )
+                _BF_CACHE[cache_key] = result
+                return result
 
         result["finance"]  = {"series": fin_series or [], "label": "Finance (Cat 7)"}
         result["business"] = {"series": biz_series or [], "label": "Business (Cat 12)"}
+
+        # ── Combine ──
+        def _to_np(s):
+            return np.array([v for _, v in s], dtype=np.float64) if s else None
+
+        fin_arr = _to_np(fin_series)
+        biz_arr = _to_np(biz_series)
+
+        if fin_arr is not None and biz_arr is not None:
+            n = min(len(fin_arr), len(biz_arr))
+            combined_arr   = (fin_arr[:n] + biz_arr[:n]) / 2.0
+            combined_dates = [fin_series[i][0] for i in range(n)]
+        elif fin_arr is not None:
+            combined_arr = fin_arr
+            combined_dates = [d for d, _ in fin_series]
+        else:
+            combined_arr = biz_arr
+            combined_dates = [d for d, _ in biz_series]
+
+        combined_series = [(combined_dates[i], round(float(combined_arr[i]), 1))
+                           for i in range(len(combined_arr))]
         result["combined"] = {"series": combined_series, "label": "Combined (B+F avg)"}
 
         # ── Native-accelerated analytics ──
         if combined_arr is not None and len(combined_arr) >= 4:
             arr = combined_arr
             n   = len(arr)
-
-            # Z-score momentum (native)
             zscore = calc_zscore_rolling(arr, w=min(4, n))
-
-            # Linear trend slope (native)
-            slope = calc_lintrend(arr)
-
-            # Pearson corr between finance & business legs (native)
+            slope  = calc_lintrend(arr)
             corr_fb = None
-            if fin_arr is not None and biz_arr is not None and len(fin_arr) > 4 and len(biz_arr) > 4:
+            if fin_arr is not None and biz_arr is not None and min(len(fin_arr), len(biz_arr)) > 4:
                 nn = min(len(fin_arr), len(biz_arr))
                 corr_fb = round(calc_pearson(fin_arr[:nn], biz_arr[:nn]), 4)
 
-            current   = float(arr[-1])
-            peak      = float(arr.max())
-            trough    = float(arr.min())
-            avg       = float(arr.mean())
-            avg_4w    = float(arr[-4:].mean()) if n >= 4 else current
-            avg_12w   = float(arr[-12:].mean()) if n >= 12 else avg
+            current  = float(arr[-1])
+            avg      = float(arr.mean())
+            sigma    = float(arr.std()) if n > 1 else 1.0
+            avg_4w   = float(arr[-4:].mean())  if n >= 4  else current
+            avg_12w  = float(arr[-12:].mean()) if n >= 12 else avg
+            slope_norm = slope / (avg + 1e-6)
 
-            momentum_z = float(zscore[-1]) if n >= 4 else 0.0
+            result["analytics"] = {
+                "current":      round(current, 1),
+                "peak":         round(float(arr.max()), 1),
+                "trough":       round(float(arr.min()), 1),
+                "avg_all":      round(avg, 1),
+                "avg_4w":       round(avg_4w, 1),
+                "avg_12w":      round(avg_12w, 1),
+                "slope":        round(float(slope), 5),
+                "slope_norm":   round(slope_norm, 5),
+                "momentum_z":   round(float(zscore[-1]), 3),
+                "trend":        "RISING" if slope_norm > 0.01 else "FALLING" if slope_norm < -0.01 else "STABLE",
+                "breakout":     bool(current > avg + 1.5 * sigma),
+                "oversold":     bool(current < avg - 1.5 * sigma),
+                "sigma":        round(sigma, 2),
+                "corr_fin_biz": corr_fb,
+                "zscore_series": [round(float(v), 3) for v in zscore],
+                "n_points":     n,
+                "accel_backend": "rust" if _RUST_LIB else ("cpp" if _CPP_LIB else "python"),
+            }
+
+    except Exception as exc:
+        # Last-resort catch — never let an exception bubble into a 502
+        result["error"] = f"Trends fetch failed: {exc}"
+
+    result["_ts"] = time.time()
+    _BF_CACHE[cache_key] = result
+    return result
 
             # Trend classification
             slope_norm = slope / (avg + 1e-6)
