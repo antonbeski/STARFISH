@@ -5089,33 +5089,61 @@ async function fetchBFTrends(){{
     var rq = data.related_queries || {{}};
     var rt = data.related_topics  || {{}};
     var relHtml = '';
+
+    // ── Related Queries ──────────────────────────────────────────────────────
     if((rq.top||[]).length||(rq.rising||[]).length){{
-      relHtml += '<div style="margin-bottom:12px"><span style="font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888">Related Queries</span>';
+      relHtml += '<div style="margin-bottom:14px">';
+      relHtml += '<span style="font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888">Related Queries</span>';
+
       if((rq.top||[]).length){{
-        relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">';
+        relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">';
         (rq.top||[]).forEach(function(r){{
-          relHtml += '<span style="font-size:.68rem;border:1px solid #000;border-radius:20px;padding:3px 10px;background:#fff;color:#333;cursor:default">'+esc(r.query||r.topic_title||'')+'</span>';
+          // r.query  — correct field name returned by backend
+          var val = (r.value!=null && r.value!=='')?(' <small style="opacity:.55;font-size:.6rem">'+esc(String(r.value))+'</small>'):'';
+          relHtml += '<span style="font-size:.68rem;border:1px solid #000;border-radius:20px;padding:3px 11px;background:#fff;color:#333;cursor:default">'+esc(r.query||'')+val+'</span>';
         }});
         relHtml += '</div>';
       }}
+
       if((rq.rising||[]).length){{
         relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">';
         (rq.rising||[]).forEach(function(r){{
-          var val = r.value==='Breakout'?'&#8593;&#8593;':(r.value||'');
-          relHtml += '<span style="font-size:.65rem;border:1px solid #26a69a;border-radius:20px;padding:3px 10px;background:rgba(38,166,154,.07);color:#26a69a;cursor:default">&#8593; '+esc(r.query||r.topic_title||'')+' <small style=\\"opacity:.7\\">'+esc(String(val))+'</small></span>';
+          // r.value may be an integer or the string "Breakout"
+          var val = r.value==='Breakout'?'&#8593;&#8593; Breakout':(r.value!=null?'+'+esc(String(r.value)):'');
+          relHtml += '<span style="font-size:.65rem;border:1px solid #26a69a;border-radius:20px;padding:3px 11px;background:rgba(38,166,154,.07);color:#26a69a;cursor:default">&#8593; '+esc(r.query||'')+(val?' <small style="opacity:.7">'+val+'</small>':'')+'</span>';
         }});
         relHtml += '</div>';
       }}
       relHtml += '</div>';
     }}
-    if((rt.top||[]).length){{
-      relHtml += '<div style="margin-top:8px"><span style="font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888">Related Topics</span>';
-      relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">';
-      (rt.top||[]).forEach(function(r){{
-        relHtml += '<span style="font-size:.68rem;border:1px solid #000;border-radius:4px;padding:3px 10px;background:#f8f7f4;color:#333">'+esc(r.topic_title||r.query||'')+'</span>';
-      }});
-      relHtml += '</div></div>';
+
+    // ── Related Topics ───────────────────────────────────────────────────────
+    if((rt.top||[]).length||(rt.rising||[]).length){{
+      relHtml += '<div style="margin-top:10px">';
+      relHtml += '<span style="font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888">Related Topics</span>';
+
+      if((rt.top||[]).length){{
+        relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">';
+        (rt.top||[]).forEach(function(r){{
+          // r.topic — correct field name (string title); r.type — category label
+          var typeLabel = r.type ? (' <small style="opacity:.5;font-size:.58rem">'+esc(r.type)+'</small>') : '';
+          relHtml += '<span style="font-size:.68rem;border:1px solid #000;border-radius:4px;padding:3px 11px;background:#f8f7f4;color:#333">'+esc(r.topic||'')+typeLabel+'</span>';
+        }});
+        relHtml += '</div>';
+      }}
+
+      if((rt.rising||[]).length){{
+        relHtml += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">';
+        (rt.rising||[]).forEach(function(r){{
+          var val = r.value==='Breakout'?'&#8593;&#8593; Breakout':(r.value!=null?'+'+esc(String(r.value)):'');
+          var typeLabel = r.type ? (' <small style="opacity:.5;font-size:.58rem">'+esc(r.type)+'</small>') : '';
+          relHtml += '<span style="font-size:.65rem;border:1px solid #2196f3;border-radius:4px;padding:3px 11px;background:rgba(33,150,243,.06);color:#1565c0;cursor:default">&#8593; '+esc(r.topic||'')+typeLabel+(val?' <small style="opacity:.7">'+val+'</small>':'')+'</span>';
+        }});
+        relHtml += '</div>';
+      }}
+      relHtml += '</div>';
     }}
+
     if(relHtml){{relatedEl.innerHTML=relHtml;relatedEl.style.display='block';}}
 
     status.textContent='\\u2713 '+esc(topic)+' | '+esc(tf)+' | '+((data.combined||{{}}).series||[]).length+' data points | accel: '+esc((data.analytics||{{}}).accel_backend||'python');
