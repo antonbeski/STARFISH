@@ -6510,58 +6510,143 @@ def adsb_data():
 # ══════════════════════════════════════════════════════════════════════════════
 # SCREENER.IN  —  Company search autocomplete + full page scraper
 # ══════════════════════════════════════════════════════════════════════════════
-_SCREENER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "Chrome/124.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer": "https://www.screener.in/",
-    "Connection": "keep-alive",
-}
+import re as _re
+
 _SCREENER_CACHE: dict = {}
-_SCREENER_TTL = 300  # 5 min
+_SCREENER_TTL   = 300   # 5 min cache
 
-# Persistent session so cookies (CSRF, session id) are preserved across calls
-_screener_session = requests.Session()
-_screener_session.headers.update(_SCREENER_HEADERS)
-_screener_session_ready = False
+# ── Session factory: cloudscraper > requests ──────────────────────────────────
+def _build_screener_session():
+    """Return a cloudscraper session (bypasses Cloudflare) or plain requests.Session."""
+    _base_headers = {
+        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer":         "https://www.screener.in/",
+        "Connection":      "keep-alive",
+    }
+    try:
+        import cloudscraper
+        sess = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
+        sess.headers.update(_base_headers)
+        print("[Screener] using cloudscraper")
+        return sess
+    except ImportError:
+        sess = requests.Session()
+        sess.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            **_base_headers,
+        })
+        print("[Screener] cloudscraper not found — using requests.Session (run: pip install cloudscraper)")
+        return sess
+
+_screener_session = _build_screener_session()
+_screener_warmed  = False
 
 
-def _ensure_screener_session():
-    """Visit screener.in homepage once to obtain session cookies."""
-    global _screener_session_ready
-    if _screener_session_ready:
+def _warm_screener():
+    """One-time homepage visit to collect cookies / Cloudflare clearance."""
+    global _screener_warmed
+    if _screener_warmed:
         return
     try:
-        _screener_session.get("https://www.screener.in/", timeout=10)
-        _screener_session_ready = True
-    except Exception:
-        pass
+        r = _screener_session.get("https://www.screener.in/", timeout=12)
+        _screener_warmed = True
+        print(f"[Screener] warm-up status={r.status_code} cookies={list(r.cookies.keys())}")
+    except Exception as exc:
+        print(f"[Screener] warm-up failed: {exc}")
+
+
+def _screener_get(url, **kw):
+    """GET with retry: warm once, retry on 403."""
+    _warm_screener()
+    r = _screener_session.get(url, timeout=15, **kw)
+    if r.status_code == 403:
+        # Rebuild session (new Cloudflare clearance) and retry once
+        global _screener_session, _screener_warmed
+        _screener_session = _build_screener_session()
+        _screener_warmed  = False
+        _warm_screener()
+        r = _screener_session.get(url, timeout=15, **kw)
+    return r
+
+
+# ── Helper: robustly parse a financial table section ─────────────────────────
+def _parse_screener_table(soup, section_id: str) -> dict:
+    sec = soup.find("section", id=section_id) or soup.find("div", id=section_id)
+    if not sec:
+        return {}
+    tbl = sec.find("table")
+    if not tbl:
+        return {}
+    # Section heading (e.g. "Quarterly Results")
+    heading_el = sec.find(["h2", "h3", "h4"])
+    heading = heading_el.get_text(" ", strip=True) if heading_el else section_id
+
+    # Headers — handle buttons / links inside <th>
+    headers = [th.get_text(" ", strip=True) for th in tbl.select("thead th")]
+
+    # Rows — also capture data-ttm and data-value attributes when present
+    rows = []
+    for tr in tbl.select("tbody tr"):
+        cells = []
+        for td in tr.find_all(["td", "th"]):
+            text = td.get_text(" ", strip=True)
+            cells.append(text)
+        if any(c.strip() for c in cells):
+            rows.append(cells)
+
+    # Sub-table links (e.g. annual report PDF links in Documents section)
+    links = []
+    for a in sec.select("a[href]"):
+        href = a["href"]
+        label = a.get_text(strip=True)
+        if href and label:
+            full = href if href.startswith("http") else "https://www.screener.in" + href
+            links.append({"label": label, "url": full})
+
+    result = {"heading": heading, "headers": headers, "rows": rows}
+    if links:
+        result["links"] = links
+    return result
 
 
 @app.route("/api/screener/search")
 def api_screener_search():
-    """Autocomplete: returns [{name, url, percent_change}] from screener.in."""
+    """Autocomplete: [{name, url, percent_change}] from screener.in."""
     q = request.args.get("q", "").strip()
     if len(q) < 1:
         return jsonify({"results": []})
+
     cache_key = f"srch_{q.lower()}"
     now = time.time()
-    if cache_key in _SCREENER_CACHE and now - _SCREENER_CACHE[cache_key]["ts"] < _SCREENER_TTL:
-        return jsonify(_SCREENER_CACHE[cache_key]["data"])
-    _ensure_screener_session()
+    cached = _SCREENER_CACHE.get(cache_key)
+    if cached and now - cached["ts"] < _SCREENER_TTL:
+        return jsonify(cached["data"])
+
     try:
-        r = _screener_session.get(
+        r = _screener_get(
             "https://www.screener.in/api/company/search/",
             params={"q": q, "v": "3"},
-            timeout=8,
+            headers={
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://www.screener.in/",
+            },
         )
         if r.status_code == 200:
-            data = r.json()
-            result = {"results": data}
+            raw = r.json() if r.headers.get("content-type","").startswith("application/json") else r.json()
+            # raw is a list of {name, url, percent_change}
+            result = {"results": raw if isinstance(raw, list) else raw.get("results", [])}
             _SCREENER_CACHE[cache_key] = {"data": result, "ts": now}
             return jsonify(result)
+        print(f"[Screener] search HTTP {r.status_code}: {r.text[:200]}")
     except Exception as exc:
         print(f"[Screener] search error: {exc}")
     return jsonify({"results": [], "error": "search failed"})
@@ -6569,152 +6654,321 @@ def api_screener_search():
 
 @app.route("/api/screener/data")
 def api_screener_data():
-    """Scrape all available data from screener.in company page."""
+    """Scrape all available data from a screener.in company page."""
     symbol = request.args.get("symbol", "").strip().upper()
-    consolidated = request.args.get("consolidated", "1")
+    want_consolidated = request.args.get("consolidated", "1") == "1"
     if not symbol:
         return jsonify({"error": "symbol required"}), 400
 
-    cache_key = f"data_{symbol}_{consolidated}"
+    cache_key = f"data_{symbol}_{int(want_consolidated)}"
     now = time.time()
-    if cache_key in _SCREENER_CACHE and now - _SCREENER_CACHE[cache_key]["ts"] < _SCREENER_TTL:
-        return jsonify(_SCREENER_CACHE[cache_key]["data"])
+    cached = _SCREENER_CACHE.get(cache_key)
+    if cached and now - cached["ts"] < _SCREENER_TTL:
+        return jsonify(cached["data"])
 
-    _ensure_screener_session()
+    # Try consolidated, then standalone
+    candidates = []
+    if want_consolidated:
+        candidates.append(f"https://www.screener.in/company/{symbol}/consolidated/")
+    candidates.append(f"https://www.screener.in/company/{symbol}/")
 
-    # Try consolidated first, fall back to standalone
-    urls_to_try = []
-    if consolidated == "1":
-        urls_to_try.append(f"https://www.screener.in/company/{symbol}/consolidated/")
-    urls_to_try.append(f"https://www.screener.in/company/{symbol}/")
-
-    r = None
-    url = None
-    for u in urls_to_try:
+    html = resp_url = None
+    last_status = None
+    for url in candidates:
         try:
-            resp = _screener_session.get(u, timeout=15)
-            if resp.status_code == 200 and "company" in resp.url:
-                r = resp
-                url = resp.url
-                break
+            r = _screener_get(url)
+            last_status = r.status_code
+            if r.status_code == 200 and len(r.text) > 2000:
+                # Validate: real company pages have #top-ratios
+                if "top-ratios" in r.text or "company-name" in r.text or "<h1" in r.text:
+                    html = r.text
+                    resp_url = r.url
+                    break
+                # Might be a redirect to login
+                print(f"[Screener] {url} returned 200 but looks like login/error page")
         except Exception as exc:
-            return jsonify({"error": str(exc)}), 502
+            print(f"[Screener] fetch {url}: {exc}")
 
-    if r is None or r.status_code != 200:
-        code = r.status_code if r else 502
-        return jsonify({"error": f"HTTP {code} — company not found or screener.in blocked"}), 502
+    if not html:
+        return jsonify({"error": f"Could not fetch company page (HTTP {last_status}). "
+                                  "Install cloudscraper: pip install cloudscraper"}), 502
 
-    soup = BeautifulSoup(r.text, "lxml")
-    result: dict = {"symbol": symbol, "url": url}
+    soup = BeautifulSoup(html, "lxml")
+    result: dict = {"symbol": symbol, "url": resp_url}
 
-    # ── Company name & description ────────────────────────────────────────────
-    h1 = soup.find("h1", class_="h2") or soup.find("h1")
-    result["name"] = h1.get_text(strip=True) if h1 else symbol
-    about = soup.find("div", class_="about")
-    if about:
-        p = about.find("p")
-        result["about"] = p.get_text(" ", strip=True)[:600] if p else ""
+    # ── Company name ──────────────────────────────────────────────────────────
+    for sel in ["h1.h2", "h1.shrink-text", "h1"]:
+        el = soup.select_one(sel)
+        if el:
+            result["name"] = el.get_text(" ", strip=True)
+            break
+    result.setdefault("name", symbol)
 
-    # ── Top badge pills (NSE/BSE/sector/industry) ─────────────────────────────
-    tags: list = []
-    for tag in soup.select(".company-links a, .flex-gap-8 a, .company-info a"):
-        t = tag.get_text(strip=True)
-        if t:
+    # ── Description / about ───────────────────────────────────────────────────
+    for sel in [
+        "div.about p",
+        "p.company-description",
+        "div.company-description p",
+        "div.description-block p",
+        "section.about p",
+        "div.text-description",
+    ]:
+        el = soup.select_one(sel)
+        if el:
+            txt = el.get_text(" ", strip=True)
+            if len(txt) > 30:
+                result["about"] = txt[:600]
+                break
+
+    # ── Exchange / sector tags ────────────────────────────────────────────────
+    seen, tags = set(), []
+    for a in soup.select(".company-links a, .flex-gap-8 a, .company-info a, .sub a"):
+        t = a.get_text(strip=True)
+        if t and t not in seen:
+            seen.add(t)
             tags.append(t)
-    result["tags"] = list(dict.fromkeys(tags))[:10]
+    result["tags"] = tags[:12]
 
-    # ── Key ratios (the top grid) ─────────────────────────────────────────────
-    # screener.in structure: <ul id="top-ratios"> <li> <span class="name">…</span>
-    #   <span class="number">…</span> or <span class="nowrap">…</span> </li>
+    # ── Key ratios ────────────────────────────────────────────────────────────
+    # Structure: <ul id="top-ratios">
+    #   <li> <span class="name">Market Cap</span>
+    #        <span class="number"> ₹ 16,52,765 Cr. <span class="...">▼</span></span>
+    #   </li>
     ratios: dict = {}
     for li in soup.select("#top-ratios li"):
-        spans = li.find_all("span")
-        if len(spans) < 2:
+        name_el = li.find("span", class_="name")
+        num_el  = li.find("span", class_="number") or li.find("span", class_="value")
+        if not name_el:
             continue
-        k = spans[0].get_text(strip=True)
-        # Value is the last span with numeric-looking content
-        v = ""
-        for sp in reversed(spans):
-            txt = sp.get_text(strip=True)
-            if txt and txt != k:
-                v = txt
-                break
+        k = name_el.get_text(" ", strip=True).strip()
+        if not k:
+            continue
+        if num_el:
+            # Extract direct text nodes only (skip nested indicator spans like ▼▲)
+            raw = "".join(t for t in num_el.strings if t.strip() and t.strip() not in ("▼","▲","▽","△"))
+            v = _re.sub(r"\s+", " ", raw).strip()
+        else:
+            # Fallback: second span if present
+            spans = li.find_all("span", recursive=False) or li.find_all("span")
+            v = ""
+            for sp in spans[1:]:
+                candidate = sp.get_text(" ", strip=True)
+                clean = _re.sub(r"[▼▲▽△\s]", "", candidate)
+                if clean:
+                    v = sp.get_text(" ", strip=True).strip()
+                    break
         if k and v:
             ratios[k] = v
     result["key_ratios"] = ratios
 
-    # ── Helper: parse a data table (Quarterly/Annual/Balance/Cash) ────────────
-    def _parse_table(section_id: str) -> dict:
-        sec = soup.find("section", id=section_id) or soup.find("div", id=section_id)
-        if not sec:
-            return {}
-        table = sec.find("table")
-        if not table:
-            return {}
-        headers: list = []
-        thead = table.find("thead")
-        if thead:
-            headers = [th.get_text(strip=True) for th in thead.find_all("th")]
-        rows: list = []
-        tbody = table.find("tbody")
-        if tbody:
-            for tr in tbody.find_all("tr"):
-                cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-                if any(c for c in cells):
-                    rows.append(cells)
-        return {"headers": headers, "rows": rows}
-
-    # ── Financials tables ─────────────────────────────────────────────────────
-    result["quarterly_results"]  = _parse_table("quarters")
-    result["annual_profit_loss"] = _parse_table("profit-loss")
-    result["balance_sheet"]      = _parse_table("balance-sheet")
-    result["cash_flow"]          = _parse_table("cash-flow")
-
-    # ── Shareholding pattern ──────────────────────────────────────────────────
-    sh_sec = soup.find("section", id="shareholding")
-    if sh_sec:
-        sh_table = sh_sec.find("table")
-        if sh_table:
-            result["shareholding"] = _parse_table("shareholding")
-        # Latest quarter summary
-        latest_cells: list = []
-        for tr in (sh_table.find_all("tr") if sh_table else []):
-            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-            if cells:
-                latest_cells.append(cells)
-        if latest_cells and len(latest_cells) > 1:
-            result["shareholding_summary"] = latest_cells[:6]
+    # ── Financial tables ──────────────────────────────────────────────────────
+    result["quarterly_results"]  = _parse_screener_table(soup, "quarters")
+    result["annual_profit_loss"] = _parse_screener_table(soup, "profit-loss")
+    result["balance_sheet"]      = _parse_screener_table(soup, "balance-sheet")
+    result["cash_flow"]          = _parse_screener_table(soup, "cash-flow")
+    result["shareholding"]       = _parse_screener_table(soup, "shareholding")
+    result["peers"]              = _parse_screener_table(soup, "peers")
 
     # ── Pros & Cons ───────────────────────────────────────────────────────────
-    pros: list = []
-    cons: list = []
-    for li in soup.select(".pros li"):
-        t = li.get_text(strip=True)
-        if t:
-            pros.append(t)
-    for li in soup.select(".cons li"):
-        t = li.get_text(strip=True)
-        if t:
-            cons.append(t)
-    result["pros"] = pros
-    result["cons"] = cons
+    result["pros"] = [li.get_text(" ", strip=True) for li in soup.select(".pros li, #analysis li.positive")]
+    result["cons"] = [li.get_text(" ", strip=True) for li in soup.select(".cons li, #analysis li.negative")]
+    # Deduplicate
+    result["pros"] = list(dict.fromkeys(p for p in result["pros"] if p))
+    result["cons"] = list(dict.fromkeys(c for c in result["cons"] if c))
 
-    # ── Peer comparison ───────────────────────────────────────────────────────
-    peer_sec = soup.find("section", id="peers")
-    if peer_sec:
-        result["peers"] = _parse_table("peers")
+    # ── Current price (direct from page, more reliable than key_ratios) ───────
+    for sel in ["#top-ratios .current-price", ".current-price", "#top-ratios li:nth-child(2) .number"]:
+        el = soup.select_one(sel)
+        if el:
+            result["current_price"] = el.get_text(" ", strip=True).strip()
+            break
 
-    # ── Price info from page meta ─────────────────────────────────────────────
-    for meta in soup.find_all("meta"):
-        prop = meta.get("property", "") or meta.get("name", "")
-        if "price" in prop.lower() or "description" in prop.lower():
-            content = meta.get("content", "")
-            if content:
-                result.setdefault("meta_desc", content[:300])
+    # ── Compounded growth rates (Sales / Profit CAGR, Stock CAGR) ────────────
+    # Screener renders these as small tables inside #profit-loss or a dedicated
+    # #ratios section.  We capture every such table that isn't a main financial table.
+    growth: dict = {}
+    for sec in soup.select("section"):
+        sec_id = sec.get("id", "")
+        if sec_id in ("quarters", "profit-loss", "balance-sheet",
+                      "cash-flow", "shareholding", "peers"):
+            continue  # already parsed above
+        for tbl in sec.find_all("table"):
+            hdrs = [th.get_text(" ", strip=True) for th in tbl.select("thead th")]
+            trows = []
+            for tr in tbl.select("tbody tr"):
+                cells = [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
+                if any(c.strip() for c in cells):
+                    trows.append(cells)
+            if trows:
+                heading_el = sec.find(["h2", "h3", "h4"])
+                key = heading_el.get_text(" ", strip=True) if heading_el else (sec_id or f"section_{len(growth)}")
+                growth[key] = {"headers": hdrs, "rows": trows}
+    if growth:
+        result["extra_tables"] = growth
+
+    # ── Compounded sales / profit growth sub-blocks (text lists) ─────────────
+    # These appear as <div class="ranges"> inside #profit-loss / standalone
+    cagr_blocks: dict = {}
+    for div in soup.select(".ranges, .sub-text, .compounded-sales-growth"):
+        parent = div.find_parent(["section", "div"])
+        pid = (parent.get("id") or parent.get("class", ["unknown"])[0]) if parent else "misc"
+        label_el = div.find_previous_sibling(["h3", "h4", "b", "strong"])
+        label = label_el.get_text(strip=True) if label_el else pid
+        entries = {}
+        for li in div.select("li, span.flex-row, div.flex-row"):
+            txt = li.get_text(" ", strip=True)
+            if txt:
+                parts = txt.rsplit(" ", 1)
+                if len(parts) == 2:
+                    entries[parts[0].strip()] = parts[1].strip()
+                else:
+                    entries[txt] = ""
+        if entries:
+            cagr_blocks[label] = entries
+    if cagr_blocks:
+        result["cagr_blocks"] = cagr_blocks
+
+    # ── Return ratios block (ROE, ROCE trends) ────────────────────────────────
+    return_rows = []
+    for div in soup.select("#ratios, .return-ratios, section#ratios"):
+        tbl = div.find("table")
+        if tbl:
+            hdrs = [th.get_text(" ", strip=True) for th in tbl.select("thead th")]
+            trows = []
+            for tr in tbl.select("tbody tr"):
+                cells = [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
+                if any(c.strip() for c in cells):
+                    trows.append(cells)
+            if trows:
+                return_rows = {"headers": hdrs, "rows": trows}
+                break
+    if return_rows:
+        result["return_ratios"] = return_rows
+
+    # ── Price history / highs-lows (52w, all-time) ───────────────────────────
+    price_info: dict = {}
+    for li in soup.select("#top-ratios li"):
+        name_el = li.find("span", class_="name")
+        num_el  = li.find("span", class_="number") or li.find("span", class_="value")
+        if name_el and num_el:
+            k = name_el.get_text(" ", strip=True).strip()
+            v_raw = "".join(t for t in num_el.strings
+                            if t.strip() and t.strip() not in ("▼","▲","▽","△"))
+            v = _re.sub(r"\s+", " ", v_raw).strip()
+            if k and v:
+                price_info[k] = v
+    # Merge with key_ratios (price_info may have same keys, it's a superset)
+    result["key_ratios"].update(price_info)
+
+    # ── 52-week high/low (dedicated spans) ───────────────────────────────────
+    for sel, fld in [
+        (".high-price, .week52-high", "week52_high"),
+        (".low-price,  .week52-low",  "week52_low"),
+    ]:
+        el = soup.select_one(sel)
+        if el:
+            result[fld] = el.get_text(" ", strip=True).strip()
+
+    # ── Management / directors ────────────────────────────────────────────────
+    mgmt = []
+    for row in soup.select("#company-management tr, .management-table tr, table.management tr"):
+        cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
+        if cells and any(c.strip() for c in cells):
+            mgmt.append(cells)
+    if mgmt:
+        result["management"] = mgmt
+
+    # ── Shareholding pattern detail (promoter/FII/DII/public %) ──────────────
+    # Already in result["shareholding"] table, but also extract the latest %
+    sh_latest: dict = {}
+    for li in soup.select(".shareholding-summary li, .share-holding li"):
+        txt = li.get_text(" ", strip=True)
+        m = _re.match(r"^(.+?)\s+([\d.]+\s*%)\s*$", txt)
+        if m:
+            sh_latest[m.group(1).strip()] = m.group(2).strip()
+    if sh_latest:
+        result["shareholding_latest"] = sh_latest
+
+    # ── Annual reports / documents ────────────────────────────────────────────
+    docs = []
+    for a in soup.select("#documents a[href], .annual-reports a[href], .documents a[href]"):
+        href = a["href"]
+        label = a.get_text(strip=True)
+        if href and label:
+            full = href if href.startswith("http") else "https://www.screener.in" + href
+            docs.append({"label": label, "url": full})
+    if docs:
+        result["documents"] = docs
+
+    # ── Analyst notes / investor presentation links ───────────────────────────
+    notes = []
+    for a in soup.select("a[href*='concall'], a[href*='presentation'], a[href*='investor']"):
+        href = a["href"]
+        label = a.get_text(strip=True) or href
+        if href:
+            full = href if href.startswith("http") else "https://www.screener.in" + href
+            notes.append({"label": label, "url": full})
+    if notes:
+        result["investor_links"] = list({d["url"]: d for d in notes}.values())  # dedup by url
+
+    # ── Number of shares outstanding ─────────────────────────────────────────
+    for sel in ["#top-ratios [data-field='shares']", ".number-of-shares",
+                "li:contains('Shares')  .number"]:
+        el = soup.select_one(sel)
+        if el:
+            result["shares_outstanding"] = el.get_text(" ", strip=True).strip()
+            break
+
+    # ── Piotroski / quality scores (if displayed) ─────────────────────────────
+    for sel in [".piotroski-score", ".altman-z-score", ".quality-score"]:
+        el = soup.select_one(sel)
+        if el:
+            key = sel.lstrip(".")
+            result[key] = el.get_text(" ", strip=True).strip()
+
+    # ── Warnings / flags ──────────────────────────────────────────────────────
+    flags = [li.get_text(" ", strip=True)
+             for li in soup.select(".red-flag li, .warning li, #analysis li.red")]
+    if flags:
+        result["flags"] = list(dict.fromkeys(f for f in flags if f))
+
+    # ── Concall transcripts / notes (plain text blocks) ──────────────────────
+    for sel in ["#notes", "div.concall", "div.company-notes"]:
+        el = soup.select_one(sel)
+        if el:
+            txt = el.get_text(" ", strip=True)
+            if txt:
+                result["notes_text"] = txt[:1000]
                 break
 
     _SCREENER_CACHE[cache_key] = {"data": result, "ts": now}
     return jsonify(result)
+
+
+@app.route("/api/screener/debug")
+def api_screener_debug():
+    """Diagnostic: shows raw HTTP status + detected fields."""
+    sym = request.args.get("symbol", "RELIANCE").strip().upper()
+    url = f"https://www.screener.in/company/{sym}/consolidated/"
+    out = [f"<b>Testing:</b> {url}"]
+    try:
+        _warm_screener()
+        r = _screener_session.get(url, timeout=15)
+        out.append(f"<b>Status:</b> {r.status_code}  <b>Len:</b> {len(r.text)}")
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, "lxml")
+            out.append(f"<b>h1:</b> {(soup.find('h1') or soup.new_tag('x')).get_text(strip=True)[:80]}")
+            out.append(f"<b>#top-ratios li count:</b> {len(soup.select('#top-ratios li'))}")
+            out.append(f"<b>#quarters table:</b> {'found' if soup.find('section',id='quarters') else 'missing'}")
+            out.append(f"<b>#profit-loss table:</b> {'found' if soup.find('section',id='profit-loss') else 'missing'}")
+            out.append(f"<b>.pros li:</b> {len(soup.select('.pros li'))}")
+            out.append(f"<b>title:</b> {(soup.find('title') or soup.new_tag('x')).get_text(strip=True)[:80]}")
+        else:
+            out.append(f"<b>Body:</b> {r.text[:400]}")
+    except Exception as exc:
+        out.append(f"<b>Exception:</b> {exc}")
+    body = "<br>".join(out)
+    return f"<pre style='background:#111;color:#7fff7f;padding:24px;font-family:monospace;white-space:pre-wrap'>{body}</pre>"
 
 
 @app.route("/debug")
