@@ -3231,6 +3231,134 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .site-footer-name{{font-size:clamp(2rem,12vw,4.5rem)}}
     }}
 
+    /* ── SCREENER SEARCH WIDGET ── */
+    .screener-wrap{{margin-bottom:18px}}
+    .screener-search-row{{display:flex;gap:10px;align-items:flex-start;position:relative}}
+    .screener-input-wrap{{position:relative;flex:1}}
+    .screener-input{{width:100%;background:#fff;border:2px solid #000;border-radius:var(--rs);
+                     padding:10px 44px 10px 14px;font-family:'DM Sans',sans-serif;font-size:.88rem;
+                     font-weight:400;color:#000;outline:none;transition:border-color .15s}}
+    .screener-input:focus{{border-color:#000;box-shadow:0 0 0 3px rgba(0,0,0,.06)}}
+    .screener-input::placeholder{{color:#aaa;font-size:.84rem}}
+    .screener-clear{{position:absolute;right:12px;top:50%;transform:translateY(-50%);
+                     background:none;border:none;cursor:pointer;font-size:1rem;color:#aaa;
+                     display:none;padding:2px 4px;line-height:1}}
+    .screener-clear:hover{{color:#000}}
+    .screener-dropdown{{position:absolute;top:calc(100% + 4px);left:0;right:0;
+                         background:#fff;border:2px solid #000;border-radius:var(--rs);
+                         z-index:500;display:none;max-height:280px;overflow-y:auto;
+                         box-shadow:0 8px 24px rgba(0,0,0,.12)}}
+    .screener-dropdown.open{{display:block}}
+    .screener-item{{padding:10px 14px;cursor:pointer;border-bottom:1px solid #f0f0f0;
+                    display:flex;align-items:center;justify-content:space-between;gap:8px}}
+    .screener-item:last-child{{border-bottom:none}}
+    .screener-item:hover,.screener-item.focused{{background:#f8f7f4}}
+    .screener-item-name{{font-size:.84rem;font-weight:500;color:#000;flex:1;
+                          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+    .screener-item-sym{{font-family:'DM Mono',monospace;font-size:.68rem;color:#555;
+                         background:#f0f0f0;border:1px solid #ddd;border-radius:3px;
+                         padding:.12rem .45rem;white-space:nowrap;flex-shrink:0}}
+    .screener-item-chg{{font-family:'DM Mono',monospace;font-size:.68rem;font-weight:500;
+                         flex-shrink:0;min-width:52px;text-align:right}}
+    .screener-item-chg.pos{{color:#16a34a}}
+    .screener-item-chg.neg{{color:#dc2626}}
+    .screener-no-results{{padding:14px 16px;font-size:.82rem;color:#888;text-align:center}}
+    .screener-loading-row{{padding:12px 16px;display:flex;align-items:center;gap:8px;color:#888;font-size:.8rem}}
+    .screener-spinner{{width:14px;height:14px;border-radius:50%;border:2px solid #ddd;
+                        border-top-color:#000;animation:spin .6s linear infinite;flex-shrink:0}}
+
+    /* ── SCREENER DATA PANEL ── */
+    #screener-data-panel{{display:none;margin-bottom:18px;overflow:hidden}}
+    .sd-header{{display:flex;align-items:flex-start;justify-content:space-between;
+                gap:12px;padding:20px 24px 0;flex-wrap:wrap}}
+    .sd-title-group{{flex:1;min-width:0}}
+    .sd-company-name{{font-size:1.18rem;font-weight:700;color:#000;line-height:1.3;
+                       margin-bottom:4px;word-break:break-word}}
+    .sd-tags{{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}}
+    .sd-tag{{font-family:'DM Mono',monospace;font-size:.58rem;letter-spacing:.06em;
+              border:1px solid #000;padding:.15rem .5rem;border-radius:3px;color:#333;
+              background:#f8f7f4;text-transform:uppercase}}
+    .sd-close-btn{{background:none;border:2px solid #000;border-radius:var(--rs);
+                    cursor:pointer;font-size:.7rem;font-weight:700;letter-spacing:.1em;
+                    text-transform:uppercase;padding:5px 12px;color:#000;
+                    transition:all .15s;flex-shrink:0}}
+    .sd-close-btn:hover{{background:#000;color:#fff}}
+    .sd-body{{padding:16px 24px 22px}}
+    .sd-about{{font-size:.82rem;color:#444;line-height:1.7;margin-bottom:18px;
+               border-left:3px solid #000;padding-left:12px}}
+    .sd-section-title{{font-size:.6rem;font-weight:700;letter-spacing:.18em;
+                        text-transform:uppercase;color:#888;margin:18px 0 10px;
+                        display:flex;align-items:center;gap:8px}}
+    .sd-section-title::after{{content:'';flex:1;height:1px;background:#e5e5e5}}
+    /* Key ratios grid */
+    .sd-ratios{{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
+                gap:8px;margin-bottom:4px}}
+    .sd-ratio-card{{background:#f8f7f4;border:1px solid #e5e5e5;border-radius:6px;
+                     padding:10px 12px;transition:border-color .15s}}
+    .sd-ratio-card:hover{{border-color:#000}}
+    .sd-ratio-lbl{{font-size:.6rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+                    color:#888;margin-bottom:4px;line-height:1.3}}
+    .sd-ratio-val{{font-family:'DM Mono',monospace;font-size:.96rem;font-weight:600;
+                    color:#000;line-height:1.2}}
+    /* Pros / Cons */
+    .sd-pros-cons{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:4px}}
+    .sd-pros{{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:12px 14px}}
+    .sd-cons{{background:#fff1f2;border:1px solid #fecdd3;border-radius:6px;padding:12px 14px}}
+    .sd-pc-title{{font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+                   margin-bottom:8px}}
+    .sd-pros .sd-pc-title{{color:#15803d}}
+    .sd-cons .sd-pc-title{{color:#be123c}}
+    .sd-pc-item{{font-size:.76rem;line-height:1.6;color:#333;padding:2px 0;
+                  border-bottom:1px solid rgba(0,0,0,.05)}}
+    .sd-pc-item:last-child{{border-bottom:none}}
+    .sd-pc-item::before{{content:'• ';font-weight:700}}
+    .sd-pros .sd-pc-item::before{{color:#16a34a}}
+    .sd-cons .sd-pc-item::before{{color:#dc2626}}
+    /* Financial tables */
+    .sd-table-wrap{{overflow-x:auto;margin-bottom:4px;-webkit-overflow-scrolling:touch}}
+    .sd-table{{width:100%;border-collapse:collapse;font-size:.72rem}}
+    .sd-table th{{background:#f8f7f4;font-weight:700;letter-spacing:.06em;font-size:.62rem;
+                   text-transform:uppercase;color:#555;border:1px solid #e5e5e5;
+                   padding:7px 10px;text-align:right;white-space:nowrap}}
+    .sd-table th:first-child{{text-align:left;font-family:'DM Sans',sans-serif}}
+    .sd-table td{{border:1px solid #f0f0f0;padding:6px 10px;text-align:right;
+                   font-family:'DM Mono',monospace;color:#333;white-space:nowrap}}
+    .sd-table td:first-child{{text-align:left;font-family:'DM Sans',sans-serif;
+                               font-weight:500;color:#000;font-size:.76rem}}
+    .sd-table tr:hover td{{background:#fafaf8}}
+    /* Peers table special */
+    .sd-table.peers-tbl td:first-child{{color:#2962ff;cursor:pointer;text-decoration:underline;
+                                          text-decoration-color:transparent;transition:.15s}}
+    .sd-table.peers-tbl td:first-child:hover{{text-decoration-color:#2962ff}}
+    /* Tabs */
+    .sd-tabs{{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}}
+    .sd-tab{{font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+              padding:5px 12px;border:1.5px solid #ddd;border-radius:4px;cursor:pointer;
+              color:#888;background:#fff;transition:all .15s}}
+    .sd-tab.active,.sd-tab:hover{{border-color:#000;color:#000;background:#f8f7f4}}
+    .sd-tab-panel{{display:none}}
+    .sd-tab-panel.active{{display:block}}
+    /* Loading state */
+    .sd-loading{{display:flex;flex-direction:column;align-items:center;
+                  justify-content:center;padding:48px 20px;gap:12px;color:#888}}
+    .sd-load-spinner{{width:28px;height:28px;border-radius:50%;border:2.5px solid #e5e5e5;
+                       border-top-color:#000;animation:spin .7s linear infinite}}
+    .sd-load-txt{{font-size:.82rem;font-weight:500;color:#555}}
+    .sd-load-sub{{font-size:.72rem;color:#aaa}}
+    .sd-error{{padding:24px;text-align:center;color:#dc2626;font-size:.84rem}}
+    .sd-screener-link{{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;
+                        font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+                        color:#555;border:1.5px solid #ddd;border-radius:4px;
+                        padding:4px 10px;text-decoration:none;transition:all .15s;margin-top:4px}}
+    .sd-screener-link:hover{{border-color:#000;color:#000}}
+    @media(max-width:600px){{
+      .sd-pros-cons{{grid-template-columns:1fr}}
+      .sd-ratios{{grid-template-columns:repeat(2,1fr)}}
+      .sd-header{{padding:14px 14px 0}}
+      .sd-body{{padding:12px 14px 16px}}
+      .sd-company-name{{font-size:1rem}}
+    }}
+
     /* ── VERY SMALL SCREENS ── */
     @media(max-width:380px){{
       header{{padding:0 8px;height:44px}}
@@ -3340,6 +3468,29 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div class="ind-row"><span class="ind-label">Indicators</span>{ichips}</div>
 </div>
  
+<div class="glass chart-card screener-wrap" id="screener-data-panel">
+  <!-- Populated by JS -->
+</div>
+
+<!-- ── SCREENER SEARCH (above chart) ── -->
+<div class="glass panel screener-wrap" style="margin-bottom:12px" id="screener-search-panel">
+  <div class="panel-label" style="margin-bottom:12px">
+    Screener.in Company Search
+    <span style="font-size:.6rem;font-weight:400;color:#aaa;letter-spacing:.04em;text-transform:none;margin-left:8px">
+      Search by company name — loads all financials from Screener
+    </span>
+  </div>
+  <div class="screener-search-row">
+    <div class="screener-input-wrap">
+      <input id="screener-input" class="screener-input"
+             type="text" placeholder="Type company name… e.g. Infosys, Reliance, HDFC"
+             autocomplete="off" spellcheck="false"/>
+      <button class="screener-clear" id="screener-clear" title="Clear">&#x2715;</button>
+      <div class="screener-dropdown" id="screener-dropdown"></div>
+    </div>
+  </div>
+</div>
+
 <div class="glass chart-card">{content}</div>
 
 <!-- ══════════════════════════════════════════
@@ -3647,6 +3798,295 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     el.style.color         = '#131722';
     el.style.display       = 'block';
   }}
+}}());
+</script>
+
+<!-- ── SCREENER SEARCH JAVASCRIPT ── -->
+<script>
+(function(){{
+  var inp       = document.getElementById('screener-input');
+  var dropdown  = document.getElementById('screener-dropdown');
+  var clearBtn  = document.getElementById('screener-clear');
+  var panel     = document.getElementById('screener-data-panel');
+  var debounceT = null;
+  var focusIdx  = -1;
+  var lastResults = [];
+
+  // ── Debounced search ────────────────────────────────────────────────────────
+  inp.addEventListener('input', function(){{
+    var q = inp.value.trim();
+    clearBtn.style.display = q ? 'block' : 'none';
+    focusIdx = -1;
+    clearTimeout(debounceT);
+    if (!q) {{ closeDropdown(); return; }}
+    if (q.length < 2) return;
+    showLoadingDropdown();
+    debounceT = setTimeout(function(){{ doSearch(q); }}, 280);
+  }});
+
+  inp.addEventListener('keydown', function(e){{
+    var items = dropdown.querySelectorAll('.screener-item');
+    if (e.key === 'ArrowDown'){{
+      e.preventDefault();
+      focusIdx = Math.min(focusIdx + 1, items.length - 1);
+      highlightItem(items);
+    }} else if (e.key === 'ArrowUp'){{
+      e.preventDefault();
+      focusIdx = Math.max(focusIdx - 1, 0);
+      highlightItem(items);
+    }} else if (e.key === 'Enter'){{
+      e.preventDefault();
+      if (focusIdx >= 0 && items[focusIdx]){{
+        items[focusIdx].click();
+      }}
+    }} else if (e.key === 'Escape'){{
+      closeDropdown();
+    }}
+  }});
+
+  clearBtn.addEventListener('click', function(){{
+    inp.value = '';
+    clearBtn.style.display = 'none';
+    closeDropdown();
+    inp.focus();
+  }});
+
+  document.addEventListener('click', function(e){{
+    if (!e.target.closest('#screener-search-panel')) closeDropdown();
+  }});
+
+  function highlightItem(items){{
+    items.forEach(function(el, i){{
+      el.classList.toggle('focused', i === focusIdx);
+    }});
+    if (items[focusIdx]) items[focusIdx].scrollIntoView({{block:'nearest'}});
+  }}
+
+  function showLoadingDropdown(){{
+    dropdown.innerHTML = '<div class="screener-loading-row"><span class="screener-spinner"></span> Searching…</div>';
+    dropdown.classList.add('open');
+  }}
+
+  function closeDropdown(){{
+    dropdown.classList.remove('open');
+    dropdown.innerHTML = '';
+    focusIdx = -1;
+  }}
+
+  function doSearch(q){{
+    fetch('/api/screener/search?q=' + encodeURIComponent(q))
+      .then(function(r){{ return r.json(); }})
+      .then(function(data){{
+        lastResults = data.results || [];
+        renderDropdown(lastResults);
+      }})
+      .catch(function(){{
+        dropdown.innerHTML = '<div class="screener-no-results">Search failed — check connection</div>';
+        dropdown.classList.add('open');
+      }});
+  }}
+
+  function renderDropdown(results){{
+    if (!results || results.length === 0){{
+      dropdown.innerHTML = '<div class="screener-no-results">No companies found</div>';
+      dropdown.classList.add('open');
+      return;
+    }}
+    var html = '';
+    results.slice(0, 18).forEach(function(item, idx){{
+      // screener.in returns: {{name, url, percent_change}} where url is like /company/RELIANCE/
+      var name = item.name || '';
+      var url  = item.url  || '';
+      var sym  = (url.match(/\/company\/([^\/]+)\//) || [])[1] || '';
+      var chg  = item.percent_change;
+      var chgHtml = '';
+      if (chg !== undefined && chg !== null){{
+        var cls = parseFloat(chg) >= 0 ? 'pos' : 'neg';
+        var sign = parseFloat(chg) >= 0 ? '+' : '';
+        chgHtml = '<span class="screener-item-chg ' + cls + '">' + sign + parseFloat(chg).toFixed(2) + '%</span>';
+      }}
+      html += '<div class="screener-item" data-sym="' + sym + '" data-name="' + name.replace(/"/g,'&quot;') + '" data-idx="' + idx + '">' +
+              '<span class="screener-item-name">' + escHtml(name) + '</span>' +
+              (sym ? '<span class="screener-item-sym">' + sym + '</span>' : '') +
+              chgHtml +
+              '</div>';
+    }});
+    dropdown.innerHTML = html;
+    dropdown.classList.add('open');
+    // Attach click handlers
+    dropdown.querySelectorAll('.screener-item').forEach(function(el){{
+      el.addEventListener('click', function(){{
+        var sym  = el.getAttribute('data-sym');
+        var name = el.getAttribute('data-name');
+        selectCompany(sym, name);
+      }});
+    }});
+  }}
+
+  function escHtml(s){{
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }}
+
+  // ── Select a company ────────────────────────────────────────────────────────
+  window.selectCompany = function(sym, name){{
+    if (!sym) return;
+    inp.value = name || sym;
+    clearBtn.style.display = 'block';
+    closeDropdown();
+    // Auto-fill the main ticker form with the NSE symbol
+    var nseSymbol = sym + '.NS';
+    var tickerInput = document.getElementById('ticker');
+    var gbmTicker   = document.getElementById('gbm-ticker');
+    if (tickerInput)  tickerInput.value = nseSymbol;
+    if (gbmTicker)    gbmTicker.value   = nseSymbol;
+    // Load screener data
+    loadScreenerData(sym, name);
+    // Scroll to chart section
+    var chartSection = document.getElementById('stocks');
+    if (chartSection) chartSection.scrollIntoView({{behavior:'smooth', block:'start'}});
+  }};
+
+  // ── Load & display screener data ────────────────────────────────────────────
+  function loadScreenerData(sym, companyName){{
+    panel.style.display = 'block';
+    panel.innerHTML = '<div class="sd-loading">' +
+      '<div class="sd-load-spinner"></div>' +
+      '<div class="sd-load-txt">Loading ' + escHtml(companyName || sym) + ' from Screener.in…</div>' +
+      '<div class="sd-load-sub">Fetching financials, ratios, shareholding…</div>' +
+      '</div>';
+    panel.scrollIntoView({{behavior:'smooth', block:'start'}});
+
+    fetch('/api/screener/data?symbol=' + encodeURIComponent(sym))
+      .then(function(r){{ return r.json(); }})
+      .then(function(d){{
+        if (d.error) {{
+          panel.innerHTML = '<div class="sd-error">⚠ ' + escHtml(d.error) + '</div>';
+          return;
+        }}
+        renderScreenerPanel(d);
+      }})
+      .catch(function(e){{
+        panel.innerHTML = '<div class="sd-error">⚠ Failed to load data: ' + escHtml(String(e)) + '</div>';
+      }});
+  }}
+
+  function renderScreenerPanel(d){{
+    var name = d.name || d.symbol;
+
+    // ── Tags ────────────────────────────────────────────────────────────────
+    var tagsHtml = (d.tags || []).map(function(t){{
+      return '<span class="sd-tag">' + escHtml(t) + '</span>';
+    }}).join('');
+
+    // ── Key ratios ──────────────────────────────────────────────────────────
+    var ratioHtml = '';
+    var ratios = d.key_ratios || {{}};
+    Object.keys(ratios).forEach(function(k){{
+      ratioHtml += '<div class="sd-ratio-card"><div class="sd-ratio-lbl">' +
+        escHtml(k) + '</div><div class="sd-ratio-val">' + escHtml(ratios[k]) + '</div></div>';
+    }});
+
+    // ── Pros / Cons ─────────────────────────────────────────────────────────
+    var prosHtml = (d.pros || []).map(function(p){{
+      return '<div class="sd-pc-item">' + escHtml(p) + '</div>';
+    }}).join('');
+    var consHtml = (d.cons || []).map(function(c){{
+      return '<div class="sd-pc-item">' + escHtml(c) + '</div>';
+    }}).join('');
+
+    // ── Financial table builder ──────────────────────────────────────────────
+    function buildTable(tdata, extraClass){{
+      if (!tdata || !tdata.rows || !tdata.rows.length) return '<p style="color:#aaa;font-size:.78rem;padding:8px 0">No data available</p>';
+      var cls = 'sd-table' + (extraClass ? ' ' + extraClass : '');
+      var html = '<div class="sd-table-wrap"><table class="' + cls + '"><thead><tr>';
+      (tdata.headers || []).forEach(function(h){{ html += '<th>' + escHtml(h) + '</th>'; }});
+      html += '</tr></thead><tbody>';
+      tdata.rows.forEach(function(row){{
+        html += '<tr>';
+        row.forEach(function(cell){{ html += '<td>' + escHtml(cell) + '</td>'; }});
+        html += '</tr>';
+      }});
+      html += '</tbody></table></div>';
+      return html;
+    }}
+
+    // ── Tabs (Quarterly / P&L / Balance Sheet / Cash Flow / Peers) ──────────
+    var tabs = [
+      {{id:'tab-qr',   lbl:'Quarterly Results', html: buildTable(d.quarterly_results)}},
+      {{id:'tab-pl',   lbl:'P&L (Annual)',       html: buildTable(d.annual_profit_loss)}},
+      {{id:'tab-bs',   lbl:'Balance Sheet',      html: buildTable(d.balance_sheet)}},
+      {{id:'tab-cf',   lbl:'Cash Flow',          html: buildTable(d.cash_flow)}},
+      {{id:'tab-sh',   lbl:'Shareholding',       html: buildTable(d.shareholding)}},
+      {{id:'tab-peer', lbl:'Peers',              html: buildTable(d.peers, 'peers-tbl')}},
+    ].filter(function(t){{ return t.html.indexOf('No data') < 0; }});
+
+    var tabBtns  = tabs.map(function(t, i){{
+      return '<button class="sd-tab' + (i===0?' active':'') + '" onclick="sdTab(\'' + t.id + '\',this)">' + escHtml(t.lbl) + '</button>';
+    }}).join('');
+    var tabPanes = tabs.map(function(t, i){{
+      return '<div class="sd-tab-panel' + (i===0?' active':'') + '" id="' + t.id + '">' + t.html + '</div>';
+    }}).join('');
+
+    var screenerUrl = d.url || ('https://www.screener.in/company/' + d.symbol + '/');
+
+    panel.innerHTML =
+      '<div class="sd-header">' +
+        '<div class="sd-title-group">' +
+          '<div class="sd-company-name">' + escHtml(name) + '</div>' +
+          '<div class="sd-tags">' + tagsHtml + '</div>' +
+          '<a class="sd-screener-link" href="' + escHtml(screenerUrl) + '" target="_blank" rel="noopener">↗ View on Screener.in</a>' +
+        '</div>' +
+        '<button class="sd-close-btn" onclick="closeScreenerPanel()">✕ Close</button>' +
+      '</div>' +
+      '<div class="sd-body">' +
+        (d.about ? '<div class="sd-about">' + escHtml(d.about) + '</div>' : '') +
+        (ratioHtml ? '<div class="sd-section-title">Key Ratios</div><div class="sd-ratios">' + ratioHtml + '</div>' : '') +
+        ((prosHtml || consHtml) ?
+          '<div class="sd-section-title">Strengths & Risks</div>' +
+          '<div class="sd-pros-cons">' +
+            (prosHtml ? '<div class="sd-pros"><div class="sd-pc-title">Pros</div>' + prosHtml + '</div>' : '') +
+            (consHtml ? '<div class="sd-cons"><div class="sd-pc-title">Cons</div>' + consHtml + '</div>' : '') +
+          '</div>' : '') +
+        (tabs.length ?
+          '<div class="sd-section-title">Financials</div>' +
+          '<div class="sd-tabs">' + tabBtns + '</div>' +
+          '<div class="sd-tab-panels">' + tabPanes + '</div>' : '') +
+      '</div>';
+  }}
+
+  // ── Tab switching ────────────────────────────────────────────────────────────
+  window.sdTab = function(panelId, btn){{
+    var allBtns   = document.querySelectorAll('.sd-tab');
+    var allPanels = document.querySelectorAll('.sd-tab-panel');
+    allBtns.forEach(function(b){{ b.classList.remove('active'); }});
+    allPanels.forEach(function(p){{ p.classList.remove('active'); }});
+    btn.classList.add('active');
+    var el = document.getElementById(panelId);
+    if (el) el.classList.add('active');
+  }};
+
+  // ── Close panel ─────────────────────────────────────────────────────────────
+  window.closeScreenerPanel = function(){{
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    inp.value = '';
+    clearBtn.style.display = 'none';
+  }};
+
+  // ── Peer company click (navigate to peer in screener) ────────────────────────
+  document.addEventListener('click', function(e){{
+    var cell = e.target.closest('.peers-tbl td:first-child');
+    if (cell){{
+      var peerName = cell.textContent.trim();
+      if (peerName) {{
+        inp.value = peerName;
+        clearBtn.style.display = 'block';
+        closeDropdown();
+        doSearch(peerName);
+      }}
+    }}
+  }});
+
 }}());
 </script>
 
@@ -5988,6 +6428,182 @@ def adsb_data():
         rows = list(_adsb_buffer)[-limit:]
     cols = ["ts", "hex", "flight", "lat", "lon", "alt_baro", "gs", "track"]
     return jsonify({"count": len(rows), "columns": cols, "rows": rows})
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREENER.IN  —  Company search autocomplete + full page scraper
+# ══════════════════════════════════════════════════════════════════════════════
+_SCREENER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "Chrome/124.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.screener.in/",
+}
+_SCREENER_CACHE: dict = {}
+_SCREENER_TTL = 300  # 5 min
+
+
+@app.route("/api/screener/search")
+def api_screener_search():
+    """Autocomplete: returns [{name, url, percent_change}] from screener.in."""
+    q = request.args.get("q", "").strip()
+    if len(q) < 1:
+        return jsonify({"results": []})
+    cache_key = f"srch_{q.lower()}"
+    now = time.time()
+    if cache_key in _SCREENER_CACHE and now - _SCREENER_CACHE[cache_key]["ts"] < _SCREENER_TTL:
+        return jsonify(_SCREENER_CACHE[cache_key]["data"])
+    try:
+        r = requests.get(
+            "https://www.screener.in/api/company/search/",
+            params={"q": q, "v": "3"},
+            headers=_SCREENER_HEADERS,
+            timeout=8,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            result = {"results": data}
+            _SCREENER_CACHE[cache_key] = {"data": result, "ts": now}
+            return jsonify(result)
+    except Exception as exc:
+        print(f"[Screener] search error: {exc}")
+    return jsonify({"results": [], "error": "search failed"})
+
+
+@app.route("/api/screener/data")
+def api_screener_data():
+    """Scrape all available data from screener.in company page."""
+    symbol = request.args.get("symbol", "").strip().upper()
+    consolidated = request.args.get("consolidated", "1")
+    if not symbol:
+        return jsonify({"error": "symbol required"}), 400
+
+    cache_key = f"data_{symbol}_{consolidated}"
+    now = time.time()
+    if cache_key in _SCREENER_CACHE and now - _SCREENER_CACHE[cache_key]["ts"] < _SCREENER_TTL:
+        return jsonify(_SCREENER_CACHE[cache_key]["data"])
+
+    suffix = "consolidated/" if consolidated == "1" else ""
+    url = f"https://www.screener.in/company/{symbol}/{suffix}"
+    try:
+        r = requests.get(url, headers=_SCREENER_HEADERS, timeout=15)
+        if r.status_code == 404:
+            # Try without consolidated
+            url = f"https://www.screener.in/company/{symbol}/"
+            r = requests.get(url, headers=_SCREENER_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return jsonify({"error": f"HTTP {r.status_code}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    soup = BeautifulSoup(r.text, "lxml")
+    result: dict = {"symbol": symbol, "url": url}
+
+    # ── Company name & description ────────────────────────────────────────────
+    h1 = soup.find("h1", class_="h2")
+    result["name"] = h1.get_text(strip=True) if h1 else symbol
+    about = soup.find("div", class_="about")
+    if about:
+        p = about.find("p")
+        result["about"] = p.get_text(" ", strip=True)[:600] if p else ""
+
+    # ── Top badge pills (NSE/BSE/sector/industry) ─────────────────────────────
+    tags: list = []
+    for tag in soup.select(".company-links a, .flex-gap-8 a"):
+        t = tag.get_text(strip=True)
+        if t:
+            tags.append(t)
+    result["tags"] = list(dict.fromkeys(tags))[:10]
+
+    # ── Key ratios (the top grid) ─────────────────────────────────────────────
+    ratios: dict = {}
+    for li in soup.select("#top-ratios li"):
+        name_el = li.find("span", class_="name") or li.find("span")
+        val_el  = li.find("span", class_="number") or li.find("span", class_="value")
+        if not val_el:
+            # fallback: last span
+            spans = li.find_all("span")
+            if len(spans) >= 2:
+                name_el, val_el = spans[0], spans[-1]
+        if name_el and val_el:
+            k = name_el.get_text(strip=True)
+            v = val_el.get_text(strip=True)
+            if k and v and k != v:
+                ratios[k] = v
+    result["key_ratios"] = ratios
+
+    # ── Helper: parse a data table (Quarterly/Annual/Balance/Cash) ────────────
+    def _parse_table(section_id: str) -> dict:
+        sec = soup.find("section", id=section_id) or soup.find("div", id=section_id)
+        if not sec:
+            return {}
+        table = sec.find("table")
+        if not table:
+            return {}
+        headers: list = []
+        thead = table.find("thead")
+        if thead:
+            headers = [th.get_text(strip=True) for th in thead.find_all("th")]
+        rows: list = []
+        tbody = table.find("tbody")
+        if tbody:
+            for tr in tbody.find_all("tr"):
+                cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+                if any(c for c in cells):
+                    rows.append(cells)
+        return {"headers": headers, "rows": rows}
+
+    # ── Financials tables ─────────────────────────────────────────────────────
+    result["quarterly_results"]  = _parse_table("quarters")
+    result["annual_profit_loss"] = _parse_table("profit-loss")
+    result["balance_sheet"]      = _parse_table("balance-sheet")
+    result["cash_flow"]          = _parse_table("cash-flow")
+
+    # ── Shareholding pattern ──────────────────────────────────────────────────
+    sh_sec = soup.find("section", id="shareholding")
+    if sh_sec:
+        sh_table = sh_sec.find("table")
+        if sh_table:
+            result["shareholding"] = _parse_table("shareholding")
+        # Latest quarter summary
+        latest_cells: list = []
+        for tr in (sh_table.find_all("tr") if sh_table else []):
+            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+            if cells:
+                latest_cells.append(cells)
+        if latest_cells and len(latest_cells) > 1:
+            result["shareholding_summary"] = latest_cells[:6]
+
+    # ── Pros & Cons ───────────────────────────────────────────────────────────
+    pros: list = []
+    cons: list = []
+    for li in soup.select(".pros li"):
+        t = li.get_text(strip=True)
+        if t:
+            pros.append(t)
+    for li in soup.select(".cons li"):
+        t = li.get_text(strip=True)
+        if t:
+            cons.append(t)
+    result["pros"] = pros
+    result["cons"] = cons
+
+    # ── Peer comparison ───────────────────────────────────────────────────────
+    peer_sec = soup.find("section", id="peers")
+    if peer_sec:
+        result["peers"] = _parse_table("peers")
+
+    # ── Price info from page meta ─────────────────────────────────────────────
+    for meta in soup.find_all("meta"):
+        prop = meta.get("property", "") or meta.get("name", "")
+        if "price" in prop.lower() or "description" in prop.lower():
+            content = meta.get("content", "")
+            if content:
+                result.setdefault("meta_desc", content[:300])
+                break
+
+    _SCREENER_CACHE[cache_key] = {"data": result, "ts": now}
+    return jsonify(result)
+
 
 @app.route("/debug")
 def debug():
