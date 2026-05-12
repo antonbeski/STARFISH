@@ -3233,6 +3233,10 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
     /* ── SCREENER SEARCH WIDGET ── */
     .screener-wrap{{margin-bottom:18px}}
+    /* glass uses contain:layout style which clips position:absolute children —
+       override it on the search panel so the dropdown can overflow outside */
+    #screener-search-panel{{contain:none!important;overflow:visible!important}}
+    #screener-data-panel{{contain:none!important;overflow:visible!important}}
     .screener-search-row{{display:flex;gap:10px;align-items:flex-start;position:relative}}
     .screener-input-wrap{{position:relative;flex:1}}
     .screener-input{{width:100%;background:#fff;border:2px solid #000;border-radius:var(--rs);
@@ -3473,7 +3477,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div class="ind-row"><span class="ind-label">Indicators</span>{ichips}</div>
 </div>
  
-<div class="glass chart-card screener-wrap" id="screener-data-panel">
+<div class="glass screener-wrap" id="screener-data-panel">
   <!-- Populated by JS -->
 </div>
 
@@ -3824,6 +3828,23 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   var selectedSym  = '';   // symbol from last dropdown selection
   var selectedName = '';   // name from last dropdown selection
 
+  // ── Restore screener panel after chart form-submit page reload ───────────────
+  try {{
+    var _pend = sessionStorage.getItem('_screener_pending');
+    if (_pend) {{
+      sessionStorage.removeItem('_screener_pending');
+      var _po = JSON.parse(_pend);
+      if (_po && _po.sym) {{
+        selectedSym  = _po.sym;
+        selectedName = _po.name || _po.sym;
+        inp.value = _po.name || _po.sym;
+        clearBtn.style.display = 'block';
+        // slight delay so DOM is fully ready
+        setTimeout(function(){{ loadScreenerData(_po.sym, _po.name); }}, 120);
+      }}
+    }}
+  }} catch(e) {{}}
+
   // ── Debounced search ────────────────────────────────────────────────────────
   inp.addEventListener('input', function(){{
     var q = inp.value.trim();
@@ -3990,17 +4011,17 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     selectedSym  = sym;
     selectedName = name || sym;
     closeDropdown();
-    // Auto-fill the main ticker form with the NSE symbol
-    var nseSymbol = sym + '.NS';
+    // Fill ticker inputs
+    var nseSymbol   = sym + '.NS';
     var tickerInput = document.getElementById('ticker');
     var gbmTicker   = document.getElementById('gbm-ticker');
-    if (tickerInput)  tickerInput.value = nseSymbol;
-    if (gbmTicker)    gbmTicker.value   = nseSymbol;
-    // Load screener data
-    loadScreenerData(sym, name);
-    // Scroll to chart section
-    var chartSection = document.getElementById('stocks');
-    if (chartSection) chartSection.scrollIntoView({{behavior:'smooth', block:'start'}});
+    if (tickerInput) tickerInput.value = nseSymbol;
+    if (gbmTicker)   gbmTicker.value   = nseSymbol;
+    // Persist so the panel reloads after form submit (page reload)
+    try {{ sessionStorage.setItem('_screener_pending', JSON.stringify({{sym: sym, name: name || sym}})); }} catch(e) {{}}
+    // Submit main form to update the price chart — page will reload
+    var mf = document.getElementById('main-form');
+    if (mf) {{ mf.submit(); }} else {{ loadScreenerData(sym, name); }}
   }};
 
   // ── Load & display screener data ────────────────────────────────────────────
