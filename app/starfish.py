@@ -3262,6 +3262,11 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                          flex-shrink:0;min-width:52px;text-align:right}}
     .screener-item-chg.pos{{color:#16a34a}}
     .screener-item-chg.neg{{color:#dc2626}}
+    .screener-btn{{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;background:#000;color:#fff;border:2px solid #000;border-radius:var(--rs);font-family:'DM Mono',monospace;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap;letter-spacing:.04em;transition:background .15s,color .15s;flex-shrink:0;height:42px;box-sizing:border-box}}
+    .screener-btn:hover{{background:#333;border-color:#333}}
+    .screener-btn:active{{background:#555}}
+    .screener-btn:disabled{{background:#aaa;border-color:#aaa;cursor:default}}
+    .screener-btn svg{{flex-shrink:0}}
     .screener-no-results{{padding:14px 16px;font-size:.82rem;color:#888;text-align:center}}
     .screener-loading-row{{padding:12px 16px;display:flex;align-items:center;gap:8px;color:#888;font-size:.8rem}}
     .screener-spinner{{width:14px;height:14px;border-radius:50%;border:2px solid #ddd;
@@ -3488,6 +3493,10 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       <button class="screener-clear" id="screener-clear" title="Clear">&#x2715;</button>
       <div class="screener-dropdown" id="screener-dropdown"></div>
     </div>
+    <button id="screener-search-btn" class="screener-btn" title="Load company data from Screener.in">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Search
+    </button>
   </div>
 </div>
 
@@ -3807,16 +3816,21 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   var inp       = document.getElementById('screener-input');
   var dropdown  = document.getElementById('screener-dropdown');
   var clearBtn  = document.getElementById('screener-clear');
+  var searchBtn = document.getElementById('screener-search-btn');
   var panel     = document.getElementById('screener-data-panel');
   var debounceT = null;
   var focusIdx  = -1;
   var lastResults = [];
+  var selectedSym  = '';   // symbol from last dropdown selection
+  var selectedName = '';   // name from last dropdown selection
 
   // ── Debounced search ────────────────────────────────────────────────────────
   inp.addEventListener('input', function(){{
     var q = inp.value.trim();
     clearBtn.style.display = q ? 'block' : 'none';
     focusIdx = -1;
+    selectedSym  = '';
+    selectedName = '';
     clearTimeout(debounceT);
     if (!q) {{ closeDropdown(); return; }}
     if (q.length < 2) return;
@@ -3838,6 +3852,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       e.preventDefault();
       if (focusIdx >= 0 && items[focusIdx]){{
         items[focusIdx].click();
+      }} else {{
+        // Direct trigger: use selected sym or treat input as symbol
+        triggerSearch();
       }}
     }} else if (e.key === 'Escape'){{
       closeDropdown();
@@ -3847,9 +3864,47 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   clearBtn.addEventListener('click', function(){{
     inp.value = '';
     clearBtn.style.display = 'none';
+    selectedSym  = '';
+    selectedName = '';
     closeDropdown();
     inp.focus();
   }});
+
+  // ── Search button click ─────────────────────────────────────────────────────
+  searchBtn.addEventListener('click', function(){{
+    var items = dropdown.querySelectorAll('.screener-item');
+    if (focusIdx >= 0 && items[focusIdx]){{
+      items[focusIdx].click();
+    }} else {{
+      triggerSearch();
+    }}
+  }});
+
+  // ── triggerSearch: use known sym or first result or raw input as symbol ──────
+  function triggerSearch(){{
+    var q = inp.value.trim();
+    if (!q) return;
+    if (selectedSym){{
+      closeDropdown();
+      loadScreenerData(selectedSym, selectedName || selectedSym);
+      return;
+    }}
+    // If there are loaded results, pick the first one
+    if (lastResults.length > 0){{
+      var item = lastResults[0];
+      var url  = item.url || '';
+      var sym  = (url.match(/\/company\/([^\/]+)\//) || [])[1] || '';
+      var name = item.name || sym;
+      if (sym){{
+        selectCompany(sym, name);
+        return;
+      }}
+    }}
+    // Fall back: treat input as a raw screener symbol (e.g. "RELIANCE")
+    var rawSym = q.toUpperCase().replace(/[^A-Z0-9&]/g, '');
+    closeDropdown();
+    loadScreenerData(rawSym, rawSym);
+  }}
 
   document.addEventListener('click', function(e){{
     if (!e.target.closest('#screener-search-panel')) closeDropdown();
@@ -3932,6 +3987,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     if (!sym) return;
     inp.value = name || sym;
     clearBtn.style.display = 'block';
+    selectedSym  = sym;
+    selectedName = name || sym;
     closeDropdown();
     // Auto-fill the main ticker form with the NSE symbol
     var nseSymbol = sym + '.NS';
@@ -6435,11 +6492,31 @@ def adsb_data():
 _SCREENER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "Chrome/124.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.screener.in/",
+    "Connection": "keep-alive",
 }
 _SCREENER_CACHE: dict = {}
 _SCREENER_TTL = 300  # 5 min
+
+# Persistent session so cookies (CSRF, session id) are preserved across calls
+_screener_session = requests.Session()
+_screener_session.headers.update(_SCREENER_HEADERS)
+_screener_session_ready = False
+
+
+def _ensure_screener_session():
+    """Visit screener.in homepage once to obtain session cookies."""
+    global _screener_session_ready
+    if _screener_session_ready:
+        return
+    try:
+        _screener_session.get("https://www.screener.in/", timeout=10)
+        _screener_session_ready = True
+    except Exception:
+        pass
 
 
 @app.route("/api/screener/search")
@@ -6452,11 +6529,11 @@ def api_screener_search():
     now = time.time()
     if cache_key in _SCREENER_CACHE and now - _SCREENER_CACHE[cache_key]["ts"] < _SCREENER_TTL:
         return jsonify(_SCREENER_CACHE[cache_key]["data"])
+    _ensure_screener_session()
     try:
-        r = requests.get(
+        r = _screener_session.get(
             "https://www.screener.in/api/company/search/",
             params={"q": q, "v": "3"},
-            headers=_SCREENER_HEADERS,
             timeout=8,
         )
         if r.status_code == 200:
@@ -6482,24 +6559,35 @@ def api_screener_data():
     if cache_key in _SCREENER_CACHE and now - _SCREENER_CACHE[cache_key]["ts"] < _SCREENER_TTL:
         return jsonify(_SCREENER_CACHE[cache_key]["data"])
 
-    suffix = "consolidated/" if consolidated == "1" else ""
-    url = f"https://www.screener.in/company/{symbol}/{suffix}"
-    try:
-        r = requests.get(url, headers=_SCREENER_HEADERS, timeout=15)
-        if r.status_code == 404:
-            # Try without consolidated
-            url = f"https://www.screener.in/company/{symbol}/"
-            r = requests.get(url, headers=_SCREENER_HEADERS, timeout=15)
-        if r.status_code != 200:
-            return jsonify({"error": f"HTTP {r.status_code}"}), 502
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+    _ensure_screener_session()
+
+    # Try consolidated first, fall back to standalone
+    urls_to_try = []
+    if consolidated == "1":
+        urls_to_try.append(f"https://www.screener.in/company/{symbol}/consolidated/")
+    urls_to_try.append(f"https://www.screener.in/company/{symbol}/")
+
+    r = None
+    url = None
+    for u in urls_to_try:
+        try:
+            resp = _screener_session.get(u, timeout=15)
+            if resp.status_code == 200 and "company" in resp.url:
+                r = resp
+                url = resp.url
+                break
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    if r is None or r.status_code != 200:
+        code = r.status_code if r else 502
+        return jsonify({"error": f"HTTP {code} — company not found or screener.in blocked"}), 502
 
     soup = BeautifulSoup(r.text, "lxml")
     result: dict = {"symbol": symbol, "url": url}
 
     # ── Company name & description ────────────────────────────────────────────
-    h1 = soup.find("h1", class_="h2")
+    h1 = soup.find("h1", class_="h2") or soup.find("h1")
     result["name"] = h1.get_text(strip=True) if h1 else symbol
     about = soup.find("div", class_="about")
     if about:
@@ -6508,27 +6596,30 @@ def api_screener_data():
 
     # ── Top badge pills (NSE/BSE/sector/industry) ─────────────────────────────
     tags: list = []
-    for tag in soup.select(".company-links a, .flex-gap-8 a"):
+    for tag in soup.select(".company-links a, .flex-gap-8 a, .company-info a"):
         t = tag.get_text(strip=True)
         if t:
             tags.append(t)
     result["tags"] = list(dict.fromkeys(tags))[:10]
 
     # ── Key ratios (the top grid) ─────────────────────────────────────────────
+    # screener.in structure: <ul id="top-ratios"> <li> <span class="name">…</span>
+    #   <span class="number">…</span> or <span class="nowrap">…</span> </li>
     ratios: dict = {}
     for li in soup.select("#top-ratios li"):
-        name_el = li.find("span", class_="name") or li.find("span")
-        val_el  = li.find("span", class_="number") or li.find("span", class_="value")
-        if not val_el:
-            # fallback: last span
-            spans = li.find_all("span")
-            if len(spans) >= 2:
-                name_el, val_el = spans[0], spans[-1]
-        if name_el and val_el:
-            k = name_el.get_text(strip=True)
-            v = val_el.get_text(strip=True)
-            if k and v and k != v:
-                ratios[k] = v
+        spans = li.find_all("span")
+        if len(spans) < 2:
+            continue
+        k = spans[0].get_text(strip=True)
+        # Value is the last span with numeric-looking content
+        v = ""
+        for sp in reversed(spans):
+            txt = sp.get_text(strip=True)
+            if txt and txt != k:
+                v = txt
+                break
+        if k and v:
+            ratios[k] = v
     result["key_ratios"] = ratios
 
     # ── Helper: parse a data table (Quarterly/Annual/Balance/Cash) ────────────
