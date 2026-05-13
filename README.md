@@ -1,4 +1,4 @@
-#  <img width="50" height="50" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />STARFISH — Market dynamics 
+#  <img width="25" height="25" alt="c9ca0d0ddf28146de5d730585650eee7" src="https://github.com/user-attachments/assets/6b34cfc1-986e-43ce-8105-8c3423338fe2" />STARFISH — Market dynamics 
 $${\color{red}\textbf{S}}\text{tatistical }{\color{red}\textbf{T}}\text{rend }{\color{red}\textbf{A}}\text{nalysis and }{\color{red}\textbf{R}}\text{isk }{\color{red}\textbf{F}}\text{orecasting through }{\color{red}\textbf{I}}\text{ntelligent }{\color{red}\textbf{S}}\text{ignal }{\color{red}\textbf{H}}\text{euristics}$$
 
 <div align="center">
