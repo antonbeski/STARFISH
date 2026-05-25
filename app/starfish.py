@@ -8,6 +8,7 @@ import base64
 import re
 import time
 import traceback
+import random
 import requests
 import json
 import threading
@@ -143,7 +144,12 @@ _alpaca_ws_thread.start()
 # ── REST helpers ──────────────────────────────────────────────────────────────
 def _alp_get(url, timeout=8):
     try:
-        r = requests.get(url, headers=_ALPACA_HEADERS, timeout=timeout)
+        headers = {
+            "APCA-API-KEY-ID":     os.environ.get("ALPACA_API_KEY", _ALPACA_API_KEY),
+            "APCA-API-SECRET-KEY": os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY),
+            "accept":              "application/json",
+        }
+        r = requests.get(url, headers=headers, timeout=timeout)
         return r
     except Exception as exc:
         print(f"[Alpaca REST] {exc}")
@@ -249,7 +255,9 @@ def _alpaca_fetch_all():
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/api/alpaca-stocks")
 def api_alpaca_stocks():
-    if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY)
+    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY)
+    if not api_key or not secret_key:
         return jsonify({"error": "Alpaca credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your .env file.", "stocks": []})
     now = time.time()
     if "stocks" not in _alpaca_cache or (now - _alpaca_cache_time.get("stocks", 0)) > _ALPACA_CACHE_TTL:
@@ -267,10 +275,18 @@ def api_alpaca_stocks():
 
 @app.route("/api/alpaca-account")
 def api_alpaca_account():
-    if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY)
+    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY)
+    base_url   = os.environ.get("ALPACA_BASE_URL",   _ALPACA_BASE_URL)
+    if not api_key or not secret_key:
         return jsonify({"error": "Alpaca credentials not configured."})
+    headers = {
+        "APCA-API-KEY-ID":     api_key,
+        "APCA-API-SECRET-KEY": secret_key,
+        "accept":              "application/json",
+    }
     try:
-        r = requests.get(f"{_ALPACA_BASE_URL}/account", headers=_ALPACA_HEADERS, timeout=6)
+        r = requests.get(f"{base_url}/account", headers=headers, timeout=6)
         if r.status_code == 200:
             d = r.json()
             return jsonify({
@@ -1045,8 +1061,8 @@ MAJOR_PORTS = {
  
 def fetch_shipping_context():
     """
-    Fetch simple shipping traffic context from public AIS-aggregated data.
-    Falls back to a curated static context with recent known facts if API unavailable.
+    Fetch live shipping traffic context from public AIS-aggregated data.
+    Returns empty dict if no live data is available — no static fallback.
     """
     cache_key = "shipping_ctx"
     now = time.time()
@@ -1088,11 +1104,7 @@ def fetch_shipping_context():
         pass
  
     if not result["notes"]:
-        result["notes"] = [
-            "Global shipping data from public AIS aggregators.",
-            "Key chokepoints: Suez Canal, Panama Canal, Strait of Malacca monitored.",
-            "Shipping indices (Baltic Dry, Crude Tanker) available via FRED.",
-        ]
+        return {}   # no live data — return empty rather than fabricated notes
  
     _AIS_CACHE[cache_key] = result
     _AIS_CACHE["_ts"] = now
@@ -1115,21 +1127,19 @@ def fetch_baltic_dry():
 # YOUTUBE LIVE NEWS
 # ══════════════════════════════════════════════════════════════════════════════
 NEWS_CHANNELS = [
-    {"id": "cnbctv18",  "handle": "cnbctv18",  "label": "CNBC TV18",       "lang": "EN", "region": "India",  "video_id": "1_Ih0JYmkjI"},
-    {"id": "bloomberg", "handle": "Bloomberg", "label": "Bloomberg Global", "lang": "EN", "region": "Global", "video_id": "iEpJwprxDdk"},
-    {"id": "yahoofi",   "handle": "yahoofi",   "label": "Yahoo Finance",   "lang": "EN", "region": "Global", "video_id": "KQp-e_XQnDE"},
+    {"id": "cnbctv18",  "handle": "cnbctv18",  "label": "CNBC TV18",       "lang": "EN", "region": "India"},
+    {"id": "bloomberg", "handle": "Bloomberg", "label": "Bloomberg Global", "lang": "EN", "region": "Global"},
+    {"id": "yahoofi",   "handle": "yahoofi",   "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
 ]
 _YT_HDR = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.youtube.com/"
 }
- 
- 
+
+
 def fetch_live_video_id(handle):
-    for ch in NEWS_CHANNELS:
-        if ch["handle"] == handle and ch.get("video_id"):
-            return ch["video_id"], True
+    """Always scrape YouTube live — never return a hardcoded fallback ID."""
     def _get(u): return requests.get(u, headers=_YT_HDR, timeout=12, allow_redirects=True)
     vid, live = None, False
     try:
@@ -2797,14 +2807,18 @@ def run_gbm(ticker, n_years=2, n_scenarios=200, steps_per_year=252):
     """Compute GBM paths from historical mu/sigma calibrated on real price data."""
     df, err = fetch_yfinance_data(ticker, "2y")
     if err or df is None or df.empty:
-        # fallback defaults
-        mu, sigma, s_0 = 0.07, 0.20, 100.0
-    else:
-        cl = df["Close"].squeeze().dropna()
-        log_rets = np.log(cl / cl.shift(1)).dropna()
-        mu    = float(log_rets.mean() * steps_per_year)
-        sigma = float(log_rets.std()  * np.sqrt(steps_per_year))
-        s_0   = float(cl.iloc[-1])
+        raise ValueError(
+            f"Cannot run simulation: live price data unavailable for '{ticker}'. {err or ''}"
+        )
+    cl = df["Close"].squeeze().dropna()
+    if len(cl) < 30:
+        raise ValueError(
+            f"Insufficient history for '{ticker}': need >=30 trading days, got {len(cl)}."
+        )
+    log_rets = np.log(cl / cl.shift(1)).dropna()
+    mu    = float(log_rets.mean() * steps_per_year)
+    sigma = float(log_rets.std()  * np.sqrt(steps_per_year))
+    s_0   = float(cl.iloc[-1])
 
     dt     = 1.0 / steps_per_year
     n_steps = int(n_years * steps_per_year)
