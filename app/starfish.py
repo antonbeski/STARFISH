@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from urllib.parse import quote_plus
 import concurrent.futures
  
+import websocket
 import httpx
 from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, render_template_string
@@ -29,6 +30,264 @@ import plotly.offline as pyo
 from plotly.subplots import make_subplots
 
 app = Flask(__name__)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ALPACA LIVE US EQUITIES — real-time REST + WebSocket integration
+# All credentials read from environment variables only.
+# Set these in your .env / deployment env before running:
+#   ALPACA_API_KEY    — your Alpaca API key ID
+#   ALPACA_SECRET_KEY — your Alpaca secret key
+#   ALPACA_BASE_URL   — e.g. https://api.alpaca.markets/v2  (live)
+#                        or  https://paper-api.alpaca.markets/v2  (paper)
+# ══════════════════════════════════════════════════════════════════════════════
+_ALPACA_API_KEY    = os.environ.get("ALPACA_API_KEY", "")
+_ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
+_ALPACA_BASE_URL   = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2")
+_ALPACA_DATA_URL   = "https://data.alpaca.markets/v2"
+
+_ALPACA_HEADERS = {
+    "APCA-API-KEY-ID":     _ALPACA_API_KEY,
+    "APCA-API-SECRET-KEY": _ALPACA_SECRET_KEY,
+    "accept":              "application/json",
+}
+
+# ── Watchlist ─────────────────────────────────────────────────────────────────
+_ALPACA_WATCHLIST = [
+    {"symbol": "AAPL",  "name": "Apple Inc.",        "sector": "Technology"},
+    {"symbol": "MSFT",  "name": "Microsoft Corp.",   "sector": "Technology"},
+    {"symbol": "GOOGL", "name": "Alphabet Inc.",     "sector": "Technology"},
+    {"symbol": "AMZN",  "name": "Amazon.com Inc.",   "sector": "Consumer"},
+    {"symbol": "NVDA",  "name": "NVIDIA Corp.",      "sector": "Technology"},
+    {"symbol": "META",  "name": "Meta Platforms",    "sector": "Technology"},
+    {"symbol": "TSLA",  "name": "Tesla Inc.",        "sector": "Automotive"},
+    {"symbol": "JPM",   "name": "JPMorgan Chase",    "sector": "Finance"},
+    {"symbol": "V",     "name": "Visa Inc.",         "sector": "Finance"},
+    {"symbol": "JNJ",   "name": "Johnson & Johnson", "sector": "Healthcare"},
+    {"symbol": "WMT",   "name": "Walmart Inc.",      "sector": "Consumer"},
+    {"symbol": "SPY",   "name": "S&P 500 ETF",       "sector": "ETF"},
+]
+_ALPACA_SYMBOLS = [s["symbol"] for s in _ALPACA_WATCHLIST]
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+_alpaca_cache      = {}
+_alpaca_cache_time = {}
+_ALPACA_CACHE_TTL  = 15   # seconds
+
+# ── WebSocket realtime data store ─────────────────────────────────────────────
+_alpaca_rt        = {}    # {symbol: {price, bid, ask, bid_size, ask_size, volume, ts}}
+_alpaca_rt_lock   = threading.Lock()
+_ALPACA_WS_URL    = "wss://stream.data.alpaca.markets/v2/iex"
+
+def _alp_ws_on_open(ws):
+    if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+        return
+    ws.send(json.dumps({
+        "action": "auth",
+        "key":    _ALPACA_API_KEY,
+        "secret": _ALPACA_SECRET_KEY,
+    }))
+
+def _alp_ws_on_message(ws, msg):
+    events = json.loads(msg)
+    with _alpaca_rt_lock:
+        for e in events:
+            t   = e.get("T")
+            sym = e.get("S")
+            if not sym:
+                continue
+            if t == "t":                           # trade
+                entry = _alpaca_rt.setdefault(sym, {})
+                entry["price"]  = e.get("p", entry.get("price", 0))
+                entry["volume"] = entry.get("volume", 0) + e.get("s", 0)
+                entry["ts"]     = e.get("t", "")
+            elif t == "q":                         # quote
+                entry = _alpaca_rt.setdefault(sym, {})
+                entry["bid"]      = e.get("bp", entry.get("bid", 0))
+                entry["ask"]      = e.get("ap", entry.get("ask", 0))
+                entry["bid_size"] = e.get("bs", entry.get("bid_size", 0))
+                entry["ask_size"] = e.get("as", entry.get("ask_size", 0))
+                entry["ts"]       = e.get("t", "")
+            elif t == "success" and e.get("msg") == "authenticated":
+                ws.send(json.dumps({
+                    "action":  "subscribe",
+                    "trades":  _ALPACA_SYMBOLS,
+                    "quotes":  _ALPACA_SYMBOLS,
+                }))
+
+def _alp_ws_on_error(ws, err):
+    print(f"[Alpaca WS] error: {err}")
+
+def _alp_ws_on_close(ws, *args):
+    print("[Alpaca WS] closed — reconnect in 5 s")
+
+def _alpaca_ws_runner():
+    while True:
+        if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+            time.sleep(30)
+            continue
+        try:
+            ws = websocket.WebSocketApp(
+                _ALPACA_WS_URL,
+                on_open=_alp_ws_on_open,
+                on_message=_alp_ws_on_message,
+                on_error=_alp_ws_on_error,
+                on_close=_alp_ws_on_close,
+            )
+            ws.run_forever(ping_interval=30, ping_timeout=10)
+        except Exception as exc:
+            print(f"[Alpaca WS] runner: {exc}")
+        time.sleep(5)
+
+_alpaca_ws_thread = threading.Thread(target=_alpaca_ws_runner, daemon=True, name="alpaca-ws")
+_alpaca_ws_thread.start()
+
+# ── REST helpers ──────────────────────────────────────────────────────────────
+def _alp_get(url, timeout=8):
+    try:
+        r = requests.get(url, headers=_ALPACA_HEADERS, timeout=timeout)
+        return r
+    except Exception as exc:
+        print(f"[Alpaca REST] {exc}")
+        return None
+
+def _alp_quotes(symbols):
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/quotes/latest?symbols={','.join(symbols)}&feed=iex")
+    return r.json().get("quotes", {}) if r and r.status_code == 200 else {}
+
+def _alp_trades(symbols):
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/trades/latest?symbols={','.join(symbols)}&feed=iex")
+    return r.json().get("trades", {}) if r and r.status_code == 200 else {}
+
+def _alp_bars(symbols):
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars/latest?symbols={','.join(symbols)}&feed=iex")
+    return r.json().get("bars", {}) if r and r.status_code == 200 else {}
+
+def _alp_prev_close(symbols):
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars?symbols={','.join(symbols)}&timeframe=1Day&limit=2&feed=iex&adjustment=raw")
+    if not r or r.status_code != 200:
+        return {}
+    result = {}
+    for sym, bars in r.json().get("bars", {}).items():
+        if len(bars) >= 2:
+            result[sym] = bars[-2]["c"]
+        elif bars:
+            result[sym] = bars[0]["c"]
+    return result
+
+def _alpaca_fetch_all():
+    """Merge WebSocket realtime + REST snapshot into a unified stock list."""
+    symbols = _ALPACA_SYMBOLS
+    bars    = _alp_bars(symbols)
+    prevs   = _alp_prev_close(symbols)
+    quotes  = _alp_quotes(symbols)
+    trades  = _alp_trades(symbols)
+
+    with _alpaca_rt_lock:
+        rt_snap = dict(_alpaca_rt)
+
+    result = []
+    for stock in _ALPACA_WATCHLIST:
+        sym = stock["symbol"]
+        rt  = rt_snap.get(sym, {})
+        q   = quotes.get(sym, {})
+        t   = trades.get(sym, {})
+        b   = bars.get(sym, {})
+
+        last_price = rt.get("price") or t.get("p", 0) or b.get("c", 0)
+        bid        = rt.get("bid")      or q.get("bp", 0) or 0
+        ask        = rt.get("ask")      or q.get("ap", 0) or 0
+        bid_size   = rt.get("bid_size") or q.get("bs", 0) or 0
+        ask_size   = rt.get("ask_size") or q.get("as", 0) or 0
+        last_price = last_price or ask or bid
+        volume     = rt.get("volume")   or t.get("s", 0) or b.get("v", 0)
+
+        if not last_price and not bid and not ask:
+            continue
+
+        bar_open  = b.get("o", 0)
+        bar_high  = b.get("h", 0)
+        bar_low   = b.get("l", 0)
+        bar_close = b.get("c", 0) or last_price
+        prev      = prevs.get(sym) or bar_open or last_price
+
+        change     = round(last_price - prev, 4) if (last_price and prev) else 0
+        change_pct = round((change / prev) * 100, 4) if prev else 0
+        spread     = round(ask - bid, 4) if ask and bid else 0
+
+        if rt.get("price"):
+            dtype = "LIVE"
+        elif rt.get("bid") or rt.get("ask"):
+            dtype = "QUOTE"
+        elif t.get("p"):
+            dtype = "TRADE"
+        elif ask or bid:
+            dtype = "QUOTE"
+        else:
+            dtype = "BAR"
+
+        result.append({
+            "symbol":     sym,
+            "name":       stock["name"],
+            "sector":     stock["sector"],
+            "price":      last_price,
+            "ask":        ask,
+            "bid":        bid,
+            "ask_size":   ask_size,
+            "bid_size":   bid_size,
+            "spread":     spread,
+            "change":     change,
+            "change_pct": change_pct,
+            "volume":     volume,
+            "open":       bar_open,
+            "high":       bar_high,
+            "low":        bar_low,
+            "close":      bar_close,
+            "data_type":  dtype,
+            "timestamp":  rt.get("ts") or t.get("t") or q.get("t") or b.get("t") or "",
+        })
+    return result
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+@app.route("/api/alpaca-stocks")
+def api_alpaca_stocks():
+    if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+        return jsonify({"error": "Alpaca credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your .env file.", "stocks": []})
+    now = time.time()
+    if "stocks" not in _alpaca_cache or (now - _alpaca_cache_time.get("stocks", 0)) > _ALPACA_CACHE_TTL:
+        try:
+            _alpaca_cache["stocks"]     = _alpaca_fetch_all()
+            _alpaca_cache_time["stocks"] = now
+        except Exception as exc:
+            if "stocks" not in _alpaca_cache:
+                return jsonify({"error": str(exc), "stocks": []}), 500
+    from datetime import timezone
+    return jsonify({
+        "stocks":  _alpaca_cache.get("stocks", []),
+        "updated": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+    })
+
+@app.route("/api/alpaca-account")
+def api_alpaca_account():
+    if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+        return jsonify({"error": "Alpaca credentials not configured."})
+    try:
+        r = requests.get(f"{_ALPACA_BASE_URL}/account", headers=_ALPACA_HEADERS, timeout=6)
+        if r.status_code == 200:
+            d = r.json()
+            return jsonify({
+                "equity":          d.get("equity"),
+                "cash":            d.get("cash"),
+                "buying_power":    d.get("buying_power"),
+                "portfolio_value": d.get("portfolio_value"),
+                "status":          d.get("status"),
+                "currency":        d.get("currency", "USD"),
+                "pattern_day_trader": d.get("pattern_day_trader"),
+                "trading_blocked": d.get("trading_blocked"),
+                "account_number":  d.get("account_number"),
+            })
+        return jsonify({"error": f"HTTP {r.status_code}"})
+    except Exception as exc:
+        return jsonify({"error": str(exc)})
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NATIVE ACCELERATION — C++ & Rust hot-path extensions
@@ -2950,6 +3209,54 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .site-footer{{position:relative;z-index:1;text-align:center;padding:48px 20px 72px;border-top:2px solid #000;background:#f8f7f4}}
     .site-footer-sub{{font-size:.6rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#888;margin-bottom:12px}}
     .site-footer-name{{font-size:clamp(3rem,9vw,6rem);font-weight:800;letter-spacing:-.02em;text-transform:uppercase;color:#000;line-height:1}}
+
+    /* ── US EQUITIES SECTION ── */
+    #us-equities-section{{margin-bottom:18px}}
+    .ueq-header{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}}
+    .ueq-title{{display:flex;align-items:center;gap:10px}}
+    .ueq-dot{{width:9px;height:9px;background:#000;border-radius:50%;animation:ueq-pulse 1.6s ease-in-out infinite}}
+    @keyframes ueq-pulse{{0%,100%{{transform:scale(1);opacity:1}}50%{{transform:scale(1.5);opacity:.4}}}}
+    .ueq-label{{font-size:.62rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:#000}}
+    .ueq-updated{{font-family:'DM Mono',monospace;font-size:.58rem;color:#aaa;letter-spacing:.04em}}
+    .ueq-status-pill{{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:.58rem;color:#555;background:#f0f0f0;border:1px solid #ddd;border-radius:20px;padding:3px 10px}}
+    .ueq-cred-warn{{font-family:'DM Mono',monospace;font-size:.7rem;color:#888;padding:18px 0;text-align:center}}
+    /* Account stats */
+    .ueq-account{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid #e5e5e5}}
+    .ueq-stat{{background:#fff;border:1.5px solid #000;border-radius:6px;padding:12px 14px}}
+    .ueq-stat-label{{font-size:.55rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#aaa;margin-bottom:5px;font-family:'DM Mono',monospace}}
+    .ueq-stat-val{{font-family:'DM Mono',monospace;font-size:.9rem;font-weight:500;color:#000}}
+    .ueq-stat-val.green{{color:#1a8c5e}}
+    .ueq-stat-val.red{{color:#c0392b}}
+    /* Stock table */
+    .ueq-table-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
+    .ueq-table{{width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:.68rem;min-width:860px}}
+    .ueq-table th{{font-size:.54rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888;padding:7px 10px;border-bottom:2px solid #000;white-space:nowrap;text-align:right}}
+    .ueq-table th:first-child{{text-align:left}}
+    .ueq-table th:nth-child(2){{text-align:left}}
+    .ueq-table td{{padding:7px 10px;border-bottom:1px solid #e5e5e5;white-space:nowrap;text-align:right;vertical-align:middle}}
+    .ueq-table td:first-child{{text-align:left}}
+    .ueq-table td:nth-child(2){{text-align:left}}
+    .ueq-table tr:last-child td{{border-bottom:none}}
+    .ueq-table tr:hover td{{background:#fafafa}}
+    .ueq-sym{{font-size:.78rem;font-weight:700;color:#000;letter-spacing:.06em;cursor:pointer}}
+    .ueq-sym:hover{{text-decoration:underline}}
+    .ueq-name{{font-size:.6rem;color:#999;font-family:'DM Sans',sans-serif;max-width:130px;overflow:hidden;text-overflow:ellipsis}}
+    .ueq-price{{font-size:.78rem;font-weight:600}}
+    .ueq-up{{color:#1a8c5e}}.ueq-dn{{color:#c0392b}}.ueq-flat{{color:#888}}
+    .ueq-bid{{color:#c0392b}}.ueq-ask{{color:#1a8c5e}}
+    .ueq-dtype{{display:inline-block;font-size:.5rem;font-weight:700;letter-spacing:.12em;padding:2px 6px;border-radius:3px;text-transform:uppercase;border:1px solid}}
+    .ueq-dtype-LIVE{{background:rgba(26,140,94,.1);color:#1a8c5e;border-color:rgba(26,140,94,.3);animation:ueq-pulse 2s ease-in-out infinite}}
+    .ueq-dtype-TRADE{{background:rgba(26,140,94,.06);color:#1a8c5e;border-color:rgba(26,140,94,.2)}}
+    .ueq-dtype-QUOTE{{background:rgba(0,0,0,.04);color:#555;border-color:#ccc}}
+    .ueq-dtype-BAR{{background:rgba(0,0,0,.04);color:#888;border-color:#ddd}}
+    .ueq-loader{{display:flex;align-items:center;justify-content:center;padding:32px;gap:10px;color:#aaa;font-family:'DM Mono',monospace;font-size:.7rem;letter-spacing:.1em}}
+    .ueq-spinner{{width:16px;height:16px;border:2px solid #e5e5e5;border-top-color:#000;border-radius:50%;animation:ueq-spin .7s linear infinite;flex-shrink:0}}
+    @keyframes ueq-spin{{to{{transform:rotate(360deg)}}}}
+    @media(max-width:600px){{
+      .ueq-account{{grid-template-columns:repeat(2,1fr);gap:8px}}
+      .ueq-stat{{padding:9px 10px}}
+      .ueq-stat-val{{font-size:.8rem}}
+    }}
  
 
     /* ── LIVE SATELLITE VIEWER PANEL ── */
@@ -3265,6 +3572,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     </div>
   </div>
   <nav class="header-nav">
+    <a class="nav-link" href="#us-equities">US Equities</a>
     <a class="nav-link" href="#stocks">Stocks</a>
     <a class="nav-link" href="#sectors">Sectors</a>
     <a class="nav-link" href="#live-news">Live News</a>
@@ -3304,7 +3612,154 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
  
 <main>
- 
+
+<!-- ══════════════════════════════════════════
+     US EQUITIES — Alpaca Live Account + Market Data
+═══════════════════════════════════════════ -->
+<div id="us-equities-section">
+  <div class="section-divider" id="us-equities" style="margin-top:0;margin-bottom:14px">
+    <div class="section-divider-line"></div>
+    <div class="section-label">
+      <span class="dot" style="background:#000;animation:ueq-pulse 1.6s ease-in-out infinite"></span>
+      US Equities
+    </div>
+    <div class="section-divider-line"></div>
+  </div>
+
+  <div class="glass panel">
+    <div class="ueq-header">
+      <div class="ueq-title">
+        <div class="ueq-dot"></div>
+        <span class="ueq-label">Live Account &amp; Market Data · Alpaca</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="ueq-status-pill" id="ueq-status-pill">&#x25CB; Connecting…</span>
+        <span class="ueq-updated" id="ueq-updated"></span>
+      </div>
+    </div>
+
+    <!-- Account stats -->
+    <div class="ueq-account" id="ueq-account">
+      <div class="ueq-stat"><div class="ueq-stat-label">Portfolio Value</div><div class="ueq-stat-val" id="ueq-pv">—</div></div>
+      <div class="ueq-stat"><div class="ueq-stat-label">Cash</div><div class="ueq-stat-val" id="ueq-cash">—</div></div>
+      <div class="ueq-stat"><div class="ueq-stat-label">Buying Power</div><div class="ueq-stat-val" id="ueq-bp">—</div></div>
+      <div class="ueq-stat"><div class="ueq-stat-label">Equity</div><div class="ueq-stat-val" id="ueq-eq">—</div></div>
+      <div class="ueq-stat"><div class="ueq-stat-label">Account Status</div><div class="ueq-stat-val green" id="ueq-st">—</div></div>
+      <div class="ueq-stat"><div class="ueq-stat-label">Currency</div><div class="ueq-stat-val" id="ueq-cur">—</div></div>
+    </div>
+
+    <!-- Stocks table -->
+    <div class="ueq-table-wrap">
+      <div id="ueq-stocks-wrap">
+        <div class="ueq-loader"><div class="ueq-spinner"></div>Loading live market data…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){{
+  var _ueqCreds = true;  // optimistic until /api/alpaca-stocks says otherwise
+
+  var _fmtC = function(n){{
+    if(n==null||n===''||n===undefined) return '—';
+    return '$'+Number(n).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
+  }};
+  var _fmt2 = function(n,d){{
+    if(n==null||n===''||n===undefined||n===0) return '—';
+    return Number(n).toFixed(d!=null?d:2);
+  }};
+  var _fmtV = function(v){{
+    if(!v) return '—';
+    if(v>=1e9) return (v/1e9).toFixed(2)+'B';
+    if(v>=1e6) return (v/1e6).toFixed(2)+'M';
+    if(v>=1e3) return (v/1e3).toFixed(1)+'K';
+    return v;
+  }};
+  var _cls = function(pct){{ return pct>0?'ueq-up':pct<0?'ueq-dn':'ueq-flat'; }};
+  var _sign = function(n){{ return n>=0?'+':''; }};
+
+  function buildTable(stocks){{
+    if(!stocks||!stocks.length){{
+      return '<div class="ueq-cred-warn">No market data available. Check Alpaca credentials.</div>';
+    }}
+    var rows = stocks.map(function(s){{
+      var cc = _cls(s.change_pct);
+      var sign = _sign(s.change_pct);
+      return '<tr>'
+        +'<td><span class="ueq-sym" onclick="setTicker(\''+s.symbol+'\')" title="Load '+s.symbol+' chart below">'+s.symbol+'</span></td>'
+        +'<td><span class="ueq-name">'+s.name+'</span></td>'
+        +'<td class="ueq-price '+cc+'">'+_fmtC(s.price)+'</td>'
+        +'<td class="'+cc+'">'+sign+_fmt2(s.change_pct)+'%</td>'
+        +'<td class="'+cc+'">'+sign+'$'+_fmt2(Math.abs(s.change))+'</td>'
+        +'<td class="ueq-bid">'+_fmtC(s.bid)+'</td>'
+        +'<td class="ueq-ask">'+_fmtC(s.ask)+'</td>'
+        +'<td>'+(s.spread?'$'+Number(s.spread).toFixed(4):'—')+'</td>'
+        +'<td>'+_fmtC(s.open)+'</td>'
+        +'<td style="color:#1a8c5e">'+_fmtC(s.high)+'</td>'
+        +'<td style="color:#c0392b">'+_fmtC(s.low)+'</td>'
+        +'<td>'+_fmtV(s.volume)+'</td>'
+        +'<td><span class="ueq-dtype ueq-dtype-'+s.data_type+'">'+s.data_type+'</span></td>'
+        +'</tr>';
+    }}).join('');
+    return '<table class="ueq-table">'
+      +'<thead><tr>'
+      +'<th>Symbol</th><th>Name</th><th>Price</th>'
+      +'<th>Chg %</th><th>Chg $</th>'
+      +'<th>Bid</th><th>Ask</th><th>Spread</th>'
+      +'<th>Open</th><th>High</th><th>Low</th>'
+      +'<th>Volume</th><th>Type</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table>';
+  }}
+
+  function fetchUeqStocks(){{
+    fetch('/api/alpaca-stocks')
+      .then(function(r){{return r.json();}})
+      .then(function(d){{
+        var pill = document.getElementById('ueq-status-pill');
+        var upd  = document.getElementById('ueq-updated');
+        if(d.error&&!d.stocks.length){{
+          document.getElementById('ueq-stocks-wrap').innerHTML=
+            '<div class="ueq-cred-warn">&#9888; '+d.error+'</div>';
+          if(pill) pill.innerHTML='&#x25CF; No credentials';
+          return;
+        }}
+        document.getElementById('ueq-stocks-wrap').innerHTML = buildTable(d.stocks||[]);
+        if(pill) pill.innerHTML='&#x25CF; Live';
+        if(upd)  upd.textContent = d.updated ? 'Updated '+d.updated : '';
+      }})
+      .catch(function(e){{
+        console.warn('[Alpaca stocks]',e);
+      }});
+  }}
+
+  function fetchUeqAccount(){{
+    fetch('/api/alpaca-account')
+      .then(function(r){{return r.json();}})
+      .then(function(d){{
+        if(d.error) return;
+        var el = function(id){{return document.getElementById(id);}};
+        if(el('ueq-pv'))   el('ueq-pv').textContent   = _fmtC(d.portfolio_value);
+        if(el('ueq-cash')) el('ueq-cash').textContent  = _fmtC(d.cash);
+        if(el('ueq-bp'))   el('ueq-bp').textContent    = _fmtC(d.buying_power);
+        if(el('ueq-eq'))   el('ueq-eq').textContent    = _fmtC(d.equity);
+        if(el('ueq-st')){{
+          var st = (d.status||'').toUpperCase();
+          el('ueq-st').textContent = st;
+          el('ueq-st').className   = 'ueq-stat-val '+(st==='ACTIVE'?'green':st==='INACTIVE'?'red':'');
+        }}
+        if(el('ueq-cur'))  el('ueq-cur').textContent   = d.currency||'USD';
+      }})
+      .catch(function(e){{console.warn('[Alpaca account]',e);}});
+  }}
+
+  fetchUeqStocks();
+  fetchUeqAccount();
+  setInterval(fetchUeqStocks,  15000);
+  setInterval(fetchUeqAccount, 60000);
+}})();
+</script>
+
 <!-- ══════════════════════════════════════════
      SECTION 1: STOCKS
 ═══════════════════════════════════════════ -->
@@ -6022,6 +6477,12 @@ if __name__ == "__main__":
     print("  STARFISH — Unified Market Intelligence Platform")
     print("  http://127.0.0.1:5000")
     print("=" * 60)
-    print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi\n")
+    print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client\n")
+    print("  Alpaca Live US Equities — set in your .env file:")
+    print("    ALPACA_API_KEY      = your Alpaca key ID")
+    print("    ALPACA_SECRET_KEY   = your Alpaca secret key")
+    print("    ALPACA_BASE_URL     = https://api.alpaca.markets/v2  (live)")
+    print("                       or https://paper-api.alpaca.markets/v2  (paper)")
+    print()
     _start_adsb_collector()
     app.run(debug=True, host="0.0.0.0", port=5000)
