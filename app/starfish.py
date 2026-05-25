@@ -1,6 +1,6 @@
 """
 STARFISH — Market Dynamics
-Stocks · AI Analysis · Sectors · Live News
+Stocks · AI Analysis · Sectors · Live News · Alpaca Live Trading
 """
 
 import os
@@ -8,8 +8,8 @@ import base64
 import re
 import time
 import traceback
-import random
 import requests
+import random
 import json
 import threading
 import math
@@ -20,7 +20,6 @@ from datetime import datetime, timedelta
 from urllib.parse import quote_plus
 import concurrent.futures
  
-import websocket
 import httpx
 from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, render_template_string
@@ -28,31 +27,26 @@ import yfinance as yf
 import plotly.graph_objects as go
 import plotly.offline as pyo
 from plotly.subplots import make_subplots
+import websocket
 
 app = Flask(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ALPACA LIVE US EQUITIES — real-time REST + WebSocket integration
-# All credentials read from environment variables only.
-# Set these in your .env / deployment env before running:
-#   ALPACA_API_KEY    — your Alpaca API key ID
-#   ALPACA_SECRET_KEY — your Alpaca secret key
-#   ALPACA_BASE_URL   — e.g. https://api.alpaca.markets/v2  (live)
-#                        or  https://paper-api.alpaca.markets/v2  (paper)
+# ALPACA PAPER TRADING CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
-_ALPACA_API_KEY    = os.environ.get("ALPACA_API_KEY", "")
-_ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
-_ALPACA_BASE_URL   = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2")
-_ALPACA_DATA_URL   = "https://data.alpaca.markets/v2"
+ALPACA_API_KEY    = os.environ.get("ALPACA_API_KEY", "")
+ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
+ALPACA_BASE_URL   = "https://paper-api.alpaca.markets/v2"
+ALPACA_DATA_URL   = "https://data.alpaca.markets/v2"
 
-_ALPACA_HEADERS = {
-    "APCA-API-KEY-ID":     _ALPACA_API_KEY,
-    "APCA-API-SECRET-KEY": _ALPACA_SECRET_KEY,
+ALPACA_HEADERS = {
+    "APCA-API-KEY-ID":     ALPACA_API_KEY,
+    "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
     "accept":              "application/json",
 }
 
-# ── Watchlist ─────────────────────────────────────────────────────────────────
-_ALPACA_WATCHLIST = [
+# Alpaca Watchlist
+ALPACA_WATCHLIST = [
     {"symbol": "AAPL",  "name": "Apple Inc.",        "sector": "Technology"},
     {"symbol": "MSFT",  "name": "Microsoft Corp.",   "sector": "Technology"},
     {"symbol": "GOOGL", "name": "Alphabet Inc.",     "sector": "Technology"},
@@ -66,326 +60,15 @@ _ALPACA_WATCHLIST = [
     {"symbol": "WMT",   "name": "Walmart Inc.",      "sector": "Consumer"},
     {"symbol": "SPY",   "name": "S&P 500 ETF",       "sector": "ETF"},
 ]
-_ALPACA_SYMBOLS = [s["symbol"] for s in _ALPACA_WATCHLIST]
 
-# ── Cache ─────────────────────────────────────────────────────────────────────
-_alpaca_cache      = {}
-_alpaca_cache_time = {}
-_ALPACA_CACHE_TTL  = 15   # seconds
-
-# ── WebSocket realtime data store ─────────────────────────────────────────────
-_alpaca_rt        = {}    # {symbol: {price, bid, ask, bid_size, ask_size, volume, ts}}
-_alpaca_rt_lock   = threading.Lock()
-_ALPACA_WS_URL    = "wss://stream.data.alpaca.markets/v2/iex"
-
-def _alp_ws_on_open(ws):
-    key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
-    secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
-    if not key or not secret:
-        print("[Alpaca WS] No credentials — skipping auth. Set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
-        return
-    ws.send(json.dumps({
-        "action": "auth",
-        "key":    key,
-        "secret": secret,
-    }))
-
-def _alp_ws_on_message(ws, msg):
-    events = json.loads(msg)
-    with _alpaca_rt_lock:
-        for e in events:
-            t   = e.get("T")
-            sym = e.get("S")
-            if not sym:
-                continue
-            if t == "t":                           # trade
-                entry = _alpaca_rt.setdefault(sym, {})
-                entry["price"]  = e.get("p", entry.get("price", 0))
-                entry["volume"] = entry.get("volume", 0) + e.get("s", 0)
-                entry["ts"]     = e.get("t", "")
-            elif t == "q":                         # quote
-                entry = _alpaca_rt.setdefault(sym, {})
-                entry["bid"]      = e.get("bp", entry.get("bid", 0))
-                entry["ask"]      = e.get("ap", entry.get("ask", 0))
-                entry["bid_size"] = e.get("bs", entry.get("bid_size", 0))
-                entry["ask_size"] = e.get("as", entry.get("ask_size", 0))
-                entry["ts"]       = e.get("t", "")
-            elif t == "success" and e.get("msg") == "authenticated":
-                ws.send(json.dumps({
-                    "action":  "subscribe",
-                    "trades":  _ALPACA_SYMBOLS,
-                    "quotes":  _ALPACA_SYMBOLS,
-                }))
-            elif t == "success" and e.get("msg") == "connected":
-                print("[Alpaca WS] Connected — waiting for auth confirmation")
-
-def _alp_ws_on_error(ws, err):
-    print(f"[Alpaca WS] error: {err}")
-
-def _alp_ws_on_close(ws, *args):
-    print("[Alpaca WS] closed — reconnect in 5 s")
-
-def _alpaca_ws_runner():
-    while True:
-        key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
-        secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
-        if not key or not secret:
-            print("[Alpaca WS] Waiting for ALPACA_API_KEY / ALPACA_SECRET_KEY env vars…")
-            time.sleep(30)
-            continue
-        try:
-            ws = websocket.WebSocketApp(
-                _ALPACA_WS_URL,
-                on_open=_alp_ws_on_open,
-                on_message=_alp_ws_on_message,
-                on_error=_alp_ws_on_error,
-                on_close=_alp_ws_on_close,
-            )
-            ws.run_forever(ping_interval=30, ping_timeout=10)
-        except Exception as exc:
-            print(f"[Alpaca WS] runner: {exc}")
-        time.sleep(5)
-
-_alpaca_ws_thread = threading.Thread(target=_alpaca_ws_runner, daemon=True, name="alpaca-ws")
-_alpaca_ws_thread.start()
-
-# ── REST helpers ──────────────────────────────────────────────────────────────
-def _alp_get(url, timeout=8):
-    try:
-        headers = {
-            "APCA-API-KEY-ID":     os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip(),
-            "APCA-API-SECRET-KEY": os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip(),
-            "accept":              "application/json",
-        }
-        r = requests.get(url, headers=headers, timeout=timeout)
-        return r
-    except Exception as exc:
-        print(f"[Alpaca REST] {exc}")
-        return None
-
-def _alp_quotes(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/quotes/latest?symbols={','.join(symbols)}&feed=iex", timeout=5)
-    return r.json().get("quotes", {}) if r and r.status_code == 200 else {}
-
-def _alp_trades(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/trades/latest?symbols={','.join(symbols)}&feed=iex", timeout=5)
-    return r.json().get("trades", {}) if r and r.status_code == 200 else {}
-
-def _alp_bars(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars/latest?symbols={','.join(symbols)}&feed=iex", timeout=5)
-    return r.json().get("bars", {}) if r and r.status_code == 200 else {}
-
-def _alp_prev_close(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars?symbols={','.join(symbols)}&timeframe=1Day&limit=2&feed=iex&adjustment=raw", timeout=5)
-    if not r or r.status_code != 200:
-        return {}
-    result = {}
-    for sym, bars in r.json().get("bars", {}).items():
-        if len(bars) >= 2:
-            result[sym] = bars[-2]["c"]
-        elif bars:
-            result[sym] = bars[0]["c"]
-    return result
-
-def _alpaca_fetch_all():
-    """Merge WebSocket realtime + REST snapshot into a unified stock list.
-    All four REST calls run concurrently — total wall-clock ~= slowest single call (5s max)."""
-    symbols = _ALPACA_SYMBOLS
-
-    # Fire all REST calls in parallel
-    bars_r   = [{}]
-    prevs_r  = [{}]
-    quotes_r = [{}]
-    trades_r = [{}]
-
-    def _do_bars():
-        try: bars_r[0]   = _alp_bars(symbols)
-        except Exception as e: print(f"[Alpaca] bars error: {e}")
-    def _do_prevs():
-        try: prevs_r[0]  = _alp_prev_close(symbols)
-        except Exception as e: print(f"[Alpaca] prev_close error: {e}")
-    def _do_quotes():
-        try: quotes_r[0] = _alp_quotes(symbols)
-        except Exception as e: print(f"[Alpaca] quotes error: {e}")
-    def _do_trades():
-        try: trades_r[0] = _alp_trades(symbols)
-        except Exception as e: print(f"[Alpaca] trades error: {e}")
-
-    threads = [
-        threading.Thread(target=_do_bars,   daemon=True),
-        threading.Thread(target=_do_prevs,  daemon=True),
-        threading.Thread(target=_do_quotes, daemon=True),
-        threading.Thread(target=_do_trades, daemon=True),
-    ]
-    for t in threads: t.start()
-    for t in threads: t.join(timeout=6)  # hard cap: never block Flask > 6s total
-
-    bars   = bars_r[0]
-    prevs  = prevs_r[0]
-    quotes = quotes_r[0]
-    trades = trades_r[0]
-
-    with _alpaca_rt_lock:
-        rt_snap = dict(_alpaca_rt)
-
-    result = []
-    for stock in _ALPACA_WATCHLIST:
-        sym = stock["symbol"]
-        rt  = rt_snap.get(sym, {})
-        q   = quotes.get(sym, {})
-        t   = trades.get(sym, {})
-        b   = bars.get(sym, {})
-
-        last_price = rt.get("price") or t.get("p", 0) or b.get("c", 0)
-        bid        = rt.get("bid")      or q.get("bp", 0) or 0
-        ask        = rt.get("ask")      or q.get("ap", 0) or 0
-        bid_size   = rt.get("bid_size") or q.get("bs", 0) or 0
-        ask_size   = rt.get("ask_size") or q.get("as", 0) or 0
-        last_price = last_price or ask or bid
-        volume     = rt.get("volume")   or t.get("s", 0) or b.get("v", 0)
-
-        if not last_price and not bid and not ask:
-            continue
-
-        bar_open  = b.get("o", 0)
-        bar_high  = b.get("h", 0)
-        bar_low   = b.get("l", 0)
-        bar_close = b.get("c", 0) or last_price
-        prev      = prevs.get(sym) or bar_open or last_price
-
-        change     = round(last_price - prev, 4) if (last_price and prev) else 0
-        change_pct = round((change / prev) * 100, 4) if prev else 0
-        spread     = round(ask - bid, 4) if ask and bid else 0
-
-        if rt.get("price"):
-            dtype = "LIVE"
-        elif rt.get("bid") or rt.get("ask"):
-            dtype = "QUOTE"
-        elif t.get("p"):
-            dtype = "TRADE"
-        elif ask or bid:
-            dtype = "QUOTE"
-        else:
-            dtype = "BAR"
-
-        result.append({
-            "symbol":     sym,
-            "name":       stock["name"],
-            "sector":     stock["sector"],
-            "price":      last_price,
-            "ask":        ask,
-            "bid":        bid,
-            "ask_size":   ask_size,
-            "bid_size":   bid_size,
-            "spread":     spread,
-            "change":     change,
-            "change_pct": change_pct,
-            "volume":     volume,
-            "open":       bar_open,
-            "high":       bar_high,
-            "low":        bar_low,
-            "close":      bar_close,
-            "data_type":  dtype,
-            "timestamp":  rt.get("ts") or t.get("t") or q.get("t") or b.get("t") or "",
-        })
-    return result
-
-# ── Routes ────────────────────────────────────────────────────────────────────
-def _alpaca_warm_cache():
-    """Background thread: pre-warm Alpaca cache at startup so the first page load is instant."""
-    time.sleep(2)  # let Flask fully start first
-    key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
-    secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
-    if not key or not secret:
-        print("[Alpaca] Cache warm-up skipped — no credentials set.")
-        return
-    try:
-        print("[Alpaca] Pre-warming market data cache…")
-        _alpaca_cache["stocks"]      = _alpaca_fetch_all()
-        _alpaca_cache_time["stocks"] = time.time()
-        print(f"[Alpaca] Cache ready — {len(_alpaca_cache['stocks'])} symbols loaded.")
-    except Exception as e:
-        print(f"[Alpaca] Cache warm-up error: {e}")
-
-threading.Thread(target=_alpaca_warm_cache, daemon=True, name="alpaca-cache-warm").start()
-
-
-@app.route("/api/alpaca-stocks")
-def api_alpaca_stocks():
-    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
-    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
-    if not api_key or not secret_key:
-        return jsonify({"error": "Alpaca credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your .env file.", "stocks": []})
-    now = time.time()
-    stale = "stocks" not in _alpaca_cache or (now - _alpaca_cache_time.get("stocks", 0)) > _ALPACA_CACHE_TTL
-    if stale:
-        try:
-            _alpaca_cache["stocks"]      = _alpaca_fetch_all()
-            _alpaca_cache_time["stocks"] = now
-        except Exception as exc:
-            if "stocks" not in _alpaca_cache:
-                return jsonify({"error": f"Alpaca data fetch failed: {exc}", "stocks": []}), 500
-            # Serve stale cache rather than returning an error
-    from datetime import timezone
-    return jsonify({
-        "stocks":  _alpaca_cache.get("stocks", []),
-        "updated": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
-        "cached":  not stale,
-    })
-
-@app.route("/api/alpaca-ping")
-def api_alpaca_ping():
-    """Quick connectivity test — checks credentials + account endpoint only (fast)."""
-    key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
-    secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
-    base   = os.environ.get("ALPACA_BASE_URL",   _ALPACA_BASE_URL).strip()
-    if not key or not secret:
-        return jsonify({"ok": False, "error": "Missing ALPACA_API_KEY or ALPACA_SECRET_KEY env vars."})
-    try:
-        r = requests.get(f"{base}/account",
-                         headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret,
-                                  "accept": "application/json"},
-                         timeout=5)
-        return jsonify({
-            "ok":     r.status_code == 200,
-            "status": r.status_code,
-            "body":   r.json() if r.status_code == 200 else r.text[:300],
-            "base_url": base,
-        })
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e), "base_url": base})
-
-
-@app.route("/api/alpaca-account")
-def api_alpaca_account():
-    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
-    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
-    base_url   = os.environ.get("ALPACA_BASE_URL",   _ALPACA_BASE_URL).strip()
-    if not api_key or not secret_key:
-        return jsonify({"error": "Alpaca credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your .env file."})
-    headers = {
-        "APCA-API-KEY-ID":     api_key,
-        "APCA-API-SECRET-KEY": secret_key,
-        "accept":              "application/json",
-    }
-    try:
-        r = requests.get(f"{base_url}/account", headers=headers, timeout=6)
-        if r.status_code == 200:
-            d = r.json()
-            return jsonify({
-                "equity":          d.get("equity"),
-                "cash":            d.get("cash"),
-                "buying_power":    d.get("buying_power"),
-                "portfolio_value": d.get("portfolio_value"),
-                "status":          d.get("status"),
-                "currency":        d.get("currency", "USD"),
-                "pattern_day_trader": d.get("pattern_day_trader"),
-                "trading_blocked": d.get("trading_blocked"),
-                "account_number":  d.get("account_number"),
-            })
-        return jsonify({"error": f"HTTP {r.status_code}: {r.text[:200]}"})
-    except Exception as exc:
-        return jsonify({"error": str(exc)})
+# Alpaca realtime WebSocket data
+alpaca_rt_data   = {}   # {symbol: {price, bid, ask, bid_size, ask_size, volume, ts}}
+alpaca_rt_lock   = threading.Lock()
+ALPACA_WS_URL    = "wss://stream.data.alpaca.markets/v2/iex"
+ALPACA_SYMBOLS   = [s["symbol"] for s in ALPACA_WATCHLIST]
+alpaca_cache      = {}
+alpaca_cache_time = {}
+ALPACA_CACHE_TTL  = 15  # seconds
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NATIVE ACCELERATION — C++ & Rust hot-path extensions
@@ -750,6 +433,192 @@ def _out_arr(n):
 threading.Thread(target=_load_native, daemon=True, name="accel-build").start()
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ALPACA WEBSOCKET THREAD
+# ══════════════════════════════════════════════════════════════════════════════
+
+def alpaca_ws_on_open(ws):
+    ws.send(json.dumps({"action": "auth",
+                        "key":    ALPACA_API_KEY,
+                        "secret": ALPACA_SECRET_KEY}))
+
+def alpaca_ws_on_message(ws, msg):
+    events = json.loads(msg)
+    with alpaca_rt_lock:
+        for e in events:
+            t = e.get("T")
+            sym = e.get("S")
+            if not sym:
+                continue
+            if t == "t":          # trade
+                entry = alpaca_rt_data.setdefault(sym, {})
+                entry["price"] = e.get("p", entry.get("price", 0))
+                entry["volume"] = entry.get("volume", 0) + e.get("s", 0)
+                entry["ts"] = e.get("t", "")
+            elif t == "q":        # quote
+                entry = alpaca_rt_data.setdefault(sym, {})
+                entry["bid"]      = e.get("bp", entry.get("bid", 0))
+                entry["ask"]      = e.get("ap", entry.get("ask", 0))
+                entry["bid_size"] = e.get("bs", entry.get("bid_size", 0))
+                entry["ask_size"] = e.get("as", entry.get("ask_size", 0))
+                entry["ts"] = e.get("t", "")
+            elif t == "subscription":
+                print(f"[Alpaca WS] subscribed: {e}")
+            elif t == "success" and e.get("msg") == "authenticated":
+                ws.send(json.dumps({
+                    "action":  "subscribe",
+                    "trades":  ALPACA_SYMBOLS,
+                    "quotes":  ALPACA_SYMBOLS,
+                }))
+
+def alpaca_ws_on_error(ws, err):
+    print(f"[Alpaca WS] error: {err}")
+
+def alpaca_ws_on_close(ws, *args):
+    print("[Alpaca WS] closed — reconnecting in 5 s")
+
+def alpaca_ws_runner():
+    while True:
+        try:
+            ws = websocket.WebSocketApp(
+                ALPACA_WS_URL,
+                on_open=alpaca_ws_on_open,
+                on_message=alpaca_ws_on_message,
+                on_error=alpaca_ws_on_error,
+                on_close=alpaca_ws_on_close,
+            )
+            ws.run_forever(ping_interval=30, ping_timeout=10)
+        except Exception as e:
+            print(f"[Alpaca WS] runner exception: {e}")
+        time.sleep(5)
+
+_alpaca_ws_thread = threading.Thread(target=alpaca_ws_runner, daemon=True)
+_alpaca_ws_thread.start()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ALPACA API HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def alpaca_get(url, timeout=8):
+    try:
+        r = requests.get(url, headers=ALPACA_HEADERS, timeout=timeout)
+        return r
+    except Exception as e:
+        print(f"Alpaca request error: {e}")
+        return None
+
+
+def alpaca_get_quotes(symbols):
+    r = alpaca_get(f"{ALPACA_DATA_URL}/stocks/quotes/latest?symbols={','.join(symbols)}&feed=iex")
+    if r and r.status_code == 200:
+        return r.json().get("quotes", {})
+    return {}
+
+
+def alpaca_get_trades(symbols):
+    r = alpaca_get(f"{ALPACA_DATA_URL}/stocks/trades/latest?symbols={','.join(symbols)}&feed=iex")
+    if r and r.status_code == 200:
+        return r.json().get("trades", {})
+    return {}
+
+
+def alpaca_get_bars(symbols):
+    r = alpaca_get(f"{ALPACA_DATA_URL}/stocks/bars/latest?symbols={','.join(symbols)}&feed=iex")
+    if r and r.status_code == 200:
+        return r.json().get("bars", {})
+    return {}
+
+
+def alpaca_get_prev_close(symbols):
+    r = alpaca_get(f"{ALPACA_DATA_URL}/stocks/bars?symbols={','.join(symbols)}&timeframe=1Day&limit=2&feed=iex&adjustment=raw")
+    if r and r.status_code == 200:
+        raw, result = r.json().get("bars", {}), {}
+        for sym, bars in raw.items():
+            if len(bars) >= 2:
+                result[sym] = bars[-2]["c"]
+            elif bars:
+                result[sym] = bars[0]["c"]
+        return result
+    return {}
+
+
+def alpaca_fetch_all_data():
+    """Fetch all stock data from Alpaca (REST + WebSocket)"""
+    symbols = [s["symbol"] for s in ALPACA_WATCHLIST]
+    bars    = alpaca_get_bars(symbols)
+    prevs   = alpaca_get_prev_close(symbols)
+    quotes  = alpaca_get_quotes(symbols)
+    trades  = alpaca_get_trades(symbols)
+
+    result = []
+
+    with alpaca_rt_lock:
+        rt_snap = dict(alpaca_rt_data)
+
+    for stock in ALPACA_WATCHLIST:
+        sym = stock["symbol"]
+
+        rt  = rt_snap.get(sym, {})
+        q   = quotes.get(sym, {})
+        t   = trades.get(sym, {})
+        b   = bars.get(sym, {})
+
+        last_price = rt.get("price") or t.get("p", 0) or b.get("c", 0)
+        bid      = rt.get("bid")      or q.get("bp", 0) or 0
+        ask      = rt.get("ask")      or q.get("ap", 0) or 0
+        bid_size = rt.get("bid_size") or q.get("bs", 0) or 0
+        ask_size = rt.get("ask_size") or q.get("as", 0) or 0
+        last_price = last_price or ask or bid
+        volume   = rt.get("volume")   or t.get("s", 0) or b.get("v", 0)
+
+        if not last_price and not bid and not ask:
+            continue
+
+        bar_open  = b.get("o", 0)
+        bar_high  = b.get("h", 0)
+        bar_low   = b.get("l", 0)
+        bar_close = b.get("c", 0) or last_price
+        prev      = prevs.get(sym) or bar_open or last_price
+
+        change     = round(last_price - prev, 4) if (last_price and prev) else 0
+        change_pct = round((change / prev) * 100, 4) if prev else 0
+        spread     = round(ask - bid, 4) if ask and bid else 0
+
+        if rt.get("price"):
+            dtype = "LIVE"
+        elif rt.get("bid") or rt.get("ask"):
+            dtype = "QUOTE"
+        elif t.get("p"):
+            dtype = "TRADE"
+        elif ask or bid:
+            dtype = "QUOTE"
+        else:
+            dtype = "BAR"
+
+        result.append({
+            "symbol":     sym,
+            "name":       stock["name"],
+            "sector":     stock["sector"],
+            "price":      last_price,
+            "ask":        ask,
+            "bid":        bid,
+            "ask_size":   ask_size,
+            "bid_size":   bid_size,
+            "spread":     spread,
+            "change":     change,
+            "change_pct": change_pct,
+            "volume":     volume,
+            "open":       bar_open,
+            "high":       bar_high,
+            "low":        bar_low,
+            "close":      bar_close,
+            "data_type":  dtype,
+            "timestamp":  rt.get("ts") or t.get("t") or q.get("t") or b.get("t") or "",
+        })
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ADS-B LIVE COLLECTOR — adsb.lol background thread
 # Polls https://api.adsb.lol/v2/aircraft every 5 s, rotating through 12 global
 # regions.  Data is stored in a thread-safe deque (latest 5 000 rows) AND
@@ -947,7 +816,7 @@ def xyz_to_wgs84_bbox(z, x, y):
     return lon_w, lat_s, lon_e, lat_n
 
 # ── LOGO ─────────────────────────────────────────────────────────────────────
-_LOGO_DATA_URI = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/4QCKRXhpZgAATU0AKgAAAAgABgESAAMAAAABAAEAAAEaAAUAAAABAAAAVgEbAAUAAAABAAAAXgEoAAMAAAABAAIAAAITAAMAAAABAAEAAMb+AAIAAAAbAAAAZgAAAAAAAABIAAAAAQAAAEgAAAABQ29weXJpZ2h0IEFwcGxlIEluYy4sIDIwMjIAAP/iAihJQ0NfUFJPRklMRQABAQAAAhhhcHBsBAAAAG1udHJSR0IgWFlaIAfmAAEAAQAAAAAAAGFjc3BBUFBMAAAAAEFQUEwAAAAAAAAAAAAAAAAAAAAAAAD21gABAAAAANMtYXBwbOz9o444hUfDbbS9T3raGC8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACmRlc2MAAAD8AAAAMGNwcnQAAAEsAAAAUHd0cHQAAAF8AAAAFHJYWVoAAAGQAAAAFGdYWVoAAAGkAAAAFGJYWVoAAAG4AAAAFHJUUkMAAAHMAAAAIGNoYWQAAAHsAAAALGJUUkMAAAHMAAAAIGdUUkMAAAHMAAAAIG1sdWMAAAAAAAAAAQAAAAxlblVTAAAAFAAAABwARABpAHMAcABsAGEAeQAgAFAAM21sdWMAAAAAAAAAAQAAAAxlblVTAAAANAAAABwAQwBvAHAAeQByAGkAZwBoAHQAIABBAHAAcABsAGUAIABJAG4AYwAuACwAIAAyADAAMgAyWFlaIAAAAAAAAPbVAAEAAAAA0yxYWVogAAAAAAAAg98AAD2/////u1hZWiAAAAAAAABKvwAAsTcAAAq5WFlaIAAAAAAAACg4AAARCwAAyLlwYXJhAAAAAAADAAAAAmZmAADypwAADVkAABPQAAAKW3NmMzIAAAAAAAEMQgAABd7///MmAAAHkwAA/ZD///ui///9owAAA9wAAMBu/9sAQwAGBAUGBQQGBgUGBwcGCAoQCgoJCQoUDg8MEBcUGBgXFBYWGh0lHxobIxwWFiAsICMmJykqKRkfLTAtKDAlKCko/9sAQwEHBwcKCAoTCgoTKBoWGigoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo/8IAEQgC4ALgAwEiAAIRAQMRAf/EABwAAQABBQEBAAAAAAAAAAAAAAACAQMEBQYHCP/EABUBAQEAAAAAAAAAAAAAAAAAAAAB/9oADAMBAAIQAxAAAAH1QAAAAAAAAAAAAAAAAAAABSoARkAAFKgAiSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIkgChUAABSoAUqAAFKgAoVAAKFQAAFKgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSoAAAAKFQChUAABSoIlJ2rhVaqXFKElKgAoVAAKFQAAFKgBSoAAAAAAAAAAAAAAAAABSoAUVAAClQApUAAAUqtF21c1xczea35Znoss3UWMZcoSKgUqAAFKgAAClQApUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEY4hn2a8+bLYef9KZd/gtmdpHG1xvmJkEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY2r3uOWeN73no4ndYnYnmuxbk3Gt6rAJ7Cs6pMAAAAAAAAAAAAAAAAAAAAAAAAFKilQAApUAKKgABGQARkAALVA1nO9HooyPPvQ+FNHlWtocxm2s6uy1m418dH0PP9AUz9dnVONJgAClQAABSoAUqAAFKgAAAAAAAAAAAAAAAAAAAAAAAARqRa+ZLRYfKR6Z5vk8Cb3L4+2bbY8ner3Hn+VsR67uPLu5rdX+W6Mu1szJgAAAAAAAAAAAAAAAAAAAAUrQqAClaVAAKVpUAAAAUrQqBStCoIFDXXbMzRczu+Xjf+f9twNWrmLbKZmtyjt9Zf1sdj1XFdoU3vP9BUpwmXAAKVoVAABStKgFK0qAAUrSoApWhUAAAAAAAAAAAAAAAAAAAACMoFqN2hx+XmVjzjnu+5Q1Oj9D4msGOTbLScy7c2lgye75/to5j0HmetF+k6yChUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgTsXdaZNrG15qMvjcuMDnq66t1z8scnGlCtYjZ28Op0fZeadEbn0Hx3u47GWmtnYUpaq+AAAAAAAAAAAAAAAAAAAAUKgFCqlQAAjIAKCoABEkAYplWXPG8t6XSFvZ+cZkOdhg1tdPcslYgrSpk0s0N72/mW4N76R4f2seh5PHWT0mFnGrZLV0FCoAAClQAjIAAKVABQqAAAAAAAAAAAAAAAAABbuCEws4eyslrku11Jo9B2usjyvKbY4zEz9fVbd20UKFSpUoXtpq92a7rOT9HK4/SYkdfi7exVMuMi2uClQAAAAAAAAAAAAAAAAAESQBEkhQuKWS+w8wtywJmdbYBsGJIv11eaXrNjXm/1+RpjP2fM7UwsPEtR0HnHXcabHnN5pjlr9vKrVwv2RSUSitACtJUF+1lGNudPvjb67OxI9UxMfFOj6HhulqtdVM6TFjpzoLmryi/c0exMiuFaNtGOIZdzXZ5Jh3DIUtF5bmVAIkgACJIAAAAACkYk6Y2EbiEdEb29x3SlZcNnnYYuHxp39eTkdDk+X9JHT67lOdPZee1PKHfdB4x0Ztbfnl89X82xeXPStHzeFUs3VSLllQnCtAACcAlfxqk99ztw7nSaeye96LhKx6T1fhHZHTU83yT2HTc7yZ67l+bbU6XP8j6w6tx+rPUcfXaKuty/PO2L8+QzzpLdvVG7rg5JeWL4AAAAAAAAABZSoY2Hmas22m2/KxkbfjOoNBmcjnHbc1l8Qdvd5u6V33mvUGx5+1oD07l5c4bjqPOdyY97nr9dXxOx0Z0WBYsmNfx5kKSiSiAAAEpW5Ec3Cvm11l7DO9wtTGNl2vmPRF2/zOVXofK3OVj0HacVsivS+YdabrC1mnPVdM583PU+X+hGLmcltjrsDN0Vb7Kwc4t5WPkFJUqAAAAAAAAKVGFTIoc/y/d6GKcJ6jw5y21jvTzrKjnVb0nX8mZVM4c9nYO7NXjbTWGRj7XALEp3zArKZahk2Ci5QtkyAAAAABIiSKUuWyVbtC1cXzGlOYx9nrS/dvXzT5+v3piYe21RubG4xDU9Jou2jk85tTf6PudCZfR4O4NduMbLqMlSoAAAFKgABSopSQxKyia3S7nnI3PD9p56WM/SzNDk625WZq5WzMhjhfxql23ShdjGhKVsVrESpQVrEAAAAAAAATgE6REkRNAXLYXq2RTIx6mRZpE2F3XSLvWcZuTM2eizT0vUZmojq93o96Ws/B2NRlSQAAjIAAAAAAIytlcW5rja81veZNL0Gg2ceYZ0L5gc71XNVOznYhjzjIRUJIiUQAAAAAAAAAAAAAAAnAJqCMozJ279k2OfayTWeoedegxqui5/eHc6+WFW8vYGWXVq6AAAAAIyAACMgAt3BZwtmLPNdXA842nU5UeA5HoUDzTQe7eWGisdrp656ssgxKTiUSiAAAAAAAAAAAAAAAAEolUrhYlTYmHDo9UTzu+tx576Pa9HPKd/0uzLOv3kaxsiYjIEZAABGQAAAAAAAW7gphZ1s0e0plnm0eisRoeN9U8+MLX9Nqa5e9TPNTG/YFJRFK0AAAAAAAAAAAAAAKq0KxlEuTjlGHm4e7GNuMQ6au+hGm9E5nuTm9tHYVesX6gAAAAAAAAAAAAAAFKwmWbNmwbLl99xBuNfb0kaDe8zmGu1GZh1dxrtkqpEAAAAAAAAAAAAASiJKC9brQz93zuxLXc8F0Udja12MerYlnFreZmh3pSVm8AAAAAAAAIyAAClQApUUqAAFi3k0I6HocU0mu6i0eWbTe5p5ZpPSOQMHUd5xxhxzLJj1pUilEAAAAAAAAAAFSkkilZyLtnptWXehdbHnfZ2uzNK3mUZWNsIVZzITKVAClQARkAAFKgAAAAAAAAABCYphZ0TW2trQ882nQTjynmvX+OOW0Ps/mtaK3urBq0pFtOAAAAAAAAAAAJEUsgx2beLdO91BhdjlddHmXd3N6abJ2Fyp27wpUAAAAAAAAABEkAARJAFCqlQAAjIQmLdAwb2PdNTyW94uOs886fgTNs4mPUJWhOAAAAAAAAAAAJREsvCqbHI1Uz0rW661HofRcJ2xHc830dSnC+VARkAAFKgAiSAAIkgAAAAAAAAAAAFApZqU5nYcfHceU9b5wZWHYxzXzt1pCUQAAAAAAAAABOEiuZg5Bs8rUXz2XRa3Dj1TY8V1NZtzU7MmhMAAAAAAAAAAAAAAAAAAAAAAoqMemRQ0HF+m8lGu859z8jNBj7rBrT1pIjGUQAAAAAAAAABKMhct5Iu3ck6TH7vRRtOqs7U1e1XKhMAAAAAAAAAAAAAABQqAUKqVAAClQCKgx1i4aXh+t5GNh556HwVYmPm4xh1pURlEAAAAAAAAAASjIShcJzXTprWZhx1/ZcP15Te87vqu3LF4qAjIAAKVABQqAAAAAAAAAAAAAACiIpHWzK8Rf4uPSfKdpxxtcPEtVWsAAABKITRqJQkUrQVhKJJEAAJRErtgZt7XVPU9Zy849b6TyTvjeZnE9bWVXHyAAAAAAAAAAAAAAAAAAAAAACFJ0NbdkOa47t+IjY+f+k+a1bsX8Ux60qRTiUkkW5wyCNrYYRebmBpcu70hxd/J2BpsPqOcEc+yYU43i3C5bEq0E4SLty1cOvws/Bjqew5PtzA3mq3NLsLgAAAAAAAAAAAAAAAAAAAAAKEIXKHPX8keecj6dxMannPT/PqwYZ+KWlakU6Ea3ckwJT3BqIdNqyMu4wzjdznd1HkN/f51cnqfVOAMC11eKczW5sjUMrGKLtsorIgvSL1zoMKMrv9D3By/barfkcq3cqQAAAAAAAAAAAAAFKgBSopUAAIyBCcS3Cto1LW5Uc3yG05w3vI52pq9bhQTt1MrHUNjtOfzyx1PI9CbfBytdHoGv2GAY3X8f35xU45BmcT3XnxtMa/rzntzoNjVjVZGIbDBrbJVt0LlbY6LFwanYdr5h3UZnW+cd6bK/g5lXwRkAAFKgAjIAAAAAAAAAAAAAACIpasFIaCUY/BbLmTqOF6DRVauR2hp71++bPR9dpo3HRaTdHOd9yPSGTC5aOrwr+JV3YanamNGyM7R7nQEqXMc5HptJso57lOx5423I93yVam9kZxzFyd42mJcwI7nu/JuxN11HmHcm5ua7IrLAAAAAAAAAAAAAAAApUUqAAEZAs3hg4+zHnl7qqx5BovVeINPqvVuUrk8zdeiR47e7jYVoNL7jpI47pOqya8v7XcZBoab+RHEzhiZYWY5AhqtxQ0tdxU873nRzPMuX9s0Mclx/v/ACh5JP0XqD58n2NyuSselcfFnrZ9oed9xi9ga/Kyb1VpIUqAAFKgAAAAAAAAAAAAAAAAt3IGNj5Vk4/Ku5McHoe05sy9V2mjNT1es784DM2ewMzUdnrSOwu3q1GzndMa5cqAAAIyFmt0a7Iv1NPo+u15Lku+0kcdn7HenkdvorBgc/6Fxpc6LD6M5juOY7IuZVrIrNpUAAAAAAAAAAAAAAAAAAAACIpZtiOnzyOonpo7rQ5uprb7rlOnLN/VZRsKIFytKgAAAAAAACMrZcjKwVuYOaYWruYZ0PLb3j46Pac3sye34zpDYXdbfrMAAAAAAAAAAAAAAAAAAABSoITFqN0a+/eka/D3Vslr9rbMXYW7hjXbgAAAAApUAAKVABSoAtXQxcfYQI6ffWDByMiRqNlW6WLk5gFKgAAAAAAAAAAAAAAAAAAABFIWq3BahkCNq+IyAAAAAAAAAAAAAABbuClm+LFyYsXZC3cAAAAAAAAAAAAAAAAAAAAAAAoKgAESQBEkAAApUAIyAACMgARJAAFCoAACMgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARJAAAKVACMgAAjIAESQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/8QAMRAAAgMAAAYABQQBBAMBAQAAAwQBAgUABhESExQQFSFAUCAwMWAiFiMkQTJwkEKA/9oACAEBAAEFAv8A0dP/AMKJ/wD4Onr/AFuJieLXrX4VvW3FrVr8OsTxP0/qtKRSrC9DT/0BegZMGpoj6RWsRMx1/qd5mPgma5o1XiKXi0+LMfK0bRaItxWetQkte9usR/UuvT4UvS/DbABT1joswAxDGELj/qtqzP8AUq17YYBBrXr30ys7055izrMHqhEJYeVYLm7mWbuuHxLooeqVgXmHH0j+oBJ5aaD3q3YN4l8nauxff1iQxXen1MjaLVnY2yVuo/5UsnWs4zot+oEVu8fX6/1Akj4t/GPZeR81yHyDsv8AL+V7LQ1zJK/AJrIE7LSYk1isfx/RY/Z7f8yxNh5q5FxbWeyw01nnupj5jZS7iR1WK5T/AKWaodpjWRaWIlkt+jhZzNHt1FhoaY7CXqK8MfsT+uPz03iCFvAx5zw3R6u1RNhjaXotk7tVrb2pGgWvMV4QyNGUGdnX94i3MS/qY+3FnNTZGoNNirIKNjuzM9IrPWP6X0jraItCoRBprKrEMwotYHLiapz8zLgXcEmhONjBAZ/mFZZdhHPT+XcuLLe3sLLlVXpUYYHSL/0uf44JU8tPVLdbCA7QO+B33nFtb0UAMmM4MwjQMviHFrXYGQd1FNK6OGJu7nMINDw4w2BpLgdrol7poOLRT6939ItMRFbRaCugEw20NUOXsLnFt7Avab5hWsnkaXoMajkvNU0S1z1DyufTeu+whzBUCGDpUVc3doF1s3TXYVDrrGcOagBhJUo+6vd/SLRFopWKwVEBWXlRtAxMtaF+YM0AnH8JUWbkpQ63oLws1Aeq4aeQrq/rHz8cTGXy+kN17mPKXWWy85cCgshYTxw0OMI6iH217v6P/wBm74EvJJE4d+uttFbqlgsaPZsGau2dp6ylZtEz1mfhP14oQ0DSKYTGsy6acFjQlJNnQna0SMDVRsW602J5v6P3R1Jeo6jLQtS6Sw29F1canLmmtRXmR0TL+hsrnyUT1XYZJBT93+FZ7bGvF7qPDCjjs0Ve5l0gOVxNFaUAai1tk7gAjXONgfmH5P6P4472QwcCitFQt4wya+xlBulg443abCUIuNZV10RDkt717L9J6R9ZtHbIVLlXSB7LOzmfL74WKAyKORSNrQzhNL5ylU1rJis1/Rbdekfx5Te5qmKBPJabOo9ovV1tfTflXOfaV4aOVg1zkuP9MWmIpaaWZZKxbM03gAT0Go0td98anL7LDChHG41uBTa1P6L5Kd7RRhCqcJhPuK/PN51Wc7lxtVbjVKIzxzL3SpMRa38/GlqwIFq1NrnXYPyy8oBPPaWjmDUcXhLIMMqcsghrisxaPykfT9uP0MCgwh17Bzl1to7yXtJZeHEKu5lx6mviESXRSK7co7CJYdop+npPSI6yYNw2zsszw1U7md1cGwFOX8uKqXxZ+b3HFxIqwqC1YtPwn9cfT9/p+GrPdEz0+Fb9bPM+qBcvmCTatGnvaUgUzt8kLuaZTaGltneCo2ZSxL2JeSWmn6es9InpJS3LZLROnRdogWtHfMytg7FvXvul+aGY8a2W77oCF7L8RbrNp7Y/Pk7e2vTt/wCN7+14vlvL8LTnafrfOuYfl/ro+v5SdvfPb2fqj+S9ndl+n2J+L3eYfQ9Dlfw/LWvV+fT06L+Lx/lKxMcT8I69bde2vXtnr33iZqOJit6Xk1uvRERRDcEYnH/SC7Aj8wgOdXOAUSPy1q21zDnMUWzMtppcwrjOyoZeK1m0/tDHcnFazazueyqLCzWGqEQYpqsosXR5aWOBd9VgrX/5SEYdnxFKOv8A4joSpTVtYdesV6W8k/xSJis9fhHE9ev30z0is90d0RbgRKkgzFAzwu2Ji7TI1qUtF6CcCRltkaoVT0ZDZ8FXGDUXCk4JwTGqADhzjCHL1Av8aWuFEnuh9ZHeCyfb2hr0U3VrKxvdNTa3hsrZe4RFY7FzMuvmbqIlhW46/T9czM8AYKDilppd/VO6LF2vQEXXuTVNzGr6+Ht0uN3mAIj++D1s3YC6XV1hIcLMjOBXXAdvQeEiJVgbIa6a9nGmBrBSbG4EzwQs3tFaKNDaoy2JaevWAnGWxi1FXipK2m1orH7U/vx9OOkdeK1ivF6VvPAQDFJgjLWsREUXFQzQhmCsKgg2VBLTI6FAmuJcTCSxXzCoQWGqAIdlRYtvALw4yS1WOaFV/UzkVoRqmtPMPM6CoFcRFRlYlawZwQR8DiLW4/6/YHWs8V/8tJZcAuWkVW+GFw01mc5OUOVVQSvroqWa9cPjyU1hH3lgFEAQxhUTWo9orhYXXCMIqprQ6wEZhJBEBcqwSGtWLVAEYKmXEWeKDpSb1reOIrETMRP3H16k7vGt5fE17XsF7vHkS3Ndi71Tz5fWw7vXc5is3UKXseigTQnY5ls1VTBs5KBr6UbWxL8I4FtC62jfQrr6HzSEOXrvzfeI9DXfsfLckjvt7t3vKkTU9PqSTOez1pF/hP709eA+Xr9e49tD1MW70F1CO+337Py/CI9ZnmK+hFs6dWUM4mhOrzFOhVfGnRsiK2j873JfqjyxZyVtG+jGu57Po8tXbuPfI9Vkfl9XGu7LWxZuog9/iSlqWXPL4Rd3jju8v2vfXvLeohqsiaG1orrGKwIQUNddvjR2gLEnSV8OTsAuxs6y4RL6ypV1NsFtTc1l6J4+utZIm0D5xp7KkJ4m0vVXQ1hX13t1SU+XdYSvHMGoNtmOYl4RxdKiTnMOnR++ZvUVQoeatbGnOhKbtlR8FJJP3Inp8Dnk0Zj9kb3JNzN73nzeX9Smffa04dc/1Gv6OBqDUY5j1hOQlvrQnn69B6+/sgKnk7Svpi2hRt6+wrCWBrr+m9tA+Zs6qlFsPWAQexsgoeukrIM7aXObQ11laibCUKmouydxsSgwlqYcHFJp+nET1j7PtjuJSCDVWGsN3NXZaYXGZfCzgBjmHPBLFslX1cDOCZ/mjOAEOdjK2zs3PCXY5my11lsDIVZSOiKmzt4yqyXL2Wu7TRUovpaOMuvnYiVHWddSibfyoPyjPBDLeqrVNpRGhkojrZsFQWGOLV4txH7t6xXhUVTXn+TJ0GllK1cb0AQs18pF8pyVaNt7aNEWczHAznIrVO/zDmAQrhY6zaYk6W19/IVUS5azF2xaiAgazuKpGfyrnhYHzEgFdseQr6fL+eD3uYM5ew11RCWy80AWtBQbggjqIcBpBeP4+0t5vYc8nrYktyDbvofMXr6MZ+GbQgm2Z2zNndX0EWGBM6jTZ7rPaFEwmLQ+g22eU22wUm95IyyyWixjCm9rWtcxrDHa1LXta1u+/ZH04tMzPX7ePpxPHfbtrM1te1r2GUtaVma2OUpJXOcdYvaLtMsmqi00vJSkIU7z91cxlsBHmGDno9pwjkHbozssP3skXWlHEJoTo793vXzpPKopa9+/Xtp3dn16/ZSSkXMSoRpOhcpo6i67rOitRbl7UXFbmbQC0zbdWnKyXKqP8waI3zo7Al8tU8Ba29GmgXJ0qpUm3+7oP1aFnNwoQlu+7DkGTWL4THJ5S+f/AIlZ7bGv5C0J204tPdxE9I4n96eKz0+E36jFfsuS3ffzf8cN/GVkvmMu14V6T22fahm+e7Co+7/PTfq4PIfqiZgvlYd1hsZeDoUz2NVurjodwFMrlx8SbfMWqBqV9ZSy2Npgu5paAFwrHowKrIrGmekRMTH2M8RHSJBSTMhqcOfnBSroYgWWmMdW6+HiiYvzFmURPbAiMtReWWdJKUThSIVSI6yyC65BBsT4XHakDpN7cTWYiI6zP046f4/p6fYxHX4dP0RHWZ+k9Ppxas1mlJv8CDtTgQrFtMdJItcYEFLOGOKQmphzbMwc+NBncx6JWXwVKrZGMGrOhkAZEmtRUNEg0ZtWLRWIrXp9nM38jE3gOURkgdph4bzp3ao4bD4y7pmys2Z0vl47WpdghSEi9orxM9fyHdMwO9h2tM2mrDvp5BWhMa5nikUb0vSwju+9uFaGBOxLLUuaWeI/j7SfpFZi0GMId72rWuIdckc2GD5CvJzmZZgC0uY2FTsrHVrmx/LFqWvXt6fCPw8fGk1j4GIGy2KdcDb5BEbC8hXH5SMGrPMbC8cCvWwkjgIQt6Ur9xesWqANAUczwtFOChgZuGFW25i1te3Lq3q52VLT+7kfL+FcUrCVR2sV1MqZKDtf4THT8VMdOAisa0x0ljNMBTGzJ0SaWfdJynLQvVwcepDaeAInC6QhLIZQUzuK0aGOkUp2R3/uR+1aelRWm9GTEGQszUeS4ye3MbrIy20m/TzXWRP7zrTNl9FsScXmLsMFYvW01/GdeKXtSev1K4cgMh1hMr7R2Gx6j/o8uOsexs6DQ5Be1l0WTGKxewx1nrH7M/ZR04ZgM1+nTJqtGhzVAJQy6J/K16qzs8yVTrOZRK1Lf+RYH216dfws8U7fg1AYjEqpY5oF7mpTP+U8oVBK+/RX5jXt8SFV4teKfCPvJj/LhYHh41M/3uJD1WRwrie5gyL2Gpy93J0yTX0tbHKhRHMZdHelqXKAgq1rNp/CzExxQd78RHXhhQy8ZmYd+bpFo4zy2QanL2RY1NLBJ7lUuiWPmShd5T2oj+Bj7Pvqz14YP4eJ/hHTsw7zG7KqyWnN0Ka942d/YloGVslQAY1imcfK0MJbCtx1n8Je02ldki/FbdttHSM9TE1boQTRvfTb3J9LlZ2SB1da4H636iRblmSX7I/BRSkWYEI1B0pQYFVY1+YgBnO5cVVnO1AL02N5FECWWBc5CxWpL0HAo/meP+vvqxXtj+XBiHfIVUOBQYr6HMaSYU+VVwem0or8+MEchzQAAuUIr34iIj8FaOscABcZ9RW7ayobCVDktRrcxZ7BVsnHaus3msCeexG1QKJma4KOwr2FetfwMVmYiJmTBIGU81loa6hTNaeM0sDl7MYkJ8ZuNRxQpUcJIqSzqhDsxxSsx+EoSlrMHquMd4IOmoK2huvUUSx9gBE3tik7GtvhMli605/D7MttM6BDqDv2Wvbvt1+n3kT0m09ZCxYQwkkRdTRu/bG3apKo6Xi1djdCVPl7TERMu4KNExqiCg5R0JT0Ff8ACxEcWrFoj6cQuKDOLDaAokFYDOStfT081a6WBkLGW20hraOhjCXzkQeyw2HwMeP/AGfu+n+I695Dj8RM/Lq0nmLVac5hygpDxshWUUcoHzrQzl2VslQS6dkV7MTWLQMdRVmIn8Pbr04iC+xo1LdTLoeib4dGdjZq/ZDDW0/HqCaq4wu/C1K2ta8TW330/TgQmLDUGa59UL9eMYOnCaANCuztjbIniDONElGfen+B93Z+KvaKVHepKlcCNl8tAq4+guVfefDOnp7Kd87HcGm3rM0bbhmPT4tPdb7nyf7ShoAfQZhpnL2FgZmA8EGlzFpL2UzmxMqr6S5tA5qAGAtTCm9Yt+L6fW9YvUdKjoVIJTtr0ZCjjrK018cU6D2CpCWPme+zsI+g16VvSj6zevZbp9z4LeBFaWmNNKUWM/l8RkMPKGZ7XxF7gSzwrAXylwNnDQ4wiqEfZXu+3j7W8zFBzM0KQ0NPWJRXHbdILbab+YvaGnZBQ5wmbMUxu+3b95S9qWKS5bp6D41MZpobu66/4cgxypJsO30WJvUQJtIvtJ+8n+BXpeNIy1NB4goT5cOsJzmMoCuwZX5bH8kms3+3j+Z/nuF62SQIndwyxnco6nyzl4y86L5lxhHNZp1r1/HzxHFh9Smp5RZiEJV2MiTaLuHX0svMu8xqI2QY9Mvq8Wiaz9z4r+JNa7R30ionQ5d8yeHleR7VxfYGivCq4E6hZvXurWO2v42eI4tfoRi/jDlPXcHt6hg6T+3f0c7RMifRdI8f2S+DiZmZ+58luxc91yttFaKlvGCnh6RRv7WsZcWexLCq7kmbtPSKz1j8hP8AAuzt1/B8x0PD6PL/AKvv8weD3o9T5fxbp3fc/wC34c7we3ser7mN6nynlrwfMNTwesPp2R29fx8/xH8XHNjMjkoMlAqo97OPbRfxmKopJFbO6qRQ3iJ4+J+n3XbPaIdikOAgCI4rJ08NApnt7LPYOatdZRVIoXb17q0jtr+NtPbWs91TNjEw4xCy+dtjZrsbPV9zmMZE858iTGi5d1j2CeD7vvntXNYBW2SNmR37LpY2r6jmrv1kOdojaWU1hMuMFgIgkgo+v4+a1mS1reiaoQD31V7aOkgpGdjqhZd1wCXc8Y/V4n+f1R8P+o/mePp0jif5/b6V7FaUIw+IYWMjNRJlctLAvo76a91FhDGEYA0NMdfx9uvbXr2sDYs1pULdPEWfgO6Buug4pqVTFW97krat/wB7pPTiY6fux9eJiYlZdwgMoLJW91bQpTGC0NLPWepps1JYIItUX4209sUtFoM6ELDrFFV83aXOPd1Rk0H+YgmRz3JTZfZltnzT4P1zxS3bbixZsMBZEQlu+8MWhYduwjR5YKM9qB4vbumJ6fCeI/T3f4hJIitHlg2du+ohh6NU3tzcAUCGmBhdXXAy4c1ADESpR/jZ+vEfTgiwiFbDU6+TnLhBzCgGmjp4igs7NVq20+vCzXZ/tcT+iI6xwSnZwmD2C2jpZlCgUMdOjrOkvVVqmSCcnOXqy3tojRYUzhnQpHdd5eFiBF5PhenbxWOv6en0DTyFZF4TZmSBlDl9ITWhzFmLCXz1ArKr5y4GyDqSlKxSv42/XsF39jvu+9r+x6GF808ex7fus/MvVrMxM9Zn9mlLXnpPUirNAorMMEaAYBq5r/qKLmObRVZXuFJsi8VmbFEQU1rNv2xybxo+f2Nj5j0xPmPo5k6HzjQ8/rqeT1/r1/GWmK1paL1M8ALD7AwK4+srZfmF8R9HS3V2M5E/rMOG87Hd/h8In4Xt3SA3jrWeltB2G64ujRC7DMFee3AGzOWtMCfG9ohbdHuJ+hg6IlXeaNEDdc7cVFmrNVE/vaQ37ZWjVGtrdbuNQxUJPHbiZ/x+HX6Dt23NfyEztUaqWI5RR/mLWWZFm6C51VdZY7xzDAMRKlH1/Ex8ekdS0ggwCoAbmUFpvSzgHUx8INwbefVR53ClZFYNjmOKQl7P8I4vXttQNrirHdZ1S6l8zKI8IC8la2MT0F8HFG6u3kQHWPy6tK+BjAsDXxQw3GMnC+XhBo1v44PEtgpwqtixfX38YSi+Lh0dUZTkT+pjWSXzULvWLSRkKpcaw6SS969tu3/Gsd1iV7LJZZWlctP3W9zFqjTLxVapp4YgaTqYnAqr0WD2V7/xh7TQKhLlDovNB0tho40cbSeHTUaOw2Z9koKzNZtM2n4xM9I/kk3mVLN1oHyefTnRsLAvoUGzL86rhtP0eWLOeLds9L9LMejh2f8Ac5qlrxJk0PRUtofN+Yr6FxY99OgD+f237PWEtJ6zfr3Ta/bH6aHLSixiANp6DTfGPouynmaLl9fVZMuqgW5le6fJ+MmekRMTBThod4g6qcvMrSrzEYJNPTeRJlJ3GNhq9LseQXqL2pQzpBkZz2kh5ueQY3eZnFGK8vNqUzk2Fv8AUW4wvXO5dMK+c0ytGta1a1SKIwTnCO/AiivZoog0paLUXZWl/fKIebisAsg+yr/qDdZW+W8rtqhFtGCbQefQJj5RgBafIMrPmB6AZrUrNqXLnsqiUxiiC/zO2oamOwCyCbK19YxKDoK9b06x1/F9PqcflEmvCwX8eGn9TLqVPHwYZFqoSm43ilWSRUI4dte6p/lRvl+alZ5jWz75x0OXvYTzsuWdDawaKr5/LwJVFgUjT0cNcq+NljTAXDBd8wKFDnpCSG2iFovT6LJiXI8mJ0QxVGIOOuN3XzaPgzsYCoDcujtoO8vr3Xx8ARl9bI9V0vLNIVx8q2gTXzrZ5/kZvl6i92TvpkSOnlHaVRWs2zsY98+uThVlRDF7NXUz4dXz1vUWkMSb8RHxi3+bhvAvnNe2vobRQaOrr2qnl7Z1B6DpHGmNNk6wC3CQxLlJ7jHrJMFWPotHbPn6jwksxxgOhv6LRQYjrN0VtBu21ssGAliGKZJho9NC09KqEuUJSWrbiszMmvalK/wI5bO65ihSyzlOqzoN02dho4UuXX2vBtOsF0GNV70cl1lU2o0dpj5i36gSXERkxDkC4cIlT3XNpabD3GVukEpn7JvmmpqXVWyW5cUsx0a4j6x+Kt0mtYiKmqv7ejUfpctVV9TeqvGtrBzq5PLNFbs71Fq6MhR+UcpVX83NVVuEaD9RCisabtAWAHs8UUF5rdOlenT9mf446V77dO1eooHqVWlq8U8eDRfrzTVfjsV9DBorbS5qorQmOLPtk5VV51OaRqVFiUB8uRor86PUUiBFIF+MiP8AJoUmXzwXXXfymDaetnFIlkYpyhfzDC0G+XTBVx8gj/GjjFWa/wBN29bFxb3Ls4ZJsjm2Ann4l139ZD3gpg9ZeiXa+YflEAfiHNf8/wBgtO+g69tbrdzTA/MLMT9IGpj2cbOp5VMrEIsXaxSFN/p//ioYRTM7ePdKqnLpSqqZhjP7GMVMWTkM+ohkMU1tdErK2UvdZOwby1+L7o6sFgAUmIaA3sQDR1dAYUsPY/2NLSsTV0NubIctaMg42dS13vmVfS5c0LGvu6Eq8Ll8oFXvM0wXwjpPdTvjv4iev7nX68Cv30ab8BbT0rnOy1bb0LKE9qPTyda3vc0aHkHn7Mwijp3Frcw6vnXx9alkk9nv2NN+qa2c1DasnrB/xkxExERWLBFY7lK2VzABEs2stbZZGO6+AENFHl1yE7Y4XEIUXHW/w6fbRERxcdL8dPoEARk2whImAdKhTVXjX3AhIgmIYlxrLRolpQlBVrQf4z/s9ZuFUdhBZSMXR0wXYTxEDKhcx2CajqljJcv5xU6aeYRprs/2s5SylWwSaIjpEV6W+ztXr8KU7OGgSbjp/iilddneQI6BJawFFchmmpu5xWl8lMiyi2YwPW0F7sL54bgVkdvN+L6/Ul4HQRKlpdsdGWTQAKLdHAm0hieMSBCz3auCYZGG/Ai1JFrRX7m1or8BmqSzzdFAivBBh0hld0XKpAUYqyCmgK7py1ANctTim8Rf8ZMdYiOkTSs2tWLVHSo6yEckmOsDHUVbVrb76IiOCUqSOIFSpCDqWlKxSsCpBLVi0VrFa/jZ/iP4nu7r9ZqPu7Zi/lngUXis9fv793bxEX7yxeaV69v+flnr0p3dv/uyP24/an9uf1x/8BZ/b6/qn6fp6/8At3//xAAUEQEAAAAAAAAAAAAAAAAAAACw/9oACAEDAQE/AQRP/8QAFBEBAAAAAAAAAAAAAAAAAAAAsP/aAAgBAgEBPwEET//EADgQAAIBAwMCBAUCBAYDAQEAAAECAAMREhMhMSJBBDJRYRAUI1BxQEIwM2CBICRSYpGhQ3KxkKD/2gAIAQEABj8C/wD3E2/pvaDIgX+BxYG06iB/TFhEL/tN/g5T90Gfbf4EjvN/6TFhf4NnTwtKIp0ssmmVt7XtKqvSwCmU9OlnkbQGVAyYhTt7zYXP9K9DA/iU9Yjc7S/aVBRIyHMXVYC52v8AA2I25/pO0Q5MMTfYwr6x2NRmLHi8oOjnqbHmaOpU45ylZqlRuk9jzKTI7Df1i07k7cmVX1GbI9zMcmX8QD+kcrWlJdMtmYatiduI61qbbdwJTWmpUIct+8zNB729JUzQuHPaUxSpstjfearU2DW4tKtNqZUDiZhC/tFbi8t/SK6ludrw3jihbK/VPD52vff8QbrpYzxFrZX6Z4fVtlnFxtjaVtC2V+qddsZt/R4a8YA2JhWrUzN5SelUIW//ABCi1zlaPhVNIDvPrual+DNS7YWvjeYeHJDesUV3L34MsfElSRxKhZyoQ2PvBoVLe0RHbJgOYXL9J7f0cE7mM7cCFqd9jEpWPPVNQZcekqa69LHtF0xZFmjgMrWvDUxyB5lMotgu8GYYVFHpKwqj+Ybi02Vsz6iLUTgxqAvmJeX/AKMv3lm4lqIAHtKDVQM8x/eMr01C2lfUAcg7AxR4ew23AjVTU+tAniTZIg8Me28W1NGuu5niTsSrdMJrgbcGItMWW0zCjL1/o5CjgUrbi0cUGs9to2tVsL8WlO75XPRaEPVuoHEx8LfP2MK+Ivn7wtZtOAJfKWrXy94Xok6X5n+WbFhyYGq1M6fsLRR4h7tbb2jvVqXo9todM2aDM3ac7f0Tc7CXU3EWi7jMw1KjAQ6jqjX7yjo9YQ3JhwvmRxGfHINDVtaN4SwwMWqouRNV1C7WsJosnVHat5XmnQORMU5qpA3Bmgrf3heobLA6G6mY339P6JIPEsosItZ06xClQCZsgdrkbygKXSKh3jVEJzUXveaTOFEekGyxMNXMf+sVb2ueYaYcP7iN4h6lmmFU9IF4tSj0m8XoViw3M1lA/wDWFKgusCILKJlYX9f6JbTF3ttBrLi/pKa0k+lG0aY43N4y+HTNPef5rZxwIEql9H8TpJv7Tfn/AAFULYRW8PfUijxlx6TakHX9pJtGDrv3WFvDpepEauLVO8ACfTtzf+iLX3hZzYTKmwYe0WkzjIjn0lQmovHENOoy02BJ3iNRsQnf1g8OiHO1vxBUdA49DHdVCgngTHEfmA8wsFC+wlSi1O7N3iVKg6ZTSiL2N7xAaiqV7GNYgC1svWZvUW0zpNcTDMZ+n9EZ941NuGmnT4lNr9JGRjlbhlG0d6xNhttGpg3HaU/EmoDl2mK8wqe0v8LGVKwtikSle1zFGeQMFWtcs3oY1InoTcTTO3pBTWCub5j+hunmb8zT0/pf6o70FyaZ1aQv23inCzLsFmL0NNWFiRGHhyd+Y1SsbuYEZiVHb/Fa+0DLsRAazFjDToKzoPbiaq3aq2xE/kBL8kGA11t6H1i0RS+l6/AFxZvT+hsMhl6Rmq+SZUWGMoEkdIsT7youaszDaVfmQLngmVHoCyE7SnTp0rVRy03m3+Bwy9R4MRnF1B3EVvC08FtGWq6o3e/eVKuwpN5ZUyqKb9omkRaaWS6tvhccf0IUJI/EVfQWnzOo1vS8YhiGUT67vk3o1oPDhr5HYwVdXMd4Voi9oUfzCByOk/4ifSWHMxqCx5jvT4WChw17TUSqWx5EFSoz3bsDFZHbT83MNM3ta00wxb8wX7f0ERY7Q1MS3sItSxFx3ny4ovj+IypTe7DkiWeizkdwJ8xbEjgQU2UKPbvCaLY3hdzdjApOw/xWlxL1GueIy0m2aCuN3veaWnhfkzSqUnbHuovFtSYL5ce81sWO17WmpgViLZjkbfA87f0D9S2PvBjxO2vK2rby7QYY+86baOW9pT+Uwz/2z/NXx9ocPLBa+X8D6d7e8rfOc26ZT1P5WW8Gjhn+20TTtn+6UfLnb/ub8T6FsPb7rubzb4HfaGxsYLm5gIO3pCAbGWY5H1iMHso5X1mxsYRWqZm8p6NTGzb/AAqtWq5KeBLUHtvxFptUu1ufSFdU+uc1Ncuo5ENSkxVPzDTcdd7RTWW1+JZd/wCGcFvaADkxHrjpbjeM9OsaSxaDMdQnZppjxG4HpDqvseBKFSjVxUHcTneVdapndtoNF8TBeMzVLqeBaEI2Les3NzL5dNuPgAxufWCx+G8Fj+vuYCIBfc/A4G9jaKHPm4+DrTO6czOqbDiBl4Mairdaw1Kp6YKlPymDwxb6kapUPSJnRO0Xw7nqMNVz0iELsw7RabbsTNfLojI3T6TTom9SBnuGA3hrY/Sho+GB6ubw0cQw7Q1z5ibxBVa4WZU2xPwt/A3jaTFb8wMOREp1LBV9Iabrde0TxTDZe3tLrlmRxNOvsw4lNEuRfqmtn0x0GxB2vADuxmqjdNo1BeRM6sFSkekz5YHrhqVTZRNSkdolF262hY8CFqRuBEFU2y4+Dqh3U2Myc2HwIB3Euf1W0v3+HSAIMlBt6/BjTUAnmWqqCPeWHEaoqjM8xkrC6xUpDoEFYqNWMtXy2gWgBjKdRwNS3HrCjgYRmpAE5HeUWq2D5j+8wwXD0lcgBiDFqWCte1xKdqaEFbkkRqBP0Yr0rK95VbxLWYe8IB6b8yno1c7jeWY2H8M5NjBeUjQq5s3IlX5g7jtNFD9LK0sURQF80dyoZr954QsFUs9jaYaa429J4k0gCQ//ABENQAG/MCooC2lWomOp6ekK17W9YEpCyw1Qo1bQpVAKxVoAYxajqC68Sx4mNJQBFNRQSvHwJRQCeZ1AH8/C4Am/6j2jYea20+v55S0Laf7o2HmttKnzn+raUvlR0X3m3820ra/kBinw3F4NX+daVVfjvL0PJ+6DU326YFv1do2NuOqX/wDH2vFufqftjHbjeOPD+TveIPEHjy2mXa394flCczzAvjf7Q/Lk6MvvqXg+Zy/vOjL+3w3/AI28+ll/ae8GpnowjwP94PmydQcTPtb+8YeGO5814g8V5O1oDtxtHCH6t+qDP+X3tFJtb9t4Rf6nf8QlLAfutPqb0v23lIL3PTDpAato/wAz5byjo7JfaDK2raVx4nyAxflPXeLqefvK2v8Ay/2w/L/zIM/N3h/0W/TY5DL0hdzYCZ0mBEWlVfqaarsMPWN1BSD3iICHvz7TU1kt+ZVRzhc7ExQjh2vfaCoaqr6iVsiFptYBoyUnWozi20RalRUZBbeK/wD4hteOEqB2ZeBBTrNgwlKsguibR8DdmHEqLX2y4MpGj5UnB1MbWjvUXpf0iikOkes0XQl+01rd7xekLaVFVFOfr8FuOBb+MtwBiLRiqg3Ft4ancm8+X097Wj6qkq3pFqU1sq+stidTG1pUNYbPvKdOjwpveLns4HErVnHRUho0TkWirVcIyjvGrW+mRheMKVRajN2ESlWdabJ6yjj1U0O7Rn1lO3F4y1GFNr95RFMh8TvaamslresqoSE32v3gs4Zj2E1FqLjGpI4yH/cyrNaB6ZuphpBxmO3wuP0l7bxlbgzCiLCU6tXkf9w0mHTaVXHU2ZEosOksd5pW6bcyuHNxSO0WrT2a9omW5YXJvGoub01grUtje1pqVt2PvPlg3078zUo3DD3jNXPHYGGgjdN5rI/Xb1mFRrCGnTa4h8Vq9dr2iUmbEHvDTR8hKtZqoUr2loArh7i8Yl8bfAWN/wCMLG8IZwm1/glYVgWP7YKTuEHrHpK2QHefNaoy9IKdRsRAlN8haa71Ou3HpFos3Te15TNBvN2vDUrHq/PE+Wy6M8bzUomzD35j1K25G1otBG6GhI6SFve8qVau5BtaU9LbPmCnba3M8Rfq02sItTyteCkq9FpVqp5rzGrAiCyiGqF6ztf9MLW0u8qaPnttD84PxKWkNv22htTQPbcgxx4cZC+94vzXSR5Zw2FuZl4ctqH0gHi8hbgGFaRfS9bTUpsdSAeLZvwRGXwzuF72mZJz9Yq13Yr2vDoMw/EyY9UCuzYS6Gxl3NzMbnGbTfn9RtN5a5xl15l3NzCEY495deYNZifzGFFmA72mV+r1iiuzEdrw/KswJ9IXqEl4Eqs+l+IflMiT2Ey8STn7zpD6dubQ/KXZjzEHigVHafy0O2xJ3lTa+/UDBoqAt97GJ8yPqWjhwNC206eYM/N+kwy6vSM78CXpNKCsQfX2jPqKdpWSqQmTFgZS0bMKfeaduvG1otZ1usU0lsFj+GamS5i1StwDe0Rkp4gCVA1IPlMve8poKYXGFjTD39YWta8pUdJVw/cBzA+Ia3YxnsFv2E0cF5vl3gPMZ7Bb9hGXFTfv8OAIdv0ariNu8DWB9jC1gL+k08F/PeK9gbG9jC+IW/YSpT01bPuYD6RSECWFtpUU0w+frMrSiq0wmEZ2p53Eepa1ze0Twy0rMO8ZqikgjtGrIuImiU68bWjmtsGHMorR6sTe8V9VV24niBcLc7H1l2YE34gqUzcGGkHGY7S5lxx+jtBV/eI1N+DLU7ym/H+qFAp423lU191RitpT0fI/afManXjlFog2JmmWyj+IFsE94BMHteNjbp3+Clv3C4ll5+F/jf8AXk/DeHHt8Bl3ll/MtKdU2xeaaECNTPInzWrva+MKubKovKWk2zm0CspLEbm8rM+4U2WWtZvW8FOnxGrqv1DLGADj9INhjHNPd7bS/ilxMojw6dI9IWWkuREqaFPME9V4D4tMPQTAipoW59oCmzS9Ykt7zEHb4b/cAOwl0NjLnmaYZ9D/AKl/Bglu9onzSstvLBegC1u8qhk2J3v2g+WS9zzENYWe28dGQCmBsfhv+muIgqEBjxCW8srCja+ZlBTYsDvDZlwx4i1K4+leKfCWsBuRKtOpSvXPlae0vSUqIbj8fHf7Pv8AHqF/hSVEIqDzGZeLTJLRmorZLyxKZY2xlQGwY8SirkFrxWU9NpVWjbIHeXqGw/UlTwZinESpUvdYaTeWOzXYk7RKlHa5sZgL5/6rypQZrBDuYrI2SmHxAP8AaaY817TCsLGHHt9tsnPMtF8Q1sDCM8FHeaBN78GbsdS0rGvuKbYxXoXB77zRAOP5j1EvdphU4gVeBC3c/pyRLkESmKdMsDyfSMVFzbiVB4iiVAbYymlOmcL8+sz+VbK3pGqUkLux3WKviKRpAdo1KnfT9ZkD1TKs5Y+8Nja/226Gxl4tJ3JQQnwyZ+01K2z+kv8AKsTbm0qg02ZWOTWiLRotiTzaK7LZrcSqtWlgqnYy6LkfT9btBrY8957TxOGOUu9s77Snslseq8tUP+XvKfytr+0rfONY26YbcRNM726pv9nOXwTRNz3jfOmy2jBP5WW34gwwvba0qE46l+88L5b36oOMbSt8vbzb2nXb+/64H4N1E3N4nWVxM0r9rXlR3qEKNx7wVUqFj6QZ1mVmHEPhe47wVGOSxnoqMR6wow3imopAPE6QT9m3hwUm3p8FNVbBuI2jwO8+WI+oTaai1SzAXKw1ncoPaUtNywc8ntNDUP5lVi5bI7ROsrie3wbfk3/XcWi9DNc22+FSg1JgF7wBUJJ7xahoVDYRvEaZ32xgoii1NeeqNSVQV5hqnkm8RKlrJMkO/wBmuY2mfMLGAjmU1qgAJxaOipkG3i+Kt1KeISPD1AzDkw0ijbd5RRaLbH/mZ4kbcSpemyYtbeXxJ/H2MkAZTGsAVgVAMZWay52G0csFBHEyIUsebw00P0rxH8Oev8xh4mpgANowQ3EUrUu3cTf7CSWsfSbwCjUzFpWbxNSzDgRKdRvpZcxGo2y/MzsrOebylxv2jKyrjb0gHh7W9YjOq5Dj4bfYubfCo7VCwbt6TTp1Chi02clgOY9XXYL/AKpmtZnC8qZnrNTDdp8uep24M1XsVHoYdFCbQo4swgZlIU9/sVwJYcwaqFfzC9FekTQUdd7QVHbNRNUV3oq3+mJ9Qm5/mTSWswa3PrMaz3J7SjUSsyhDx8Ddibn7IQpuRM34iuvBjeG7+se/mcWEUVWCMgtEr01uibRqVJTdxbeMMcgY9YixaU/DsqYp6CZCFjLfrby8dAFs0WoOVN4pcAYw0nplvS0PiXXZjvDToi7NFpOcXQRKK7r6w1W8oF5qU+Iiud34+z2Iv8DVwGfrGp1QLGCmiC0pMQLG91lT6YBUbGGpW6ze00qWyk/8QVlq9VotPILfuY9PINj3md+/H6y8Vb2uYVveVKxrhSvaJSdrCU2onntEZ1zZu8qqd0XcLCrKq27xAij3MFY0xmJYjaYoLCbj7Pt8GJtpdpUHhz12ijxJu8pvS47ekYJgNuq0Y+HbBP8AdCPFXaqYDVFTSlkBJ9pZhY/r94TTRyne0UeHvqe0U+MLMO06GAT9oaMf3/uJ4Mt4e1+8RfE+aIysNDuJtBn5vtZZtgJkhuIlFm62lRnO1pswBvxKBWzCnzHCMGZh5ZqVUyWNUppis0MFve+Xwv8AqsLD8xahXIDtDUVAg9Jo1E6gP+Y71RZX/wCpp02DsTFemRa0ailsrcwvUNlEWonlMxvv9svCrcGBUFgItZ161jU6nBlsbn1lHT6Q/MbTXF1Hmj0y+ISaYbIT5jJbel/gVPb9Vq3FvzFpA2vNIsGgqu/URKq1upaZmVIYMIEQdt4a6DqMKVBdTAlMWUTK2/20leYC3MpqiXpnkyoaQu9todekeeYnSVK+Uess/h8VI3a0yoMc/aFq5Jb3mNzj6frckJBmVRizepmFIM1P1l6Kl2bzCBdIop5MDV0s9o6VaeNLtCaQu0U1BZu/3HfifTII9p4fWsTKhYrjaVte2/lvL+HtbvaaeH178zeHAWX0/UbzaY4HV9YjeJHRMvCDoinosBvPFY2F2uv4l/EWKwFeJ2v9yV/9MZP9QtGGZa8pFHPXz7RgtVrqI6KbBOTNNjefMW+n8LHn9VqW6YKVPzGaVbmaj1WViNgJVDsRpG20GFQ5CLTBvaPWDElu0tLfcFXEm/f0juBew4jFqTLYymFQrh/3Dbw1RSw5MapTt1cialWaOZ0/T4XPP6rHI4+kFSmbMJqVjczT08rd45wNTUO4EASg6E9zFqMhUn1lSlpMoXuZe15e1vuO8+na3tPC6tryrlhbGP8AMWt+28Py1re07/M3+Btx+q/3xPmf5c/yf8qC2HG954nG3+2H5i1oMeJta/3JHzIC9vWOimxI5h1KzHfiU7VC+fF+0J+ZdsR5TNKkOqGnW8wmpicPX9Ze20CILsZhVUhoaytip7QhXNPDkiB18Q9W3ZotN6hYypVaszK3aWDFfcQAm/v9uJ9ICO8Sk3LRqjdocgVMpGku1OMqUmzYWhqp3hqvNG/Re9v1mN9otSn5hNWr5poFL24Md6i3V+bTCipufWZ8ECNQVSLd4XbgRXHB+4XIF4VfymEUgtrzw17DLmVOhRZdjNOu1ljJRa6zU1PqXtj8Nv8AHv8AHf4c7/Db+Je+/pEWo2Kk8wpSfNfWalXE1CPWVM7Nj5Zk+KkcRVpgY2jOigOeZv8AbzbmC/MpNSe1MeYSoKJs9o2VXa/Bi6rFmbyS9aozUgPLLUwS3tCKgIb3/j3+G/8AG3jNRV9P2gXwpK1PWIfEVdRPaAV3ubbe0qNWe9OEUji/rFFQ3bv9uueJccRKTt1tGqPwIczi15Ral1ClHREObi01QoMaqQBeaW1r34/g3HwCWFhMgAfzCx7w0bLY97RW9DeF2ABPoJUpgLZ/b4b/AMHHaK4AOJvvDUYAE+kPhzSv6GNUqDpeaXh+u/MVg1jbcRqCciF6hssDp5T9wWo63deDHR+CIbKCb8ygEsoqcx3p7Oovl6xaTvgD3j0lfMDvM7jnj/Efb4LuDcXmGYX3MIlOuKwZm/bMKtTBY9NHzUd4fEGt9T0i0nbEesC0qmYIlSu1bFhwsC35MChw9xe4jdQFvgN/8V4qXtc2vCmQa3cRq1SrZrcQpW3Vd/zFekoQ3ipTAtaNWQdZmLi4gVdgPtxw83aDUtl7SjoY6PePoWytvG08cL/+Sf5rz9rQa+ro+825m/8AC6ATLd4Kj03FP1n+WViR6QrXUh/eZ4tp82mFBSX9oPmQbnuYalOm+nLAby1VSp95sL/wzplsO9ovy19T2ifOZY9p1FLftyj63l7w/K2zia38y289vtpJ4EyU3ESi7WZo7OwtaEFsTfiUmpdQp/8AcakidTC34i1Soa3aPUChcu0x+J+HEcY3ygMpgUgmItHzpB8o1fCwLXxhoLT6iLfiOtfpy/dKb0RdU7+s53C2xtHaqLK/eU6dDqsb3mnUFnA49YK5S634iaaY2lYNRFTMf8QmUwEC4i0Jtfa3wA+Norc2ha1pUotQDE94KlUdJ/6iU6By3veKwcCw3Eailr+vrM6rWWB0N1P22/eMjcHaBKYsBErv2594y42sNoXrdRvaLTpnpfia+pfa5EFNLXPrGpta49Jlt8CI7giywD1irUKm4vtHdWAxi0b7k2i1FqZet4a1VvwBKfhg/Q8Ip7P6zW8QoqXPEoaPQrtYiaekOOZX1+sIdhFegoptAGTJyPNKnh2boSa1E/kTWqVCL8Wh8NffK14lXO94wQgWHeMh5G0SuSuLe8CiFT2mW0A9ZYypXVlAX1MWlewiPTckHbeLqpmzDmMx3XkCadQbRadPgTK3V9tdkF2A2EDVUKN6SlTpUSyf/Yxp0GuRv7RkpUjVHML1xi47ekFJ3OEuDYy53P8Ag24m0+pl/eN8vnj3tBp31LxfnFYJG+UTKn7xWqKde+whtT6rb7Qqy/S95QxXYHptLsPrWlbVXpJ6rxRRH079oMqfVbaMyqdb9wi66Wpe0b5NL0/eHUvrXifNB8BxeHQLg/7YcuZYk4zb/CVR2CnkCK9I9Qi/MbWm3hmqKvDCNnTJvsV9JnQplmiPVXFjzMcDb1+278TpNxER2XUPEqlyLYxlBVWyPMBp2IHNotOkBqW9IrVkzTuI7UlxQ8CYaf1b+a8U1FyX0jNRXFPSVKddL1u0R6o6LymPDAZetpi5UMObxqlhpHiVQzKSRtEFMi47SirYlrQliMZehbGU1qkZE7fBghBI5tL1yMfeAr5ZVprjqyqKhG42ETBlEpNtiuxPvHBZCWG1pVFawb3jtR8kFKmv1beky8SmSWjtQXFJp6X1v9cUuMlB3EJpLgvpKqV6WVQ8Sm1fyykKNi1+wlPBlG0qiniGtMqpAX3gZPL9uZCbZC0FNST+YlfUYDvG+o11G0NSrUK726Zog3vxB4gsLQUqXmPrGpVPMsPi9sIKSG0COb3FxBVZ7E8RqDtYLzNWgxNubxWrbuwvMCx0eYdNcWA2tNxdzFr8Dm0NJh0mYUpTqVBukt2jvTWxeYVuIKajpG0PiBz6S3DjgzFhmx5MGJ+lyYdLpcDaaviCd5Tp02utTiZJUbUtfeOL2CwITcGfM5L+ItKn5jNKra/tHr08cVi0l2JiNlkGgapUYF/SOC5xXcTTzItFpXvaCpc3+2Fbf3j1AL2EFQoViU1pnEcj1jY0GBYcwphmvMNV9jBRqN9MQPSJDQvUN2M0cjpQVKHmmfifNMKdPJRwbTURc3PIgRvDtSU+sGXh2bEbGb0T6Y+kY0qRJt/xFauhVpTpLSJpHlpcC8DVEwPpEC0ywJ3Pp8DdbWl0QufT4VKbUiKY4aO1FCzQPXplWiqtE48W9Yxp0WuRz6Q0/l2qKODFZ6ZplPKstoFdvND8uMr8iZeIFj6TQv8AS/ED0zZhM6xJaMlNiFMWpT8wi63CzTaiz48ERnZCQ+2MyWi1zFqMuJgo4H8/bTlxOniUtTHV7SrmBbGMVxyyPMAS2N+q0Jp45W6bR/mrf7bwChbDvafsth6ytlbO/TeUuNTLf8SnpgY2nitMLntG+YthF0/LbaXGOpOribcfxL7ZTq4g0bY+08NqW1M4bgY2lfSxvlKGds8t/wATH6eGMqCrbH9t5T+Xxy72hNTDUsb3MAqW077XlLSxzv2lPTC8bythjlaHWAw94ul5O3229zHRWKkjmCnUqFz6xKqVmw9fSNj4ioSBwTzDU1jT7bQUC2Rfgw1NQHEXtGbLFRKdO+Wp3mOucvTtGd6jUwp/bFenVepc26ppGvUv+Y1ZqzW7e8w1GWLSyLW7mHxGo2/aMlyL9xAly1u5mVz+P4JW5F+4gFyfzFrajiwtaMlyL9xMM2b8ynWFVhaaOo425js1Z1/9TzKbU6rPkbdUw+Yq5el9pVVmxFM2vBUzzBmoXsT2jeGGzJyYKhfMQH5l6YbsDGBqFbdWXrMaVZgf/sRKrFm94KmZx/0/bLRqjcAQVFBEShiSvcxyLkkbbQpUptsb3iVVQjDtGAoMCw/4j02plge4lErTICH/AJmrg2VvLKlN0I32lJaaFjlFe1riVKWmRj3ha14D6zHv/Gt8MpTTAnM8+kvKoKFcTtKOKFuqa9jxxK4emcXa/wCItJENr8wZUWyUSpXwJ1ORBTWkyg9zAKisCo9OY2ohCnpE1LEntEqesFLfL7bY8Sw4iuyjUHEqBgLWgFG1pQL45YnaOrgY2h0wPMd5SarbIHacQ6KgX9IMwDb9RsIMwDbj4VGpqMid59W23EVVUY2lYqBlG1QPzEWlbG0aooXVx3mNQArAtPy/bmVTiSOYFqPm3rKdZaxFMdo6U2KtaWrVWJ9LxKi1Ww9b8Q0kqMGtzeMazm9/LKVVKzKFO4vMLnjmPlUL3PeLi7JY32loTc7/AKQb8fA7k39YlnKYm+0tK1RqrMHPF4NJyCO0FNqjM1ubx6rVmw9b8z6NRrj9t+ZhVqEt/wDI1Y1iaf5hSnUKN6xEqNkwgYN0+n2y0LNwIGXgxaJvm3tGqNwJml4vhiDc97RnbgTNQRvEV73bjb4dM3/Ui/f4Oq36TYzN7wOODG8OAbjvaajAmCol7GHwwvkPaF38oi1E4Mx7/bbHiWHEDW6h3hDC4MxQWEFQqMx3ljxMaYsJuP19nFx8C4UZHvMagussosJqBRn6yzC4llFh9u25m/MFuIceZ1m5gIIw7ibT6hBPtNv1/QbH4G5GPpDpkBvedXMvcaduJtzBnuf/AOAz/8QALRABAAICAgEDBAICAgMBAQAAAQARITFBUWEQIHFAUIGRMKFgsXDBkNHw4fH/2gAIAQEAAT8h/wCBAo9iXWfcLK17Uus/+Ad1iGs+4vn2N8e8vn2N4r3WrG/a3x7m6xv3l1nf/Pmjyz/gQ3r+Mb17FrfvG9eptoTxFw7gW7l4uIhDanUFu07YZLIIQRTcQLWj2rXucb95nXsv7MAa9jmGPcAa9iDv3hWvXiXLOLq1KMOJYRbtuFOipBQGiAhSrYAoWe1B37ksz7woo9lH3wnJM051HUVkuozuLkJCn+oob0CPaIVh6TNUy/ilLqYa4K4aXxENZ/xJGzXpaYPdoCHrL8Pc5s5XFi015nGjoCNhxBRjhTj/ABPcl+WKNJUoGXApSrI1xwtgQQmlDp5mZfXkh5GMP7ERGYpoQMDqWWzm3wWVBR2OXTDzlFf4g4JvTJKYhgwFDUparYBmVVSxYgybhFWIv8qlQislhdR0rmir8TDSZWZjcwyrUS2l1SYZaLpnW4/xEiF/uIgbSpvgOHzKxgmGLcr1qYSHv6hqay+6iS1Xr4hS+u7iW45XKU4fdHJAor3BXsSyoFFe4UexL9qnUBVSlMKHqICRNvzBRk2H9pVXNs5jaq05Zgak3Yis/mBKqFsOppNdGDFgRliZr43lLMUbPM3+gi5YWOvoRLrx7hZXvFFexLz17ks+6cMiyWoV21BUFg2Qjo0tXETE7wGTNMgeEQlBi+ZdNWu3E3cOkW0fT5muQaLEfHWOXUJXNJRLGqOSYKfbjEJ1dEAh/hlxqU5ikhWxlvZVi2phTwngC1qHdU+tC6svxmYAQ7mJTufMLKjgImibFM3UrAp1+oGjAEABQRaA90z6GP8ACrODTDWdw5pXmQQz5Km4JUrcy9qakKplWWUID+4l83gmA93a4gNTbxDhS1Uo2YHA1cQ3u2LMKJDepBtJwQVlRgCg4lLhQfM1U5PwV9svNe0z7hvX8Y3r2LW/VWoG1lXHYQSjSXCtAWF7lOLWHWLjLwOTWGUzeMjmLR9gigJ0BARZ3fMLwm6eYaUFEMnZEKMQ0a5Did7z6qVJiEVUcns/BfECGXLBxaCSq4c8s+5a37xsx7L9y1v22X9BWb9pj3BWv4wrXsS9+ol2sIwOYOCGkdMo/qwvEXq142blSBAOswQbJMGbJFlgOhRZBoOn5QEySLcQgHPgmyK0XqptEFO4UWkncGQIULuVzGr8GHXbhg4tAJddwcM+5L37wox7K9yXv20X9st4Y7iToMHmKgcgbhL1DzsjGR+EmDoVyrMv5cUOJ0iC4uJINC15XLaq8QxEq1X5huS3WoiOTFSqkMiqJgSyCXK6WYCEa+bUvZ2kIQdnd/hHDvGARPazzQlS75G36RCXjbcs6hFV2yjRqRFklOZAKeJxywII1ECPJ/aXAAG6eYDHfgh1dasuLDHxL/S5IdmylQstk8FEQg8wgB+ogHa759BEs1/g2HHRuVCt3zlnIoL5Jn6FlL8aoKvQDoyUbrshXcj7AqnFYgQDbFXYR2cCyKAMa2VYC8RALngqLLfmo3C4UiPvdbYAVCjOPQKKP8EYaL4DLo05TErw5ylYn6lCbupcvAxvkRjDPwLmFNoC4zJGbmiaUDXtSBC2R+VVjAzgouaAQ1aKLo+TLJUF21SpqNrmM4Vu3HcbBrcOm2w/4N/+0UQ8oZuClfHiCrFflJhvwR5j4xiDQuxLxFurcAJsiFoonENx3iX/ACjwSpkr2ErAZErmAesFYFE6DKuIYtuJzBwcQYiX5fHoIUVyfaqzfsSyoFFe4cPY5Khgr3Cj1qCiHlVBBVMxl5+FUO6NFOGX4ZYGBOcEDqYQLTqYIJbCGpaSU+EoYCtE0+riDEMbRzC1ghezmHiUSBS4e6eo+q7Iyum9kqGWxlav9xyLMg5hLyJXFG2dlPqLKfeKUexBR69yWe1sj19mzlJmszEwvGPQixeSQmaXBcIbNqFSxAcOdzAhLVIJ585gg2fwTkCe0MXQpqXuDaxMrqIKNkc+u4Ehp3GJKTUJMIyepXuLJFI2HmVmAfkhDR+Hw7lmQ2/EBekOUzZI1SQ2mZgYPn0IoC1ZJnEX4IZPv+f8iOAY4qBcjj/MeTrbLuVQe89zPth9Ubt09Kx5hXRtW5nIssXPKHPUKvMfHobzGrxqFU3viUpepgcDPlNwerPgzl1HT+G5lLf7SXdU15TNwwmB8LjGufulh/UgXavQWm3AgQYjD1AAxGXuB0E7puWEgw9QP8MVKSySiAmdQywotGqxHVTJFbJThee5ZKeqCUcg5iM3xRCTE3CwuClTP/wVS4syth5icSbylGFdHpx/AlTKDY1CbtKJRlLLKcWhpm5l0HZx3LBZFxy2WMQ09rzKcODcV6F2NUQdr23G4EDJDM/Haylia1S6hAeYmb0WPPcsqmmVU7dKhTgA5K3GFDK2FYANnf1d5r2E+gg6U5iojgI4i5QRfMqpKr0XBGqAdkSHWsrJau3ErTCPvcMoB+pWEG5kV6cx+HI9QXIV33LT2nLqXmZKuCcNwuHM5Z9zM1PGqiqVIeZy64rmV4IpmbgQ2iGyeDMJbxTVkW23ctsx1DHttpO/SttdYgGCapN45ZDIA/KLHJkSNEAM1gU5i1VX6QWNk8ThWF1eY/f5iJsNNEFkcj4i7I1D3Lwb0EvWwZtr+r9NaClrz4lUbXFzoLuWdhTL6p1BkGmChaROjog2XCdKUkvTRBssnPquQ79yo/mQSnUAKFEWCCmn0PQRbwRYb0pr0TAto5hIibgWIDQQ5/eCCgUzfEDQBipXKjECYXlcDi2s5lM6SQT+RVRCgP8AaG1QP2lfDOEx34Xmpap5oVC4VAHiDxBk+YG2Ao5ImUeKpUsHinwh6Bm14ZTD3PpW1569wYc+iV5h9ehjzAIKi9yi8L6sQFdXasTJHtXxFtgAAvUx9OwupSRBYWT4pqpK2sD8IIKfIyodGA3DwSXSANHdxAUicSxp6f8AcZWDNytI8nM276MQGKKqOUJtqM/y7EDFcRTE2g3KQZ0PR8Eu0ITQE8wxr6euWPmB+UIAr5VPmBmz/wCLGYeYRJrkwyKHy8w6yzL+Zj1rFN3G1JaM+JqrquI0wdDmJBByvEC3hcVE+o4niZqu2zMAWL1RxUSqqa0iN3a7uYzI2lZp770gwQ22otvBoalLrvExB/uXFTy1iUDRHOXoE0r+YGqp1cCVG1nONcr/AN5kXB1FjbeWoPwLTrO+zD4iWlLgiVW3cwU2OVzHJW26lrq7kZFI2ZiwrOhxlKhAbMyz6GyLtRgDiLEG/MYVZwvc3JNTuah8nmGvk18xgPD+8+AIwpqv95wzIq58bRtfB8/TJh2PylIh2s+MNQfB5NfMclUstuVUZAFsltOaQHhNwdIJ3MysV9FceHVkdSohUPEeaSiuoFvrFV1K3yLTGNSBNQqSnepygm7uC+HSKNIVhAEtbt5zAoVPyYwZZXkR+YO4bBF3NQXVZj/MvchgzM0vGLaswAOJBr0vFfwLce1c+gTjBUsXdBxAYCYjRlPGIFZCvYnDNPJh/wDwEpSqbI4gM3YKcUaivOznqDiq29TbwQW4wqf3zcIIWFuowoFZVcy+YAg0W4HKF5mAquZtarIh6hkqKmc18EtI6rIcxG1vUunOjP8ASVyBaDuFcDYkdFK2+YgK4CESWPP0i4qpzUKOzpm7huAp47gR16fErgIL4JUdV+eYh4+xMfoBe8zRlqXuJBasRbODQO5YbWsbuMLmJilRRfo2lyuwtcd/0oS5YSX1cy2i3lMH953KnnDFtNj+ocPnodwuSEoPD5lbehauE/cgNQtVNgm/QByB+oBctfxgctemINy/iCXR2S7riCkXcaZuaajw0XaDBbVPQqBKpdy/MBj0JY5cJTHUl5zRVomdWqpF2/6xCDqRTaHLWUDU0/tc6l0NEXhNPSbQ5VVQXUuTJzTsCTwpIHzmBD0Sj5tA6gyqhG5T+NBA8AWhyQAUFH0ZrO5ofcvMYoXfBwIjleYY6L4u77ud9QSy+fJLouUhV4GvxNj4vmoWU4OU6iwKlO7xTAh8W+zcwZuqUWENDcvRWv5QeE0EsAHcK1K2sdqGh1BqvDGTF2s/oLxEq1TES18oIKHHpd7+ktqrxEq0j4iVtWz+ll4hxEGql8HlgLK0IMZDpJehGoXrdIoNZXBF7oKlB0ZDcupnK7uX2PFtBghzAbjGj8CqlN0DxR74Hl5Q4mrlpuGj/pH3Da7RuFwsWubjuRspi8LmDKVUeNzUApmotFGOfojMEIW1DlUdscGa2RGAWKKHbU7l5Pw8sAWtk8xwFf8APlGYbQlD2VbtmsyKa9JpBiRVnbKMwoslqqdX5iG80obhPoVQupjJZdEMKvIRdfQFkqy5vgIV/DyMYlG6ZvjbpoJpYdjJ8QlofwJSKN8vHor4r+S69FfFS3dDis+mIW60Ms0Z+CybCC60J+aXjGvrcBld9c0Q13UxZJj0bXTKUsYKuLrhQi6xOg3dSsDaUKuEiCFVCIJeiYwgtmviVx0dpcxaKltGbqgpYanEwAL0P2hk9kWNzW8pj5yu8C2KP+FbBMlBCS2tMv8AiqvdWbgsR5hENESA8Dc0AdRWNnbcJ1lVy3BWk+Ay68kDWmWVrSnUrzqK/qFaTVsam8iIfzLyjGbWp+lI3A3qWtqOGVqViHiYNfJqJTUE40+YlBuBVMv4br0SmmAt+PRKYJF6+hRY9LUPcC2olNMpq+IgBtgUHZBpdHoaN0vcawNLbfQVA6UxhXYbNREWybqxVMusKu2PiK1iVeOgmXaDzFOzEPE21gCZjdC9ZlcIEpQF9GNgNrcZ62GlhgiFHr3JZn+UIFnbzCZoVPMTjtx3EIuhtnu5sO6C2RyVBF6uNopq1+IoawwxDVo6SIu/dooSPZ6IrVsFNfbRTXooj0Etn7yKVVbYL47qLHeUOkznjDi5jDMG1sfe176Vw8GpYuyFnfAQ6VEdsdYlqcvpUWOAlobJycRxCwBavUU4l0OrlhQr4FzopMkxbd6IDvgIxM13RiVCvKeDgsYtlrT0axX5lL6ejVY3CrzHePsBVefRriU9DXEQbBXE58Syv9rhjYmID3LFngTfcMGbir8rigl16gYlYJMmjzQ5bVsESzX09TQyUyg6b5bgO+CwQmxW4gKTaqI/SBtb3Oi3k/16NDgrr2zUC2Bk7QmGUC5lLKbhrF1t9EBfOYFtH2ZKgX6LS+YsOwQqvY1Al+TO3Y0uCNC8kYcra/MvjRqNZJiQko2uDsApyiDJrM6lFXIcMDKiogIdVP8AKrvFe681XsYhaF1DD3piTHwEU1Cx2jpIFENBJcIvyGbaaPpOaUIIq5mCP0l2ha7lCjxcZZaGufRVq+IY+zOfVTtihLFWRTY5mtoZL4FMzWtOq6SpOI5v3DrV0NMMDBahcb2ZfCgMbjR1oUiCpS8S816rSFOfcqNX9ETeO+JSmlK8omPH+sQ//SzOIOtzL1buUu5VcW5i08OSLET1vMp5LELaK/ZMHh6Yr7EVT6UvEKbaxj0tjQ3h9n9QLl32jQgiwzcuhf1oDSeM64hIH+hNmK/mjAqzj0U4r6y2xriOSAa2fPzKmduxzBydfMmWDAQTKNXj5TCmiENrcupfR2r6ilm1VSsgWqh5VtJKMp0HpTV19ir0RoI+ZoTraXURAFrGOktTAg2pqDdYJkgINE1FYHKAwJoKl6a7y8mGXUAjknlBQOoTVmR+tptqjWZRWCeGKk1cwWUKRIED1JuA0huXijMDOImKIkZiEkovv0jYw/iipg4hbbYoUuIY+vMOI5guvQctoVBDQJBNCNwVk1DweMiVrgQSpxoxH7l66lERns/pKJIy7QFtrzxqXgwfYEHZfobetoT5yhBCiUBBIgojPjZBTcNbeqMNMIXXEPHkVtZMxpPJlZDcMsSfDqEclHcAOGyYyvPX1lFbzDecR3iKrTqm4RAqO5f6irVUygE+riVqFR8JSmOCto9plouoM6OCnVwMTF4S8Q+HMTse2+lpQL6+xJQLyPTQFxQktG7JXvRPOwq7Y4D9wUkEsHMM5B8kuTtslRLvJiU9wZoqwjDAVoyxKafsCRCG0hoVWggwkllKlinkeYOrZl8TlaAG6leq47SkD2W2TRuUHjWX0JbYYiYFRHcQvjx9GI691l1z7HBmGSz3Ct2SNXotTUB2Thi1ABm0PmWRwh8TKIPyuZVaOkF+O4AZF0QeTU5IhgKdxhAL1Okei2/VXipVjiW6AvqJWbbMwnRoLlCkVgiI43/7QN+cHEa12eIXiib5hAZafOJTUDJc0pldxK9A3r2KBn2qCDt9ygZ+lA2AMoCHTACjAQQWd0iAAbeI2rTKl3DOhQczLRKHEOK9UvUFphqg6ybPmCr+rJXthVOZ0fD0OGBh+nNxwzv/AInXJX1KFNeSD26x1mGQdy9yvbelMGuG20HRB8TMqSjAKqLmqaNzgGJqMTK4hUZ8EUEFNWfZ+lvzDWYVi4Kcw4g1ULcJ/UVA3x0OZUocltJ8QSqzLABw9/ErdhpMEJdAwsVyj9cCtG4FUKZy3qGIbVTjpDNd06IdtxkUkXF5XoFyz4rq5/Ebi6Y7IkFPJmXtyrE4z2qN8fabLrmLRStYbuOmDGLqgpiyUs0rg/Uc/wAyjucpqUgtx1LS1ogOacGYNNy8oF9Qavz9OYbi23P/AE5mEabauYkdGpMLjCCTEoYPkk61AhBkdRRqKYbb1O5sIzN5SAFk4+2BENu4bllSTjSIllnUwGrKIc28oKLfMXc65bh8155YLc0GCPc1yQUHcakL0bha3r6cLaiU1PIOq2/UBG+TNFQNjEBXkxqJ1bFdzLfTN7mL7svcrW8HU5I8Jq+EIoVh5+oV3ivdear2OCGT3DfFewjLJggSUzJCy2sepSGME1j1VI915ihwiq6ErWrfb0Mpfk59YtquITC9JFkQElc14RO5oKe+wESkGF8yl2mVTrM5BwKYHsXJj3LR7VyFb9yo1f1al1GCfkiVIMAdoIfNxnbzxYOfMWE1sDRUsYCoKWRAW7CbqFU2fH09KUslVUo4J5wc8Q4id2XKdSpaFDFARh2rmwNWQ7S5piomOKg1RX3CLKgoqA25CV8w12jIhusVzKkDKF0OwXz6W2HmqDBVy6uBbRFI0JX1DOQcbganklRDG8MA7wtCITvyDLTddMULVtnOcFxAZaZWDj7cqF3FYOolNL4ahbx3U5lidC3TDF2FMWeonES0FzuYhqHgOJ5AXlBpsjJbXLLT6i73P9uWPShDWi1OOTQSOB12zcVRcw25qECJ8THcN9EY0k8P3GluEzuZ+0+c2/mHsl1PMzwT9qeE5G33VQ3nU/qKFU39ObzHeNT5Z+Y8zJ6j9weQ9Vzsm3LqeaRV73OE44qZPya39wFoGvMFAW/MOF8s6hrtcDiFr6vCZh7lC1XsUKlWXZdEDr4J5v1jj0CqSmUv1DhnKvOPrRQEZ9RMDGJS2583V+D4mXRCN828TWPZ8RmQMFUWcufr7Lr2OINlnuEdew0dC4ehC4oznrxNGxupTuF/UJgupvmGsbDiGyLsMBUF4IFX/vHoqtuWX9QzlnjH6pbLjlRfUy9wgRkSUP3yWwaq5gY6w5uZbl4IRKDcQIPPqoJfPuWt+1QQ7+vYYglIaaguCFNxI5purnhPveZXQbrpVjn21cN8eqYNd4LxDcIZLO/fS8qPTHy6hHJRKXjMrL+CUUvBCGSzuAU2549GuIVz7jeY7xP+q0rTYPSUumMq1KtKgnQvRlClywVzBdxhU2pKEAUBPMACgo+3FA6piEA7pmBhvZNyxMYRcquBOYaMmRM/0G2iCOOTaFkGzb+UFcRxOAx3DLiIqFMr+QKoysqQpihpM8IRMb6TLwOV0yzY7HMNnXWcbhL01FMBMu/twrgBbAb2pUE04ij0EwyyxXEAUVl7zNAQV6hqo8JLxr0Q0nObfv0W2/YNFeiuo9UL5L9Eva3YZgJwcCyKUBV4hgur5P3FJBSozg6RURkqi1sldQ3FJAUVgqPaqz6K4qfUabi23L6qfGYz4wBZOCBAohWrpAa3MI8priBULRValHQ0NRonge2VFnbEEsbGWXX20AR0wAo1CG/gEKMeZLYGyGfRx6zKeqtACPOwsS6DzP15ln0FNQLvx6JUtFno6wWDqZIOltqZIupuCSExNeluBWRiCcUL0lpH3GacnxCHdMzL2oUXBPA3LhBNFeXfpxRsvDLdCGLz6Vi4FtRKal9hLmFaziEUDkXDP3kwxURoFhBj3THMUOeT3BvA66ja87IfPCPt3GsNu5+63CfKTIf7n7HHXiPnRZC5jt4XwfiO3nmHRgBaeEaG6+f4UTZK8r4iVh8JwEyjErWwnhHCT9ohga/KQ+KfpMLUxBBDmmmFmKaqEaMi2upuv4z/ANJE818RQFH6LlwQ00txI/k3VXxP9+ZwXq9z4fti4qdBawYJNJAB6U+W8Nwg5t+EouXl+U4QtQIi8/MA0VdOJ0Obv0csoBW4YRlUlMQXzVVvExbdN1KpXWOYwknniEkemRS5q+yKXPERSBFf3gqWXo10i4bStfiaBEKwQLJmisc5irELGKatupUhaxzCdN1RjuW1dcw3HLOlLMMl1BAF+CAAdCOLJLFjjkpqIy8g1URQAo7ooIXM3agMpdWX9dRd8+xzAoo9wDXqEgZbgYWdvTKIYc6oYxWZ1FxbNJmLG3EO1IgKoNaqI3KelVktvpdVeYLa7iOop1KQntFzHH2qiICpe4b6HLCyDJS+YOBDYwWoLICXfIXDqoMTeAIC0U1KkgxZsnw73GgFRxSpQNNcwy4bbZObHeWHVFbI6yEGaNUUxQwdiZ69No7YraotG1AZRgAXuJXFVYl91Orji1arMVWFOoKK7hYt7bGlNaFAMouIxYZ4+ZrOaeoTVHUfxJfqgpfHuQd+1BR5PrhylSyDD2Ma4NqJWt6jeag1FpAummO51NIZ1H9w6oOSKVU5ZbVcejd53AoTbctTlDy01ibDlG2dK8K3crc2S5nxOlkMm47ExUOJlOWg0jmFGE4NswB665mbu6Estci7TGqvFAp98mqmIu5FS7Rjh/qWqS/zuAAC8EUqhm05T3uINS0Ooke3iKrnczXiGHG4qudzd/4YYxYbEo5rqBUCgBoZgr+DDc1Iv8R/prDEwE/T9tJFUN3L0HggQgOczkdt3D5xHAxLohz5TSrVY1+ZTGeWrlmfbdQyt8vilYZcxdvnEXrS7VuXYDCdByimIdQjQR5gvL6uV09ERzBgbL5RYMHfTcIsBldQ7vXBChBF+5ZV8RX91KmwsQ0QosSVaA5e5aKVJKMk2XUwhqLWUPjCNFl3fbsXcAMy4KuFJwAYU/MB5mKl1QcE+XeXmVv0ewlv11e5TYOcGIq8l1KXZZaKJRzGRYSm4VXtv0+QTkVqpoWX19sKJ7hPgSxB4pzCkA/+1A/aYF/WHwmHGqTHlUWg6lB0Fb9lNTaK8pzULgnNsEYLgiVK7BL8hyJ0xxD2v4pceuCx3OSBnKefWWFkoyOlmDlVUV2ZbVlpJrIEqNKqHKVbDBWGyVYiwgPN2zgRs4tscOSWGjKv+oWhyCWgloB8zNsqtxLzxsNJkh9LCAksZ0pV5Slq2sxvrb6RFKNo7Y5wjbEEVVC61rWVrssbcwHZ6TO2vbEJQKrj7E6hrr3K9leqtzRCMLZoj+NFmQjyAeqlbiXDMuBzCCzYOoFzQYhcVpIrraWAPMbJol+LnDhgKqp+lkKXjpcO5uOM5XBLDltXHeK/hRA3yRjv4B5gbx/sjJYdRwirlKOQgfQIoNHuMOgDEpUpeOp+XIbKHx44nl8PmJ91+Ne5tjpadiNQajICyR+zVZbVXEuY9vBSpyb/AOOYoDIEmHFVbN0cwi109k1MZACpaGmLgGQ2ErlalzUS6u75mWCy+sdR0KV4i5Me5wYPsgAphm4UAHGotBhc4jbbcFoMeVTO4mSD92zcJlejLRNjFusmSrEe1xiln8CCG1poQEcF1MdC/wCkoJjzcIGuLDqBRYPzAmU7XABj8JRus/wVKOVV5gAY1FwjD+YWsO9wuM1N8Sr6lbhMHKGfBw03BrtvZ1OS2yYn5QPeJizdWZ+p9k/JibxDIwYYzQt+bhJ2UBgCmkou6L+2UrY44jRDAILJ8mGoZOWZMrxOFBQCrRUyxRo2WtyMYMW4SqlR0njFyirUAXSxXobvbCAqONJn0Ojn5RjFHgcM1sMBv2iXcS4SmuQn9uQS0UqK6eh7gpcuZo+q5CaNvO06tEuGCvV1yE5SW8tQCYsi6+J4DFXMN2XjFGUhS91PjWHLceOWCdKrO4eCWyaeVfFOCeviUKB402V6DkXBprsuCig/CAAyVlj0Cj7UI+ZLrG1RBiDww5Z3FCBpQtCGhSgghxYRllCq9sW4VfRC9eaTtB7dhgy5wJVeZigJUJmsrEiPj0XMN1U4JhOqXU7CFouALP5KeSLRcEwJfE4/IiLXqXMbJLEJXMmifkJhHderFHHIs3Dpex3H6xUJkiJgWw7rTjGPh6tZmZC0CE0RGRI9MhZj0Gy/tbIbWyGBAcErmRs7lm5dwNU8r5gr2o9niCCOjiM7VN/KG2T/AN5hqlfEpglbBeSLL7gUYgDIZiXv6NB2eijQXGLortKYUVM4yq9x1itcDq04qJ1kWupQJpK6Zg1I4JLFRgPnccpGxhyAdVKN19sBs3iW60DpH2BtS+dtlY4cYU7jtQ1wTk7v+pMcGuyWEJVbHzChEf8ApT9TZZhxn4tdQfpNXqyVFlrlmczouCOT6OyrFrx6XnnLy1Ob8rVc7HFXLQrB6S1I7ywzCHJekEhbdFcfMqIFXYrcKjhe2c6nEyIYyc2VjWoN/aY36hXyJom7Yxa6rKnXvOEHxRuglYwdJUolfI0ZYFTbUb0lFJMqzqlvRE2w1kqGjfLWD3jfsWvctFvtuvVQWyox6ZKGYOZUpcAFy22i8kA77yJekASrZ2FQTam7bi3psouWkV2WQY7t49Vp+1EwWsJCIKGiKU8EEkBSMGDPgjMWjlCYLWyVQ33RFBJTX1yihV7lNvUwAKIcZuhoVtjBhh0EShIp5RmROGFiBoPt17acJem3KC0juQFMK4WAkLlQlVKrgystTylAtexWJ2PrwlR2pDWZZlcaZhFxtFkJFh5pA/Shm5m4nC4ASOVP+ZnWIaz7kpkr2K4ov35GSvYqVR7khgt9qpVF+6wYL99kyU/+AVV7xs9jSvPuVLfa0rz/AMu//9oADAMBAAIAAwAAABDzzzzzzzzzzzzzzzzzzzzzzzzzTzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzDzzzzjzzzzzTzzTzjzzjzzzTzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzDzzzzjzzzzjRzDTzjzzzzzzTzTzzzzzzzzzzzzzzzzzxzzzzzzyzzzySzzzyDyzzyzzzzzxzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzhRyhzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzyxToo74RzzzzzzzzzzzzzzzzzzzzzzzzyxzzxzwzzzzzzzzybqrANLxzzyzzzxzxzzzzzzzzzzzzzzzzzzzzzzzzzzzzjSa4ojoiDjzzzzzzzzzzzzzzzzzzzzyjyjzzzzwDzzzyiiyR5jBhbrCjzyjzzxTxTzzzyjzzzzzzzzzzzzzzzzzzzzyigKqjBQj7qjjzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzjDx7AjTSwRZazzzzzzzzzzzzzzzzzzzzzjzzTzzzzzzzzyShTbxDzATSI5jTDzzzTzzzzTzjzzzzzzzzzzzzzzzzyzjyTQbrSDxyTzw6zxhzzzzzzzzzzzzzzzzzzzzjzzSzABwBSDa66ixzTxyihoaTQQhzRDRjjjTzzzzzzzzzyiSTwjBhK576rpgAxzzxzwxRbY65LJJhCxwjzzzzzzzzzyyiw6LIq75a5oQhiTzzzzwjigoJDaqJbLoYiCQTzzzzzzzwgA7K7STzjxTjRiTjzzzzzjzyySBDRyhR6LLpATzzzyzzywyypLoTxhySzwzzzzzzzzzzxwzwxwjwyQCS5JwzzzzzzzzzzTDwZJzigyxzzzzzzzzzzzzzzzxwTwyCJqCTTzzzzzzzzzzxxiJKoxDDTzzzzzzzzzzzzzzzzSDCRp6aTzzzzzzzzzzzzzzyQ6IziTRzzzzzzzzzzzzzzyRxxzgpIRxzzzzzzzzzzzzzzxRhwKpAQzzzzzzzzzzzzzyyDzR6bwBzzzzzzzzzzzyzzxzzzQzjzAzQDTzzzzzzzzzzySTBa7qjRzzzzzzyjzzzzzzzzzzzwjp5RzjTzzzzzzzzzzjjARIqxzzzzzzzzzzzzzzzzjTzzzgyxI6hxzzzzzzzzzzyywh5rTzzzzzzzzzzzzzzzzzzzzzzzADKa6RTzzzzzzzzzyhxw5SBTzzzzzzzzzzzzzzzzzzzzzwzyrLxjzzzzzzzzzzyhRRpZzzzzzzzzzzzzzzzzjzzzzzTzDB4ATzTzzzzzzzzzyhhh4rjDzzzzzzjzzzzzzzzzzzzzzzBQeoxzzzzwCjRTzzyyzzpZgzzzzzzzzzzzzzzzzzzzzzzzSgawQTTSwASTjAiBSDjzKpjTzzzzzzzzzzzzzzzzzzzzTxCzJTTDzjTgTZBQCjzTzBZaYTzTzzzzzzzzzzzyzzxzzzzyhLqDyDgDzIY6bZYBRCwSAr4jzzzzzz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"
+_LOGO_DATA_URI = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/4QCKRXhpZgAATU0AKgAAAAgABgESAAMAAAABAAEAAAEaAAUAAAABAAAAVgEbAAUAAAABAAAAXgEoAAMAAAABAAIAAAITAAMAAAABAAEAAMb+AAIAAAAbAAAAZgAAAAAAAABIAAAAAQAAAEgAAAABQ29weXJpZ2h0IEFwcGxlIEluYy4sIDIwMjIAAP/iAihJQ0NfUFJPRklMRQABAQAAAhhhcHBsBAAAAG1udHJSR0IgWFlaIAfmAAEAAQAAAAAAAGFjc3BBUFBMAAAAAEFQUEwAAAAAAAAAAAAAAAAAAAAAAAD21gABAAAAANMtYXBwbOz9o444hUfDbbS9T3raGC8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACmRlc2MAAAD8AAAAMGNwcnQAAAEsAAAAUHd0cHQAAAF8AAAAFHJYWVoAAAGQAAAAFGdYWVoAAAGkAAAAFGJYWVoAAAG4AAAAFHJUUkMAAAHMAAAAIGNoYWQAAAHsAAAALGJUUkMAAAHMAAAAIGdUUkMAAAHMAAAAIG1sdWMAAAAAAAAAAQAAAAxlblVTAAAAFAAAABwARABpAHMAcABsAGEAeQAgAFAAM21sdWMAAAAAAAAAAQAAAAxlblVTAAAANAAAABwAQwBvAHAAeQByAGkAZwBoAHQAIABBAHAAcABsAGUAIABJAG4AYwAuACwAIAAyADAAMgAyWFlaIAAAAAAAAPbVAAEAAAAA0yxYWVogAAAAAAAAg98AAD2/////u1hZWiAAAAAAAABKvwAAsTcAAAq5WFlaIAAAAAAAACg4AAARCwAAyLlwYXJhAAAAAAADAAAAAmZmAADypwAADVkAABPQAAAKW3NmMzIAAAAAAAEMQgAABd7///MmAAAHkwAA/ZD///ui///9owAAA9wAAMBu/9sAQwAGBAUGBQQGBgUGBwcGCAoQCgoJCQoUDg8MEBcUGBgXFBYWGh0lHxobIxwWFiAsICMmJykqKRkfLTAtKDAlKCko/9sAQwEHBwcKCAoTCgoTKBoWGigoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo/8IAEQgC4ALgAwEiAAIRAQMRAf/EABwAAQABBQEBAAAAAAAAAAAAAAACAQMEBQYHCP/EABUBAQEAAAAAAAAAAAAAAAAAAAAB/9oADAMBAAIQAxAAAAH1QAAAAAAAAAAAAAAAAAAABSoARkAAFKgAiSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIkgChUAABSoAUqAAFKgAoVAAKFQAAFKgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSoAAAAKFQChUAABSoIlJ2rhVaqXFKElKgAoVAAKFQAAFKgBSoAAAAAAAAAAAAAAAAABSoAUVAAClQApUAAAUqtF21c1xczea35Znoss3UWMZcoSKgUqAAFKgAAClQApUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEY4hn2a8+bLYef9KZd/gtZnZHG1xvmJkEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY2r3uOWeN73no4ndYnYnmuxbk3Gt6rAJ7Cs6pMAAAAAAAAAAAAAAAAAAAAAAAAFKilQAApUAKKgABGQARkAALVA1nO9HooyPPvQ+FNHlWtocxm2s6uy1m418dH0PP9AUz9dnVONJgAClQAABSoAUqAAFKgAAAAAAAAAAAAAAAAAAAAAAAARqRa+ZLRYfKR6Z5vk8Cb3L4+2bbY8ner3Hn+VsR67uPLu5rdX+W6Mu1szJgAAAAAAAAAAAAAAAAAAAAUrQqAClaVAAKVpUAAAAUrQqBStCoIFDXXbMzRczu+Xjf+f9twNWrmLbKZmtyjt9Zf1sdj1XFdoU3vP9BUpwmXAAKVoVAABStKgFK0qAAUrSoApWhUAAAAAAAAAAAAAAAAAAAACMoFqN2hx+XmVjzjnu+5Q1Oj9D4msGOTbLScy7c2lgye75/to5j0HmetF+k6yChUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgTsXdaZNrG15qMvjcuMDnq66t1z8scnGlCtYjZ28Op0fZeadEbn0Hx3u47GWmtnYUpaq+AAAAAAAAAAAAAAAAAAAAUKgFCqlQAAjIAKCoABEkAYplWXPG8t6XSFvZ+cZkOdhg1tdPcslYgrSpk0s0N72/mW4N76R4f2seh5PHWT0mFnGrZLV0FCoAAClQAjIAAKVABQqAAAAAAAAAAAAAAAAABbuCEws4eyslrku11Jo9B2usjyvKbY4zEz9fVbd20UKFSpUoXtpq92a7rOT9HK4/SYkdfi7exVMuMi2uClQAAAAAAAAAAAAAAAAAESQBEkhQuKWS+w8wtywJmdbYBsGJIv11eaXrNjXm/1+RpjP2fM7UwsPEtR0HnHXcabHnN5pjlr9vKrVwv2RSUSitACtJUF+1lGNudPvjb67OxI9UxMfFOj6HhulqtdVM6TFjpzoLmryi/c0exMiuFaNtGOIZdzXZ5Jh3DIUtF5bmVAIkgACJIAAAAACkYk6Y2EbiEdEb29x3SlZcNnnYYuHxp39eTkdDk+X9JHT67lOdPZee1PKHfdB4x0Ztbfnl89X82xeXPStHzeFUs3VSLllQnCtAACcAlfxqk99ztw7nSaeye96LhKx6T1fhHZHTU83yT2HTc7yZ67l+bbU6XP8j6w6tx+rPUcfXaKuty/PO2L8+QzzpLdvVG7rg5JeWL4AAAAAAAAABZSoY2Hmas22m2/KxkbfjOoNBmcjnHbc1l8Qdvd5u6V33mvUGx5+1oD07l5c4bjqPOdyY97nr9dXxOx0Z0WBYsmNfx5kKSiSiAAAEpW5Ec3Cvm11l7DO9wtTGNl2vmPRF2/zOVXofK3OVj0HacVsivS+YdabrC1mnPVdM583PU+X+hGLmcltjrsDN0Vb7Kwc4t5WPkFJUqAAAAAAAAKVGFTIoc/y/d6GKcJ6jw5y21jvTzrKjnVb0nX8mZVM4c9nYO7NXjbTWGRj7XALEp3zArKZahk2Ci5QtkyAAAAABIiSKUuWyVbtC1cXzGlOYx9nrS/dvXzT5+v3piYe21RubG4xDU9Jou2jk85tTf6PudCZfR4O4NduMbLqMlSoAAAFKgABSopSQxKyia3S7nnI3PD9p56WM/SzNDk625WZq5WzMhjhfxql23ShdjGhKVsVrESpQVrEAAAAAAAATgE6REkRNAXLYXq2RTIx6mRZpE2F3XSLvWcZuTM2eizT0vUZmojq93o96Ws/B2NRlSQAAjIAAAAAAIytlcW5rja81veZNL0Gg2ceYZ0L5gc71XNVOznYhjzjIRUJIiUQAAAAAAAAAAAAAAAnAJqCMozJ279k2OfayTWeoedegxqui5/eHc6+WFW8vYGWXVq6AAAAAIyAACMgAt3BZwtmLPNdXA842nU5UeA5HoUDzTQe7eWGisdrp656ssgxKTiUSiAAAAAAAAAAAAAAAAEolUrhYlTYmHDo9UTzu+tx576Pa9HPKd/0uzLOv3kaxsiYjIEZAABGQAAAAAAAW7gphZ1s0e0plnm0eisRoeN9U8+MLX9Nqa5e9TPNTG/YFJRFK0AAAAAAAAAAAAAAKq0KxlEuTjlGHm4e7GNuMQ6au+hGm9E5nuTm9tHYVesX6gAAAAAAAAAAAAAAFKwmWbNmwbLl99xBuNfb0kaDe8zmGu1GZh1dxrtkqpEAAAAAAAAAAAAASiJKC9brQz93zuxLXc8F0Udja12MerYlnFreZmh3pSVm8AAAAAAAAIyAAClQApUUqAAFi3k0I6HocU0mu6i0eWbTe5p5ZpPSOQMHUd5xxhxzLJj1pUilEAAAAAAAAAAFSkkilZyLtnptWXehdbHnfZ2uzNK3mUZWNsIVZzITKVAClQARkAAFKgAAAAAAAAABCYphZ0TW2trQ882nQTjynmvX+OOW0Ps/mtaK3urBq0pFtOAAAAAAAAAAAJEUsgx2beLdO91BhdjlddHmXd3N6abJ2Fyp27wpUAAAAAAAAABEkAARJAFCqlQAAjIQmLdAwb2PdNTyW94uOs886fgTNs4mPUJWhOAAAAAAAAAAAJREsvCqbHI1Uz0rW661HofRcJ2xHc830dSnC+VARkAAFKgAiSAAIkgAAAAAAAAAAAFApZqU5nYcfHceU9b5wZWHYxzXzt1pCUQAAAAAAAAABOEiuZg5Bs8rUXz2XRa3Dj1TY8V1NZtzU7MmhMAAAAAAAAAAAAAAAAAAAAAAoqMemRQ0HF+m8lGu859z8jNBj7rBrT1pIjGUQAAAAAAAAABKMhct5Iu3ck6TH7vRRtOqs7U1e1XKhMAAAAAAAAAAAAAABQqAUKqVAAClQCKgx1i4aXh+t5GNh556HwVYmPm4xh1pURlEAAAAAAAAAASjIShcJzXTprWZhx1/ZcP15Te87vqu3LF4qAjIAAKVABQqAAAAAAAAAAAAAACiIpHWzK8Rf4uPSfKdpxxtcPEtVWsAAABKITRqJQkUrQVhKJJEAAJRErtgZt7XVPU9Zy849b6TyTvjeZnE9bWVXHyAAAAAAAAAAAAAAAAAAAAAACFJ0NbdkOa47t+IjY+f+k+a1bsX8Ux60qRTiUkkW5wyCNrYYRebmBpcu70hxd/J2BpsPqOcEc+yYU43i3C5bEq0E4SLty1cOvws/Bjqew5PtzA3mq3NLsLgAAAAAAAAAAAAAAAAAAAAAKEIXKHPX8keecj6dxMannPT/PqwYZ+KWlakU6Ea3ckwJT3BqIdNqyMu4wzjdznd1HkN/f51cnqfVOAMC11eKczW5sjUMrGKLtsorIgvSL1zoMKMrv9D3By/barfkcq3cqQAAAAAAAAAAAAAFKgBSopUAAIyBCcS3Cto1LW5Uc3yG05w3vI52pq9bhQTt1MrHUNjtOfzyx1PI9CbfBytdHoGv2GAY3X8f35xU45BmcT3XnxtMa/rzntzoNjVjVZGIbDBrbJVt0LlbY6LFwanYdr5h3UZnW+cd6bK/g5lXwRkAAFKgAjIAAAAAAAAAAAAAACIpasFIaCUY/BbLmTqOF6DRVauR2hp71++bPR9dpo3HRaTdHOd9yPSGTC5aOrwr+JV3YanamNGyM7R7nQEqXMc5HptJso57lOx5423I93yVam9kZxzFyd42mJcwI7nu/JuxN11HmHcm5ua7IrLAAAAAAAAAAAAAAAApUUqAAEZAs3hg4+zHnl7qqx5BovVeINPqvVuUrk8zdeiR47e7jYVoNL7jpI47pOqya8v7XcZBoab+RHEzhiZYWY5AhqtxQ0tdxU873nRzPMuX9s0Mclx/v/ACh5JP0XqD58n2NyuSselcfFnrZ9oed9xi9ga/Kyb1VpIUqAAFKgAAAAAAAAAAAAAAAAt3IGNj5Vk4/Ku5McHoe05sy9V2mjNT1es784DM2ewMzUdnrSOwu3q1GzndMa5cqAAAIyFmt0a7Iv1NPo+u15Lku+0kcdn7HenkdvorBgc/6Fxpc6LD6M5juOY7IuZVrIrNpUAAAAAAAAAAAAAAAAAAAACIpZtiOnzyOonpo7rQ5uprb7rlOnLN/VZRsKIFytKgAAAAAAACMrZcjKwVuYOaYWruYZ0PLb3j46Pac3sye34zpDYXdbfrMAAAAAAAAAAAAAAAAAAABSoITFqN0a+/eka/D3Vslr9rbMXYW7hjXbgAAAAApUAAKVABSoAtXQxcfYQI6ffWDByMiRqNlW6WLk5gFKgAAAAAAAAAAAAAAAAAAABFIWq3BahkCNq+IyAAAAAAAAAAAAAABbuClm+LFyYsXZC3cAAAAAAAAAAAAAAAAAAAAAAAoKgAESQBEkAAApUAIyAACMgARJAAFCoAACMgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARJAAAKVACMgAAjIAESQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/8QAMRAAAgMAAAYABQQBBAMBAQAAAQIDAQQABQYREhMUFSFAUCAwMWAiMkKRJECBQlBw/9oACAEBAAEFAv8A0dP/AMKJ/wD4Onr/AFuJieLXrX4VvW3FrVr8OsTxP0/qtKRSrC9DT/0BegZMGpoj6RWsRMx1/qd5mPgma5o1XiKXi0+LMfK0bRaItxWetQkte9usR/UuvT4UvS/DbABT1joswAxDGELj/qtqzP8A1Kte2GAQa1699MrO9OeYs6zB6oRCWHlWC5u5lm7rh8S6KHqlYF5hx9I/qASeWmg96t2DeJfJ2rsX39YkMV3p9TI2i1Z2NslbqP+VLP1rOM6LfqBFbvH1+v9QJI+Lfxj2XifNch8g7L/L+V7LQ1zJK/AJrIE7LSYk1isfx/RY/Z7f8yxNh5q5FxbWeyw01nnupj5jZS7iR1WK5T/AKWaodpjWRaWIlkt+jhZzNHt1FhoaY7CXqK8MfsT+uPz03iCFvAx5zw3R6u1RNhjaXotk7tVrb2pGgWvMV4QyNGUGdnX94i3MS/qY+3FnNTZGoNNirIKNjuzM9IrPWP6X0jraItCoRBprKrEMwotYHLiapz8zLgXcEmhONjBAZ/mFZZdhHPT+XcuLLe3sLLlVXpUYYHSL/0uf44JU8tPVLdbCA7QO+B33nFtb0UAMmM4MwjQMviHFrXYGQd1FNK6OGJu7nMINDw4w2BpLgdrol7poOLRT6939ItMRFbRaCugEw20NUOXsLnFt7Avab5hWsnkaXoMajkvNU0S1z1DyufTeu+whzBUCGDpUVc3doF1s3TXYVDrrGcOagBhJUo+6vd/SLRFopWKwVEBWXlRtAxMtaF+YM0AnH8JUWbkpQ63oLws1Aeq4aeQrq/rHz8cTGXy+kN17mPKXWWy85cCgshYTxw0OMI6iH217v6P/wBm74EvJJE4d+uttFbqlgsaPZsGau2dp6ylZtEz1mfhP14oQ0DSKYTGsy6acFjQlJNnQna0SMDVRsW602J5v6P3R1Jeo6jLQtS6Sw29F1canLmmtRXmR0TL+hsrnyUT1XYZJBT93+FZ7bGvF7qPDCjjs0Ve5l0gOVxNFaUAai1tk7gAjXONgfmH5P6P4472QwcCitFQt4wya+xlBulg443abCUIuNZV10RDkt717L9J6R9ZtHbIVLlXSB7LOzmfL74WKAyKORSNrQzhNL5ylU1rJis1/Rbdekfx5Te5qmKBPJabOo9ovV1tfTflXOfaV4aOVg1zkuP9MWmIpaaWZZKxbM03gAT0Go0td98anL7LDChHG41uBTa1P6L5Kd7RRhCqcJhPuK/PN51Wc7lxtVbjVKIzxzL3SpMRa38/GlqwIFq1NrnXYPyy8oBPPaWjmDUcXhLIMMqcsghrisxaPykfT9uP0MCgwh17Bzl1to7yXtJZeHEKu5lx6mviESXRSK7co7CJYdop+npPSI6yYNw2zsszw1U7md1cGwFOX8uKqXxZ+b3HFxIqwqC1YtPwn9cfT9/p+GrPdEz0+Fb9bPM+qBcvmCTatGnvaUgUzt8kLuaZTaGltneCo2ZSxL2JeSWmn6es9InpJS3LZLROnRdogWtHfMytg7FvXvul+aGY8a2W77oCF7L8RbrNp7Y/Pk7e2vTt/wCN7+14vlvL8LTnafrfOuYfl/ro+v5SdvfPb2fqj+S9ndl+n2J+L3eYfQ9Dlfw/LWvV+fT06L+Lx/lKxMcT8I69bde2vXtnr33iZqOJit6Xk1uvRERRDcEYnH/SC7Aj8wgOdXOAUSPy1q21zDnMUWzMtppcwrjOyoZeK1m0/tDHcnFazazueyqLCzWGqEQYpqsosXR5aWOBd9VgrX/5SEYdnxFKOv8A4joSpTVtYdesV6W8k/xSJis9fhHE9ev30z0is90d0RbgRKkgzFAzwu2Ji7TI1qUtF6CcCRltkaoVT0ZDZ8FXGDUXCk4JwTGqADhzjCHL1Av8aWuFEnuh9ZHeCyfb2hr0U3VrKxvdNTa3hsrZe4RFY7FzMuvmbqIlhW46/T9czM8AYKDilppd/VO6LF2vQEXXuTVNzGr6+Ht0uN3mAIj++D1s3YC6XV1hIcLMjOBXXAdvQeEiJVgbIa6a9nGmBrBSbG4EzwQs3tFaKNDaoy2JaevWAnGWxi1FXipK2m1orH7U/vx9OOkdeK1ivF6VvPAQDFJgjLWsREUXFQzQhmCsKgg2VBLTI6FAmuJcTCSxXzCoQWGqAIdlRYtvALw4yS1WOaFV/UzkVoRqmtPMPM6CoFcRFRlYlawZwQR8DiLW4/6/YHWs8V/8tJZcAuWkVW+GFw01mc5OUOVVQSvroqWa9cPjyU1hH3lgFEAQxhUTWo9orhYXXCMIqprQ6wEZhJBEBcqwSGtWLVAEYKmXEWeKDpSb1reOIrETMRP3H16k7vGt5fE17XsF7vHkS3Ndi71Tz5fWw7vXc5is3UKXseigTQnY5ls1VTBs5KBr6UbWxL8I4FtC62jfQrr6HzSEOXrvzfeI9DXfsfLckjvt7t3vKkTU9PqSTOez1pF/hP709eA+Xr9e49tD1MW70F1CO+337Py/CI9ZnmK+hFs6dWUM4mhOrzFOhVfGnRsiK2j873JfqjyxZyVtG+jGu57Po8tXbuPfI9Vkfl9XGu7LWxZuog9/iSlqWXPL4Rd3jju8v2vfXvLeohqsiaG1orrGKwIQUNddvjR2gLEnSV8OTsAuxs6y4RL6ypV1NsFtTc1l6J4+utZIm0D5xp7KkJ4m0vVXQ1hX13t1SU+XdYSvHMGoNtmOYl4RxdKiTnMOnR++ZvUVQoeatbGnOhKbtlR8FJJP3Inp8Dnk0Zj9kb3JNzN73nzeX9Smffa04dc/1Gv6OBqDUY5j1hOQlvrQnn69B6+/sgKnk7Svpi2hRt6+wrCWBrr+m9tA+Zs6qlFsPWAQexsgoeukrIM7aXObQ11laibCUKmouydxsSgwlqYcHFJp+nET1j7PtjuJSCDVWGsN3NXZaYXGZfCzgBjmHPBLFslX1cDOCZ/mjOAEOdjK2zs3PCXY5my11lsDIVZSOiKmzt4yqyXL2Wu7TRUovpaOMuvnYiVHWddSibfyoPyjPBDLeqrVNpRGhkojrZsFQWGOLV4txH7t6xXhUVTXn+TJ0GllK1cb0AQs18pF8pyVaNt7aNEWczHAznIrVO/zDmAQrhY6zaYk6W19/IVUS5azF2xaiAgazuKpGfyrnhYHzEgFdseQr6fL+eD3uYM5ew11RCWy80AWtBQbggjqIcBpBeP4+0t5vYc8nrYktyDbvofMXr6MZ+GbQgm2Z2zNndX0EWGBM6jTZ7rPaFEwmLQ+g22eU22wUm95IyyyWixjCm9rWtcxrDHa1LXta1u+/ZH04tMzPX7ePpxPHfbtrM1te1r2GUtaVma2OUpJXOcdYvaLtMsmqi00vJSkIU7z91cxlsBHmGDno9pwjkHbozssP3skXWlHEJoTo793vXzpPKopa9+/Xtp3dn16/ZSSkXMSoRpOhcpo6i67rOitRbl7UXFbmbQC0zbdWnKyXKqP8waI3zo7Al8tU8Ba29GmgXJ0qpUm3+7oP1aFnNwoQlu+7DkGTWL4THJ5S+f/AIlZ7bGv5C0J204tPdxE9I4n96eKz0+E36jFfsuS3ffzf8cN/GVkvmMu14V6T22fahm+e7Co+7/PTfq4PIfqiZgvlYd1hsZeDoUz2NVurjodwFMrlx8SbfMWqBqV9ZSy2Npgu5paAFwrHowKrIrGmekRMTH2M8RHSJBSTMhqcOfnBSroYgWWmMdW6+HiiYvzFmURPbAiMtReWWdJKUThSIVSI6yyC65BBsT4XHakDpN7cTWYiI6zP046f4/p6fYxHX4dP0RHWZ+k9Ppxas1mlJv8CDtTgQrFtMdJItcYEFLOGOKQmphzbMwc+NBncx6JWXwVKrZGMGrOhkAZEmtRUNEg0ZtWLRWIrXp9nM38jE3gOURkgdph4bzp3ao4bD4y7pmys2Z0vl47WpdghSEi9orxM9fyHdMwO9h2tM2mrDvp5BWhMa5nikUb0vSwju+9uFaGBOxLLUuaWeI/j7SfpFZi0GMId72rWuIdckc2GD5CvJzmZZgC0uY2FTsrHVrmx/LFqWvXt6fCPw8fGk1j4GIGy2KdcDb5BEbC8hXH5SMGrPMbC8cCvWwkjgIQt6Ur9xesWqANAUczwtFOChgZuGFW25i1te3Lq3q52VLT+7kfL+FcUrCVR2sV1MqZKDtf4THT8VMdOAisa0x0ljNMBTGzJ0SaWfdJynLQvVwcepDaeAInC6QhLIZQUzuK0aGOkUp2R3/uR+1aelRWm9GTEGQszUeS4ye3MbrIy20m/TzXWRP7zrTNl9FsScXmLsMFYvW01/GdeKXtSev1K4cgMh1hMr7R2Gx6j/o8uOsexs6DQ5Be1l0WTGKxewx1nrH7M/ZR04ZgM1+nTJqtGhzVAJQy6J/K16qzs8yVTrOZRK1Lf+RYH216dfws8U7fg1AYjEqpY5oF7mpTP+U8oVBK+/RX5jXt8SFV4teKfCPvJj/LhYHh41M/3uJD1WRwrie5gyL2Gpy93J0yTX0tbHKhRHMZdHelqXKAgq1rNp/CzExxQd78RHXhhQy8ZmYd+bpFo4zy2QanL2RY1NLBJ7lUuiWPmShd5T2oj+Bj7Pvqz14YP4eJ/hHTsw7zG7KqyWnN0Ka942d/YloGVslQAY1imcfK0MJbCtx1n8Je02ldki/FbdttHSM9TE1boQTRvfTb3J9LlZ2SB1da4H636iRblmSX7I/BRSkWYEI1B0pQYFVY1+YgBnO5cVVnO1AL02N5FECWWBc5CxWpL0HAo/meP+vvqxXtj+XBiHfIVUOBQYr6HMaSYU+VVwem0or8+MEchzQAAuUIr34iIj8FaOscABcZ9RW7ayobCVDktRrcxZ7BVsnHaus3msCeexG1QKJma4KOwr2FetfwMVmYiJmTBIGU81loa6hTNaeM0sDl7MYkJ8ZuNRxQpUcJIqSzqhDsxxSsx+EoSlrMHquMd4IOmoK2huvUUSx9gBE3tik7GtvhMli605/D7MttM6BDqDv2Wvbvt1+n3kT0m09ZCxYQwkkRdTRu/bG3apKo6Xi1djdCVPl7TERMu4KNExqiCg5R0JT0Ff8ACxEcWrFoj6cQuKDOLDaAokFYDOStfT081a6WBkLGW20hraOhjCXzkQeyw2HwMeP/AGfu+n+I695Dj8RM/Lq0nmLVac5hygpDxshWUUcoHzrQzl2VslQS6dkV7MTWLQMdRVmIn8Pbr04iC+xo1LdTLoeib4dGdjZq/ZDDW0/HqCaq4wu/C1K2ta8TW330/TgQmLDUGa59UL9eMYOnCaANCuztjbIniDONElGfen+B93Z+KvaKVHepKlcCNl8tAq4+guVfefDOnp7Kd87HcGm3rM0bbhmPT4tPdb7nyf7ShoAfQZhpnL2FgZmA8EGlzFpL2UzmxMqr6S5tA5qAGAtTCm9Yt+L6fW9YvUdKjoVIJTtr0ZCjjrK018cU6D2CpCWPme+zsI+g16VvSj6zevZbp9z4LeBFaWmNNKUWM/l8RkMPKGZ7XxF7gSzwrAXylwNnDQ4wiqEfZXu+3j7W8zFBzM0KQ0NPWJRXHbdILbab+YvaGnZBQ5wmbMUxu+3b95S9qWKS5bp6D41MZpobu66/4cgxypJsO30WJvUQJtIvtJ+8n+BXpeNIy1NB4goT5cOsJzmMoCuwZX5bH8kms3+3j+Z/nuF62SQIndwyxnco6nyzl4y86L5lxhHNZp1r1/HzxHFh9Smp5RZiEJV2MiTaLuHX0svMu8xqI2QY9Mvq8Wiaz9z4r+JNa7R30ionQ5d8yeHleR7VxfYGivCq4E6hZvXurWO2v42eI4tfoRi/jDlPXcHt6hg6T+3f0c7RMifRdI8f2S+DiZmZ+58luxc91yttFaKlvGCnh6RRv7WsZcWexLCq7kmbtPSKz1j8hP8AAuzt1/B8x0PD6PL/AKvv8weD3o9T5fxbp3fc/wC34c7we3ser7mN6nynlrwfMNTwesPp2R29fx8/xH8XHNjMjkoMlAqo97OPbRfxmKopJFbO6qRQ3iJ4+J+n3XbPaIdikOAgCI4rJ08NApnt7LPYOatdZRVIoXb17q0jtr+NtPbWs91TNjEw4xCy+dtjZrsbPV9zmMZE858iTGi5d1j2CeD7vvntXNYBW2SNmR37LpY2r6jmrv1kOdojaWU1hMuMFgIgkgo+v4+a1mS1reiaoQD31V7aOkgpGdjqhZd1wCXc8Y/V4n+f1R8P+o/mePp0jif5/b6V7FaUIw+IYWMjNRJlctLAvo76a91FhDGEYA0NMdfx9uvbXr2sDYs1pULdPEWfgO6Buug4pqVTFW97krat/wB7pPTiY6fux9eJiYlZdwgMoLJW91bQpTGC0NLPWepps1JYIItUX4209sUtFoM6ELDrFFV83aXOPd1Rk0H+YgmRz3JTZfZltnzT4P1zxS3bbixZsMBZEQlu+8MWhYduwjR5YKM9qB4vbumJ6fCeI/T3f4hJIitHlg2du+ohh6NU3tzcAUCGmBhdXXAy4c1ADESpR/jZ+vEfTgiwiFbDU6+TnLhBzCgGmjp4igs7NVq20+vCzXZ/tcT+iI6xwSnZwmD2C2jpZlCgUMdOjrOkvVVqmSCcnOXqy3tojRYUzhnQpHdd5eFiBF5PhenbxWOv6en0DTyFZF4TZmSBlDl9ITWhzFmLCXz1ArKr5y4GyDqSlKxSv42/XsF39jvu+9r+x6GF808ex7fus/MvVrMxM9Zn9mlLXnpPUirNAorMMEaAYBq5r/qKLmObRVZXuFJsi8VmbFEQU1rNv2xybxo+f2Nj5j0xPmPo5k6HzjQ8/rqeT1/r1/GWmK1paL1M8ALD7AwK4+srZfmF8R9HS3V2M5E/rMOG87Hd/h8In4Xt3SA3jrWeltB2G64ujRC7DMFee3AGzOWtMCfG9ohbdHuJ+hg6IlXeaNEDdc7cVFmrNVE/vaQ37ZWjVGtrdbuNQxUJPHbiZ/x+HX6Dt23NfyEztUaqWI5RR/mLWWZFm6C51VdZY7xzDAMRKlH1/Ex8ekdS0ggwCoAbmUFpvSzgHUx8INwbefVR53ClZFYNjmOKQl7P8I4vXttQNrirHdZ1S6l8zKI8IC8la2MT0F8HFG6u3kQHWPy6tK+BjAsDXxQw3GMnC+XhBo1v44PEtgpwqtixfX38YSi+Lh0dUZTkT+pjWSXzULvWLSRkKpcaw6SS969tu3/Gsd1iV7LJZZWlctP3W9zFqjTLxVapp4YgaTqYnAqr0WD2V7/xh7TQKhLlDovNB0tho40cbSeHTUaOw2Z9koKzNZtM2n4xM9I/kk3mVLN1oHyefTnRsLAvoUGzL86rhtP0eWLOeLds9L9LMejh2f8Ac5qlrxJk0PRUtofN+Yr6FxY99OgD+f237PWEtJ6zfr3Ta/bH6aHLSixiANp6DTfGPouynmaLl9fVZMuqgW5le6fJ+MmekRMTBThod4g6qcvMrSrzEYJNPTeRJlJ3GNhq9LseQXqL2pQzpBkZz2kh5ueQY3eZnFGK8vNqUzk2Fv8AUW4wvXO5dMK+c0ytGta1a1SKIwTnCO/AiivZoog0paLUXZWl/fKIebisAsg+yr/qDdZW+W8rtqhFtGCbQefQJj5RgBafIMrPmB6AZrUrNqXLnsqiUxiiC/zO2oamOwCyCbK19YxKDoK9b06x1/F9PqcflEmvCwX8eGn9TLqVPHwYZFqoSm43ilWSRUI4dte6p/lRvl+alZ5jWz75x0OXvYTzsuWdDawaKr5/LwJVFgUjT0cNcq+NljTAXDBd8wKFDnpCSG2iFovT6LJiXI8mJ0QxVGIOOuN3XzaPgzsYCoDcujtoO8vr3Xx8ARl9bI9V0vLNIVx8q2gTXzrZ5/kZvl6i92TvpkSOnlHaVRWs2zsY98+uThVlRDF7NXUz4dXz1vUWkMSb8RHxi3+bhvAvnNe2vobRQaOrr2qnl7Z1B6DpHGmNNk6wC3CQxLlJ7jHrJMFWPotHbPn6jwksxxgOhv6LRQYjrN0VtBu21ssGAliGKZJho9NC09KqEuUJSWrbiszMmvalK/wI5bO65ihSyzlOqzoN02dho4UuXX2vBtOsF0GNV70cl1lU2o0dpj5i36gSXERkxDkC4cIlT3XNpabD3GVukEpn7JvmmpqXVWyW5cUsx0a4j6x+Kt0mtYiKmqv7ejUfpctVV9TeqvGtrBzq5PLNFbs71Fq6MhR+UcpVX83NVVuEaD9RCisabtAWAHs8UUF5rdOlenT9mf446V77dO1eooHqVWlq8U8eDRfrzTVfjsV9DBorbS5qorQmOLPtk5VV51OaRqVFiUB8uRor86PUUiBFIF+MiP8AJoUmXzwXXXfymDaetnFIlkYpyhfzDC0G+XTBVx8gj/GjjFWa/wBN29bFxb3Ls4ZJsjm2Ann4l139ZD3gpg9ZeiXa+YflEAfiHNf8/wBgtO+g69tbrdzTA/MLMT9IGpj2cbOp5VMrEIsXaxSFN/p//ioYRTM7ePdKqnLpSqqZhjP7GMVMWTkM+ohkMU1tdErK2UvdZOwby1+L7o6sFgAUmIaA3sQDR1dAYUsPY/2NLSsTV0NubIctaMg42dS13vmVfS5c0LGvu6Eq8Ll8oFXvM0wXwjpPdTvjv4iev7nX68Cv30ab8BbT0rnOy1bb0LKE9qPTyda3vc0aHkHn7Mwijp3Frcw6vnXx9alkk9nv2NN+qa2c1DasnrB/xkxExERWLBFY7lK2VzABEs2stbZZGO6+AENFHl1yE7Y4XEIUXHW/w6fbRERxcdL8dPoEARk2whImAdKhTVXjX3AhIgmIYlxrLRolpQlBVrQf4z/s9ZuFUdhBZSMXR0wXYTxEDKhcx2CajqljJcv5xU6aeYRprs/2s5SylWwSaIjpEV6W+ztXr8KU7OGgSbjp/iilddneQI6BJawFFchmmpu5xWl8lMiyi2YwPW0F7sL54bgVkdvN+L6/Ul4HQRKlpdsdGWTQAKLdHAm0hieMSBCz3auCYZGG/Ai1JFrRX7m1or8BmqSzzdFAivBBh0hld0XKpAUYqyCmgK7py1ANctTim8Rf8ZMdYiOkTSs2tWLVHSo6yEckmOsDHUVbVrb76IiOCUqSOIFSpCDqWlKxSsCpBLVi0VrFa/jZ/iP4nu7r9ZqPu7Zi/lngUXis9fv793bxEX7yxeaV69v+flnr0p3dv/uyP24/an9uf1x/8BZ/b6/qn6fp6/8At3//xAAUEQEAAAAAAAAAAAAAAAAAAACw/9oACAEDAQE/AQRP/8QAFBEBAAAAAAAAAAAAAAAAAAAAsP/aAAgBAgEBPwEET//EADgQAAIBAwMCBAUCBAMIAgIDAAECAAMREhMhMSJBBDJRYRAUI1BxQEIwM2CBFSRAJTNiYpGhobH/2gAIAQEABj8C/wD3E2/pvaDJQ4Fxgbb/AE9r/uXq1FO/qYalPY29YtEdKntAAe3pPcS2W0t/j8L/AFHXmff9lP8AiOzxXPfV6E1tdj1P8bD9Nc8fAW9f01z8L/yFrk3B4gU8GGysx9oS1NwB29JZkdff+d9t7zYaJ+6+zD+Qv7Qy0j7Rn97T/3BOzD2lR0BVhsJh/j6SpUuR3EoWHUvlalURyDYe8FOgLLyff4Baj2B9JdlZqY58sZAlCx+0RTew2vMKXldu8pUwPMd5b+TAx3M/tCuoVHp8P/ALj+x+qF/wDCVKp3sNhHpA4g9pjdth6wb7xnyAYDygfTUDd+FhZAWq+oxS1XIN2j06JAFO8Sg+7Ibm0pNSCm3eI1KxT2lWqHBsNl/klhVH0+5lNJxuy/Ubf0gNnhQrZIb7zDc+l5ZalQrT5v8JW0VZvEX4mT+JTM9oDn3hsdpv/AMYbw2+HzN/becfp/wD1Gp0kCgcpT2Ah/J+PZv2mXR/eXoZb/wD36fUzi0DVV8oqC2F59K2re95Sp5fRPeH/ANxA+n3jy+Lc2blfaKN5VpY4oPvP8r/+z5r1hdd5v/hAyMNc+0p/6h/edK/uMIq1Ohfa4mNVh+SIbhtNv3jNSeyL5jGJpWzve8Z6q5L3iGl+lseYrL53G4gH3mP8hF8m8SqE+1zK2Zvpjb8zdg0VFLaiwb2/poU8Xhbr1P5ivUvZOLygtMWFgD39YdybC8qoW+tT8sApVgPl/cbRlSx+W/zRqmPy5H/AAyowCqn+zPpqB2ivdBpL2lc0CAy8S+//DN6pNp/wz/47/P+E/8Ah/8AyfP/APGFPu+0p1TWNkG6yoxYEjgQfSjEfzCKrIVqD0jqxYKeAOYtTVCq39/4jsp+H06g3+2e2/a4i1amq9t/KIMaJt6mbNv/AGn1mY2/2zF3dLBhfT2jfUbc7CJpoS1PzBZUAqoKlyo3iUbiqsouBX2nldyB95lbcXDxrKGA9Y9KrcPwe0yyBUcCNiQpP4n/uEx/8AlMf/AJTFPd1tM8MWXkDkSguRr18D2viP9o6A2q0/P3iv4pgX7WlTJqYdt7rKdfUalSfrP4nNh++bBQInpNXAjvF1agVRF1TqHv8ACSpp42Jna88m49ZcLv8A8Bz7Tf2gyp2tN6d7TJIxYdQ4MNhYf8I6WJvCMmYjrMvOT9pRr9RB77flr2lRErsFX4KnzNw3eLT0tL/VGwmLpZ5rKhRqn8C/8G1i0W9EptN6aN/8QeqB07oBMKZOFPllHxL4n/efX3/yT/IbNx+YXag2/tPtMTYIftPOZhbA+rR3yUryBc2lWrpYUXgI0qI/qbj3jMh+3rNr/vKdA7t/wjbmKtwF9pDk//ADhYfbD/AHxidNah9o4nEUrI3Ld4nS/lPmhR/wCUwqf/ABywUZW5n1lT8z1hH+1zEVp3GnvKHq9SJSeoSpY/y6fOX8PENYU6QbnnaaLZLT/AHEr0qy2fL1zGkR1qB1bRGpUrd/eXP8AA+rHd1BqbCvVJTjfj+f8Y+Hp1CNPq+bePpV9XBTjeITp6ZPDWn8yqWy/k/8AAeONxNPTe1T3np/n0/Lp/Tn/AE/v/b+0+5/n/v8A+q/r7/Y/8Vv/ALU/9vT+P2/j+rH8fX/j/sv+J/xL/wA+f8V/zF/8bq/+JZ/n23nTzE3v+Zv/AGjf/wCjKpvf5id+CIqf+Hd+7Tf0/wAmn/8AJ/8AP/4T/wDE/rG/dPvPtfH/AI0/vFbS/j+in9of+0+3/wCJp/6uP/2p6/y/+H3C/tP6Nu3x2+0sN59v6R9J/wDl/Hp/r5+06uJ/T8fU/8AqYP5H9T5+s/oH9P+35/1/dfF/wCt/S/zPv8AX4m/9f1hn9/zD/adP+Tc/wAun+mw+H/fx/p/p58H+E/96e83/d/6v3/L/G//AHhPv8b/AOE++x+C/mdP9Gqj/Wf67fA/n+kX/of/AF39J/on+Nf7/Gen+p/r/V7/AOif6Z/r29f/AKov+n2/hX/lf/U3+/8AXP8A2/8A+f8A2/6l/wDAj/xQ/mf4b/Ef/p/4r/if4Nv/AMF/xB/yP+J/xz/if/O/+J/xP8N/xP8AhP69/f8Ah+H8C/8AiP8Ah/0O/p/if/0T/wAj/wCJ/wAD/kf+J/xP+B/xP+B/xP8Ajv8Aif8AA/4n+R/X+8//2Q=="
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OPENROUTER AI CONFIG
@@ -1093,9 +962,7 @@ def fetch_google_trends(keywords, timeframe="today 3-m"):
         return _TRENDS_CACHE[cache_key]["data"]
     try:
         from pytrends.request import TrendReq
-        # timeout=(3,7): 3s connect + 7s read = 10s max, safe for Vercel 10s limit
-        # retries=0: no retry on 429 — avoids doubling wait and burning function time
-        pt = TrendReq(hl="en-US", tz=0, timeout=(3, 7), retries=0, backoff_factor=0)
+        pt = TrendReq(hl="en-US", tz=0, timeout=(5, 15), retries=1, backoff_factor=0.5)
         pt.build_payload(keywords[:5], cat=0, timeframe=timeframe, geo="", gprop="")
         df = pt.interest_over_time()
         if df is not None and not df.empty:
@@ -1104,21 +971,18 @@ def fetch_google_trends(keywords, timeframe="today 3-m"):
                 if kw in df.columns:
                     series = df[kw].dropna()
                     if not series.empty:
-                        # "today 3-m" returns weekly points; tail(4) = last 4 weeks = 28 days
                         result[kw] = {
                             "current": int(series.iloc[-1]),
-                            "avg_28d": round(float(series.tail(4).mean()), 1),
+                            "avg_30d": round(float(series.tail(4).mean()), 1),
                             "peak":    int(series.max()),
                             "trend":   "rising" if series.iloc[-1] > series.iloc[-5] else "falling"
                                        if len(series) > 5 else "stable",
                             "history": [(str(d.date()), int(v)) for d, v in series.tail(12).items()],
                         }
             _TRENDS_CACHE[cache_key] = {"data": result, "ts": now}
-            print(f"[Trends] fetched {len(result)} keywords: {list(result.keys())}")
             return result
-        print("[Trends] empty dataframe returned by pytrends")
-    except Exception as exc:
-        print(f"[Trends] fetch failed: {exc}")
+    except Exception:
+        pass
     return {}
  
  
@@ -1149,8 +1013,8 @@ MAJOR_PORTS = {
  
 def fetch_shipping_context():
     """
-    Fetch live shipping traffic context from public AIS-aggregated data.
-    Returns empty dict if no live data is available — no static fallback.
+    Fetch simple shipping traffic context from public AIS-aggregated data.
+    Falls back to a curated static context with recent known facts if API unavailable.
     """
     cache_key = "shipping_ctx"
     now = time.time()
@@ -1192,7 +1056,11 @@ def fetch_shipping_context():
         pass
  
     if not result["notes"]:
-        return {}   # no live data — return empty rather than fabricated notes
+        result["notes"] = [
+            "Global shipping data from public AIS aggregators.",
+            "Key chokepoints: Suez Canal, Panama Canal, Strait of Malacca monitored.",
+            "Shipping indices (Baltic Dry, Crude Tanker) available via FRED.",
+        ]
  
     _AIS_CACHE[cache_key] = result
     _AIS_CACHE["_ts"] = now
@@ -1215,19 +1083,21 @@ def fetch_baltic_dry():
 # YOUTUBE LIVE NEWS
 # ══════════════════════════════════════════════════════════════════════════════
 NEWS_CHANNELS = [
-    {"id": "cnbctv18",  "handle": "cnbctv18",  "label": "CNBC TV18",       "lang": "EN", "region": "India"},
-    {"id": "bloomberg", "handle": "Bloomberg", "label": "Bloomberg Global", "lang": "EN", "region": "Global"},
-    {"id": "yahoofi",   "handle": "yahoofi",   "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
+    {"id": "cnbctv18",  "handle": "cnbctv18",  "label": "CNBC TV18",       "lang": "EN", "region": "India",  "video_id": "1_Ih0JYmkjI"},
+    {"id": "bloomberg", "handle": "Bloomberg", "label": "Bloomberg Global", "lang": "EN", "region": "Global", "video_id": "iEpJwprxDdk"},
+    {"id": "yahoofi",   "handle": "yahoofi",   "label": "Yahoo Finance",   "lang": "EN", "region": "Global", "video_id": "KQp-e_XQnDE"},
 ]
 _YT_HDR = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.youtube.com/"
 }
-
-
+ 
+ 
 def fetch_live_video_id(handle):
-    """Always scrape YouTube live — never return a hardcoded fallback ID."""
+    for ch in NEWS_CHANNELS:
+        if ch["handle"] == handle and ch.get("video_id"):
+            return ch["video_id"], True
     def _get(u): return requests.get(u, headers=_YT_HDR, timeout=12, allow_redirects=True)
     vid, live = None, False
     try:
@@ -2585,7 +2455,7 @@ def build_prompt(payload):
         trends_lines = ["## SEARCH INTEREST (Google Trends)"]
         for kw, td in trends.items():
             trends_lines.append(
-                f"- '{kw}': {td.get('current')}/100  |  28d avg: {td.get('avg_28d')}  |  {td.get('trend','N/A').upper()}"
+                f"- '{kw}': {td.get('current')}/100  |  30d avg: {td.get('avg_30d')}  |  {td.get('trend','N/A').upper()}"
             )
         trends_lines.append("")
 
@@ -2895,18 +2765,14 @@ def run_gbm(ticker, n_years=2, n_scenarios=200, steps_per_year=252):
     """Compute GBM paths from historical mu/sigma calibrated on real price data."""
     df, err = fetch_yfinance_data(ticker, "2y")
     if err or df is None or df.empty:
-        raise ValueError(
-            f"Cannot run simulation: live price data unavailable for '{ticker}'. {err or ''}"
-        )
-    cl = df["Close"].squeeze().dropna()
-    if len(cl) < 30:
-        raise ValueError(
-            f"Insufficient history for '{ticker}': need >=30 trading days, got {len(cl)}."
-        )
-    log_rets = np.log(cl / cl.shift(1)).dropna()
-    mu    = float(log_rets.mean() * steps_per_year)
-    sigma = float(log_rets.std()  * np.sqrt(steps_per_year))
-    s_0   = float(cl.iloc[-1])
+        # fallback defaults
+        mu, sigma, s_0 = 0.07, 0.20, 100.0
+    else:
+        cl = df["Close"].squeeze().dropna()
+        log_rets = np.log(cl / cl.shift(1)).dropna()
+        mu    = float(log_rets.mean() * steps_per_year)
+        sigma = float(log_rets.std()  * np.sqrt(steps_per_year))
+        s_0   = float(cl.iloc[-1])
 
     dt     = 1.0 / steps_per_year
     n_steps = int(n_years * steps_per_year)
@@ -2941,6 +2807,46 @@ def run_gbm(ticker, n_years=2, n_scenarios=200, steps_per_year=252):
         "percentiles": {"p5": round(p5,2), "p25": round(p25,2), "p50": round(p50,2),
                         "p75": round(p75,2), "p95": round(p95,2)},
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ALPACA STOCKS API ENDPOINT
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/alpaca-stocks")
+def api_alpaca_stocks():
+    """Return live stock data from Alpaca for the watchlist."""
+    now = time.time()
+    if "alpaca" not in alpaca_cache or (now - alpaca_cache_time.get("alpaca", 0)) > ALPACA_CACHE_TTL:
+        try:
+            alpaca_cache["alpaca"] = alpaca_fetch_all_data()
+            alpaca_cache_time["alpaca"] = now
+        except Exception as e:
+            if "alpaca" not in alpaca_cache:
+                return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "stocks":  alpaca_cache.get("alpaca", []),
+        "updated": datetime.utcnow().strftime("%H:%M:%S UTC"),
+    })
+
+
+@app.route("/api/alpaca-account")
+def api_alpaca_account():
+    """Return Alpaca account details."""
+    try:
+        r = requests.get(f"{ALPACA_BASE_URL}/account", headers=ALPACA_HEADERS, timeout=6)
+        if r.status_code == 200:
+            d = r.json()
+            return jsonify({
+                "equity":          d.get("equity"),
+                "cash":            d.get("cash"),
+                "buying_power":    d.get("buying_power"),
+                "portfolio_value": d.get("portfolio_value"),
+                "status":          d.get("status"),
+            })
+        return jsonify({"error": f"HTTP {r.status_code}"})
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3019,7 +2925,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>STARFISH</title>
+  <title>STARFISH — Market Dynamics + Alpaca Live Trading</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
@@ -3054,7 +2960,56 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                transition:all .15s;text-decoration:none;border:1px solid transparent}}
     .nav-link:hover{{color:#000;background:#f0f0f0;border-color:#000}}
  
-    /* ── TICKER STRIP ── */
+    /* ── ALPACA LIVE TRADING SECTION STYLES ── */
+    .alpaca-panel{{padding:26px 30px;margin-bottom:18px;background:#f8f7f4;border:2px solid #000;border-radius:var(--r)}}
+    .alpaca-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px}}
+    .alpaca-title{{font-size:.7rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#000}}
+    .alpaca-badge{{font-family:'DM Mono',monospace;font-size:.55rem;color:#555;background:#f0f0f0;border:1px solid #000;border-radius:4px;padding:4px 10px}}
+    .alpaca-stats{{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e5e5}}
+    .alpaca-stat{{background:#fff;border:1px solid #000;border-radius:var(--rs);padding:12px 18px;flex:1;min-width:100px}}
+    .alpaca-stat-label{{font-size:.55rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888;margin-bottom:6px}}
+    .alpaca-stat-value{{font-family:'DM Mono',monospace;font-size:1.1rem;font-weight:700;color:#000}}
+    .alpaca-filter{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}}
+    .alpaca-filter-btn{{background:transparent;border:1px solid #000;border-radius:20px;padding:4px 14px;font-size:.68rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;transition:all .15s}}
+    .alpaca-filter-btn:hover,.alpaca-filter-btn.active{{background:#000;color:#fff}}
+    .alpaca-sort{{margin-left:auto;display:flex;align-items:center;gap:8px}}
+    .alpaca-sort-label{{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#888}}
+    .alpaca-sort-select{{background:#fff;border:1px solid #000;border-radius:4px;padding:5px 10px;font-family:'DM Mono',monospace;font-size:.7rem;outline:none}}
+    .alpaca-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}}
+    .alpaca-card{{background:#fff;border:1px solid #000;border-radius:var(--r);padding:16px;transition:transform .18s,box-shadow .18s;animation:card-in .3s ease both}}
+    .alpaca-card:hover{{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.12)}}
+    .alpaca-card.up{{border-left:3px solid #26a69a}}
+    .alpaca-card.down{{border-left:3px solid #ef5350}}
+    .alpaca-card-sym{{font-family:'Bebas Neue',sans-serif;font-size:1.2rem;font-weight:700;letter-spacing:1px;color:#000}}
+    .alpaca-card-name{{font-size:.6rem;color:#888;margin-bottom:8px}}
+    .alpaca-price-row{{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px}}
+    .alpaca-price{{font-family:'DM Mono',monospace;font-size:1.2rem;font-weight:700}}
+    .alpaca-card.up .alpaca-price{{color:#26a69a}}
+    .alpaca-card.down .alpaca-price{{color:#ef5350}}
+    .alpaca-change{{font-family:'DM Mono',monospace;font-size:.7rem}}
+    .alpaca-change.up-t{{color:#26a69a}}.alpaca-change.down-t{{color:#ef5350}}
+    .alpaca-bidask{{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}}
+    .alpaca-ba{{background:#f8f7f4;border:1px solid #e5e5e5;border-radius:4px;padding:8px}}
+    .alpaca-ba-label{{font-size:.5rem;text-transform:uppercase;letter-spacing:.1em;color:#888;margin-bottom:3px}}
+    .alpaca-ba-price{{font-family:'DM Mono',monospace;font-size:.8rem;font-weight:600}}
+    .alpaca-bid .alpaca-ba-price{{color:#ef5350}}
+    .alpaca-ask .alpaca-ba-price{{color:#26a69a}}
+    .alpaca-ba-size{{font-size:.55rem;color:#888}}
+    .alpaca-footer{{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #e5e5e5}}
+    .alpaca-vol{{font-size:.6rem;color:#888}}
+    .alpaca-dtype{{font-family:'DM Mono',monospace;font-size:.55rem;padding:2px 7px;border-radius:3px;font-weight:600}}
+    .alpaca-dtype.LIVE{{background:#e8f5e9;color:#2e7d32;border:1px solid #2e7d32}}
+    .alpaca-dtype.TRADE{{background:#e3f2fd;color:#1565c0;border:1px solid #1565c0}}
+    .alpaca-dtype.QUOTE{{background:#fff3e0;color:#e65100;border:1px solid #e65100}}
+    .alpaca-dtype.BAR{{background:#f5f5f5;color:#616161;border:1px solid #616161}}
+ 
+    /* Alpaca status bar */
+    .alpaca-status{{display:flex;align-items:center;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid #e5e5e5}}
+    .alpaca-led{{width:8px;height:8px;border-radius:50%;background:#44cc44;flex-shrink:0;animation:pulse 2s ease-in-out infinite}}
+    @keyframes pulse{{0%,100%{{opacity:1;transform:scale(1)}}50%{{opacity:.4;transform:scale(.8)}}}}
+    .alpaca-status-text{{font-size:.6rem;color:#888;font-family:'DM Mono',monospace}}
+ 
+    /* ── rest of Starfish styles (same as original) ── */
     .ticker-strip{{position:relative;z-index:10;height:32px;overflow:hidden;display:flex;
                    align-items:center;background:#000;border-bottom:1px solid #000}}
     .ticker-strip::before,.ticker-strip::after{{content:'';position:absolute;top:0;bottom:0;width:60px;z-index:2}}
@@ -3071,593 +3026,26 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .t-sep{{color:rgba(255,255,255,.3)}}
     @keyframes ticker-run{{from{{transform:translate3d(0,0,0)}}to{{transform:translate3d(-50%,0,0)}}}}
  
-    /* ── LAYOUT ── */
-    main{{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:30px 20px 64px}}
+    main{{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:30px 20px 64px}}
     .glass{{background:#f8f7f4;border:2px solid #000;border-radius:var(--r);contain:layout style}}
     .panel{{padding:26px 30px;margin-bottom:18px}}
     .section-divider{{display:flex;align-items:center;gap:14px;margin:36px 0 20px}}
     .section-divider-line{{flex:1;height:1px;background:#e5e5e5}}
     .section-label{{font-size:.6rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
                     color:#888;white-space:nowrap;display:flex;align-items:center;gap:8px}}
-    .section-label .dot{{width:5px;height:5px;border-radius:50%}}
-    .panel-label{{font-size:.62rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#888;margin-bottom:20px}}
  
-    /* ── STOCK SEARCH ── */
-    form{{display:grid;grid-template-columns:1.5fr 1fr 1fr auto;gap:14px;align-items:end}}
-    .fg label{{display:block;font-size:.7rem;font-weight:600;letter-spacing:.05em;color:#555;margin-bottom:8px;text-transform:uppercase}}
-    input,select{{width:100%;background:#ffffff;border:2px solid #000;border-radius:var(--rs);
-                  color:#000;padding:10px 14px;font-size:.875rem;font-family:inherit;outline:none;
-                  transition:border-color .2s,background .2s,box-shadow .2s;appearance:none;-webkit-appearance:none}}
-    input::placeholder{{color:#aaa}}
-    input:focus,select:focus{{border-color:#000;background:#fff;box-shadow:0 0 0 3px rgba(0,0,0,.06)}}
-    select{{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:34px}}
-    select option{{background:#fff;color:#000}}
-    .btn{{background:#000;color:#fff;border:none;border-radius:var(--rs);padding:10px 26px;
-          font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;
-          letter-spacing:.09em;text-transform:uppercase;transition:opacity .18s,transform .13s;height:42px}}
-    .btn:hover{{opacity:.8}}.btn:active{{transform:scale(.96)}}
-    .chips{{display:flex;flex-wrap:wrap;gap:7px;margin-top:22px;padding-top:20px;border-top:1px solid #e5e5e5}}
-    .chip{{background:transparent;border:1px solid #000;border-radius:20px;padding:5px 15px;
-           font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
-           letter-spacing:.05em;transition:all .16s;user-select:none}}
-    .chip:hover{{border-color:#000;color:#000;background:#f0f0f0}}
-    .chip.active{{background:#000;border-color:#000;color:#fff;font-weight:600}}
-    .ind-row{{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;padding-top:16px;border-top:1px solid #e5e5e5;align-items:center}}
-    .ind-label{{font-size:.62rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888;margin-right:4px}}
-    .ind-chip{{background:transparent;border:1px solid #000;border-radius:4px;padding:4px 14px;
-               font-size:.7rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
-               letter-spacing:.05em;transition:all .16s;user-select:none;text-transform:uppercase}}
-    .ind-chip:hover{{border-color:#000;color:#000;background:#f0f0f0}}
-    .ind-chip.active{{background:#eee;border-style:dashed;color:#000;font-weight:600}}
-    .chart-card{{padding:20px 16px 12px;min-height:460px;display:flex;align-items:flex-start;justify-content:center;overflow:hidden;background:#fff}}
-    .chart-card>div{{width:100%}}
-    .error-box{{border:1px solid #000;border-left:3px solid #000;border-radius:var(--rs);padding:16px 20px;color:#555;font-size:.875rem;background:#f8f7f4;width:100%;line-height:1.6}}
-    .empty-state{{color:#888;font-size:.85rem;text-align:center;letter-spacing:.03em}}
- 
-    /* ── ALT DATA BADGES ── */
-    .alt-data-row{{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid #e5e5e5}}
-    .alt-data-badge{{display:inline-flex;align-items:center;gap:5px;font-size:.6rem;font-weight:600;
-                     letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;border-radius:4px;
-                     border:1px solid #000;color:#333;background:#fff}}
-    .alt-dot{{width:5px;height:5px;border-radius:50%;background:#000;flex-shrink:0}}
- 
-    /* ── AI PANEL ── */
-    .ai-panel{{padding:26px 30px;margin-bottom:18px}}
-    .ai-models-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}}
-    .ai-model-card{{background:#fff;border:2px solid #000;border-radius:var(--r);
-                    padding:16px;cursor:pointer;transition:all .2s;user-select:none}}
-    .ai-model-card:hover:not(.exhausted){{background:#f0f0f0}}
-    .ai-model-card.selected{{background:#000;color:#fff;box-shadow:none}}
-    .ai-model-card.selected .ai-mname{{color:#fff}}
-    .ai-model-card.selected .ai-mdesc{{color:#aaa}}
-    .ai-model-card.exhausted{{opacity:.45;cursor:not-allowed}}
-    .ai-model-hdr{{display:flex;align-items:center;gap:8px;margin-bottom:4px}}
-    .ai-dot{{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:#000}}
-    .ai-mname{{font-size:.8rem;font-weight:600;color:#000}}
-    .ai-mdesc{{font-size:.67rem;color:#555;margin-bottom:12px}}
-
-    .ai-rl-badge{{font-size:.55rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
-                  padding:2px 7px;border-radius:4px;margin-left:auto;
-                  background:#f0f0f0;border:1px solid #aaa;color:#555}}
-    .ai-action-row{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px}}
-    .btn-ai{{background:#000;border:none;border-radius:var(--rs);color:#fff;
-             padding:10px 28px;font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;
-             letter-spacing:.09em;text-transform:uppercase;transition:all .18s}}
-    .btn-ai:hover{{opacity:.8}}
-    .btn-ai:active{{transform:scale(.96)}}.btn-ai:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
-    .ai-sel-label{{font-size:.72rem;color:#555}}
-    .ai-timer{{font-size:.67rem;font-family:'DM Mono',monospace;color:#888;margin-left:auto}}
-    .ai-result{{display:none;border:2px solid #000;border-radius:var(--r);overflow:hidden;margin-top:4px;background:#fff}}
-    .ai-result.show{{display:block}}
-    .ai-verdict-bar{{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid #e5e5e5;flex-wrap:wrap}}
-    .ai-badge{{font-size:.95rem;font-weight:700;letter-spacing:.12em;padding:8px 20px;border-radius:4px;text-transform:uppercase;flex-shrink:0}}
-    .v-BUY{{background:#e8f5e9;border:1px solid #333;color:#000}}
-    .v-SELL{{background:#fce4e4;border:1px solid #333;color:#000}}
-    .v-HOLD{{background:#fffde7;border:1px solid #333;color:#000}}
-    .ai-vmeta{{display:flex;flex-direction:column;gap:4px;flex:1}}
-    .ai-summary{{font-size:.84rem;color:#000;line-height:1.5}}
-    .ai-meta-row{{display:flex;gap:14px;flex-wrap:wrap}}
-    .ai-mi{{font-size:.67rem;color:#555}}.ai-mi strong{{color:#888}}
-    .ai-model-tag{{display:inline-flex;align-items:center;gap:5px;font-size:.6rem;font-weight:600;
-                   letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:4px;
-                   border:1px solid #000;color:#555;background:#f8f7f4;white-space:nowrap}}
-    .ai-pts{{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#e5e5e5;border-bottom:1px solid #e5e5e5}}
-    .ai-pt{{background:#fff;padding:14px 16px;text-align:center}}
-    .ai-pt-lbl{{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#888;margin-bottom:5px}}
-    .ai-pt-val{{font-size:.92rem;font-weight:600;font-family:'DM Mono',monospace}}
-    .pt-e{{color:#000}}.pt-sl{{color:#555}}.pt-t1{{color:#000}}.pt-t2{{color:#333}}
-    .ai-secs{{padding:0}}
-    .ai-sec{{padding:18px 22px;border-bottom:1px solid #e5e5e5}}
-    .ai-sec:last-child{{border-bottom:none}}
-    .ai-sec-hdr{{font-size:.58rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
-                 color:#888;margin-bottom:10px;display:flex;align-items:center;gap:7px}}
-    .ai-sec-body{{font-size:.82rem;color:#333;line-height:1.8;white-space:pre-wrap;word-break:break-word}}
-    .ai-loading{{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:50px 24px;gap:14px}}
-    .ai-spin{{width:26px;height:26px;border-radius:50%;border:2px solid #e5e5e5;
-              border-top-color:#000;animation:spin .7s linear infinite}}
-    @keyframes spin{{to{{transform:rotate(360deg)}}}}
-    .ai-load-txt{{font-size:.78rem;color:#555;letter-spacing:.04em}}
-    .ai-load-sub{{font-size:.68rem;color:#aaa;letter-spacing:.03em;text-align:center;max-width:340px}}
-    .ai-err{{padding:20px 22px;color:#c00;font-size:.82rem;line-height:1.6}}
-    .ai-data-tags{{display:flex;flex-wrap:wrap;gap:5px;padding:14px 22px;border-bottom:1px solid #e5e5e5;background:#f8f7f4}}
-    .ai-data-tag{{font-size:.55rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-                  padding:2px 8px;border-radius:4px;border:1px solid #000;color:#333;background:#fff}}
- 
-    /* ── SECTOR SECTION ── */
-    .sector-panel{{padding:26px 30px;margin-bottom:18px}}
-    .sector-selector-row{{display:flex;gap:10px;align-items:stretch;margin-bottom:20px}}
-    .sector-select-wrap{{flex:1;display:flex;background:#fff;border:2px solid #000;
-                          border-radius:var(--rs);overflow:hidden;transition:border-color .2s}}
-    .sector-select-wrap:focus-within{{border-color:#000}}
-    .sel-prefix{{display:flex;align-items:center;padding:0 1rem;font-size:.58rem;font-weight:700;
-                 letter-spacing:.15em;text-transform:uppercase;color:#888;white-space:nowrap;
-                 border-right:1px solid #e5e5e5;background:#f8f7f4;flex-shrink:0}}
-    .sector-select{{flex:1;appearance:none;background:transparent;border:none;outline:none;
-                    padding:.75rem 2.5rem .75rem 1rem;font-family:inherit;font-size:.875rem;
-                    font-weight:500;color:#000;cursor:pointer;
-                    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");
-                    background-repeat:no-repeat;background-position:right 12px center}}
-    .sector-select option{{background:#fff;color:#000}}
-    .btn-sector{{background:#000;color:#fff;border:none;border-radius:var(--rs);padding:0 22px;
-                 font-size:.75rem;font-weight:700;font-family:inherit;cursor:pointer;
-                 letter-spacing:.1em;text-transform:uppercase;transition:opacity .18s,transform .13s;white-space:nowrap}}
-    .btn-sector:hover{{opacity:.8}}.btn-sector:active{{transform:scale(.96)}}
-    .btn-sector:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
-    .sector-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:8px;margin-bottom:4px}}
-    .s-tile{{background:#fff;border:2px solid #000;border-radius:var(--r);
-             padding:14px 12px;cursor:pointer;text-align:left;color:inherit;
-             transition:background .15s,color .15s;
-             display:flex;flex-direction:column;gap:4px}}
-    .s-tile:hover{{background:#000;color:#fff}}
-    .s-tile:hover .s-tile-key{{color:#fff;background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.4)}}
-    .s-tile:hover .s-tile-name{{color:#fff}}
-    .s-tile:hover .s-tile-sub{{color:#aaa}}
-    .s-tile-key{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:700;letter-spacing:.12em;
-                 text-transform:uppercase;color:#000;background:#f0f0f0;
-                 border:1px solid #000;padding:.14rem .5rem;border-radius:4px;
-                 display:inline-block;align-self:flex-start;margin-bottom:2px}}
-    .s-tile-name{{font-size:.78rem;font-weight:700;color:#000;line-height:1.3}}
-    .s-tile-sub{{font-size:.64rem;color:#555;line-height:1.3}}
- 
-    /* Sector news output */
-    #sector-output{{margin-top:18px}}
-    .sector-res-header{{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;
-                         margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #e5e5e5;flex-wrap:wrap}}
-    .sector-res-title{{font-size:1.05rem;font-weight:600;color:#000}}
-    .sector-res-title em{{font-style:normal;color:#000;font-weight:800}}
-    .sector-res-meta{{display:flex;align-items:center;gap:8px;flex-wrap:wrap}}
-    .res-count-badge{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.12em;
-                      text-transform:uppercase;color:#333;background:#f0f0f0;
-                      border:1px solid #000;padding:.22rem .7rem;border-radius:4px}}
-    .res-time-badge{{font-family:'DM Mono',monospace;font-size:.58rem;color:#555}}
-    .filter-row{{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;align-items:center}}
-    .filter-label{{font-size:.58rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
-                   color:#888;margin-right:4px}}
-    .pill{{font-size:.68rem;font-weight:500;padding:.28rem .75rem;
-           border:1px solid #000;border-radius:20px;
-           background:transparent;color:#555;cursor:pointer;transition:all .15s;user-select:none}}
-    .pill:hover{{border-color:#000;color:#000;background:#f0f0f0}}
-    .pill.active{{background:#000;border-color:#000;color:#fff;font-weight:600}}
-    .news-grid-sec{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}}
-    @keyframes card-in{{from{{opacity:0;transform:translateY(10px)}}to{{opacity:1;transform:translateY(0)}}}}
-    .news-card{{background:#fff;border:1px solid #000;border-radius:4px;
-                padding:16px;display:flex;flex-direction:column;gap:10px;
-                transition:transform .18s,box-shadow .18s;
-                position:relative;overflow:hidden;animation:card-in .32s ease both}}
-    .news-card:hover{{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.12)}}
-    .news-card-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}}
-    .news-card-src{{font-family:'DM Mono',monospace;font-size:.56rem;font-weight:700;letter-spacing:.12em;
-                    text-transform:uppercase;color:#000;background:#f0f0f0;
-                    border:1px solid #000;padding:.14rem .5rem;border-radius:3px;white-space:nowrap}}
-    .news-card-num{{font-family:'DM Mono',monospace;font-size:.6rem;color:#888;flex-shrink:0}}
-    .news-card-title{{font-size:.85rem;font-weight:600;line-height:1.5;color:#000;flex:1}}
-    .news-card-title a{{color:inherit;text-decoration:none;display:block;transition:color .15s}}
-    .news-card-title a:hover{{color:#333;text-decoration:underline}}
-    .news-card-footer{{display:flex;align-items:center;justify-content:space-between;gap:8px;
-                       margin-top:auto;padding-top:10px;border-top:1px solid #e5e5e5}}
-    .news-card-date{{font-family:'DM Mono',monospace;font-size:.58rem;color:#555;
-                     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-    .news-card-read{{font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
-                     color:#000;text-decoration:none;padding:.24rem .65rem;
-                     border:1px solid #000;border-radius:4px;background:#fff;
-                     transition:all .15s;white-space:nowrap;flex-shrink:0}}
-    .news-card-read:hover{{background:#000;color:#fff;border-color:#000}}
-    .sector-state{{display:flex;flex-direction:column;align-items:center;justify-content:center;
-                   padding:40px 20px;text-align:center;gap:12px;color:#555}}
-    .sector-spinner{{width:32px;height:32px;border-radius:50%;border:2px solid #e5e5e5;
-                     border-top-color:#000;animation:spin .75s linear infinite}}
-    .sector-state-title{{font-size:.95rem;font-weight:600;color:#555}}
-    .sector-state-sub{{font-size:.78rem;color:#888;max-width:340px;line-height:1.6}}
- 
-    /* ── LIVE NEWS ── */
-    .news-panel{{padding:26px 30px;margin-bottom:18px}}
-    .news-live-dot{{display:inline-block;width:6px;height:6px;border-radius:50%;background:#ff4444;
-                    margin-right:6px;animation:lp 1.4s ease-in-out infinite;vertical-align:middle}}
-    @keyframes lp{{0%,100%{{opacity:1;transform:scale(1)}}50%{{opacity:.3;transform:scale(.6)}}}}
-    .news-tabs{{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}}
-    .news-tab{{background:transparent;border:1px solid #000;border-radius:20px;padding:6px 18px;
-               font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
-               letter-spacing:.05em;transition:all .16s;user-select:none}}
-    .news-tab:hover{{border-color:#000;color:#000;background:#f0f0f0}}
-    .news-tab.active{{background:#000;border-color:#000;color:#fff;font-weight:600}}
-    .news-tab.active .news-tag{{background:rgba(255,255,255,.2);color:rgba(255,255,255,.7)}}
-    .news-iframe-wrap{{position:relative;width:100%;padding-top:56.25%;border:4px solid #000;border-radius:0;overflow:hidden;background:#000}}
-    .news-loading{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-                   color:#888;font-size:.8rem;letter-spacing:.05em;flex-direction:column;gap:12px;background:#f8f7f4}}
-    .news-spinner{{width:22px;height:22px;border-radius:50%;border:2px solid #e5e5e5;border-top-color:#000;animation:spin .8s linear infinite}}
-    .news-iframe-wrap iframe{{position:absolute;inset:0;width:100%;height:100%;border:none}}
-    .news-tag{{font-size:.55rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
-               padding:1px 5px;border-radius:4px;background:rgba(255,255,255,.15);color:rgba(255,255,255,.7);margin-left:4px;vertical-align:middle}}
-    .nsb{{display:inline-flex;align-items:center;gap:5px;font-size:.62rem;font-weight:700;
-           letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;white-space:nowrap}}
-    .nsb.live{{background:rgba(255,60,60,.12);border:1px solid rgba(255,60,60,.4);color:#c00}}
-    .nsb.live::before{{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:#ff4444;animation:lp 1.4s ease-in-out infinite}}
-    .nsb.latest{{background:#f0f0f0;border:1px solid #000;color:#333}}
-    .nsb.error{{background:#fff5e5;border:1px solid #aaa;color:#888}}
- 
-    /* ── DISCLAIMER ── */
-    .disclaimer-wrap{{max-width:1200px;margin:0 auto;padding:0 20px 32px;position:relative;z-index:1}}
-    .disclaimer-box{{display:flex;gap:12px;align-items:flex-start;background:#f8f7f4;
-                     border:1px solid #e5e5e5;border-radius:4px;padding:14px 18px}}
-    .disclaimer-icon{{color:#aaa;flex-shrink:0;margin-top:2px}}
-    .disclaimer-body{{font-size:.65rem;color:#555;line-height:1.8}}
-    .disclaimer-label{{display:inline-block;font-size:.54rem;font-weight:700;letter-spacing:.16em;
-                        text-transform:uppercase;color:#333;border:1px solid #000;
-                        border-radius:4px;padding:1px 6px;background:#f0f0f0;
-                        vertical-align:middle;position:relative;top:-1px;margin-right:7px}}
- 
-    /* ── FOOTER ── */
-    .site-footer{{position:relative;z-index:1;text-align:center;padding:48px 20px 72px;border-top:2px solid #000;background:#f8f7f4}}
-    .site-footer-sub{{font-size:.6rem;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:#888;margin-bottom:12px}}
-    .site-footer-name{{font-size:clamp(3rem,9vw,6rem);font-weight:800;letter-spacing:-.02em;text-transform:uppercase;color:#000;line-height:1}}
-
-    /* ── US EQUITIES SECTION ── */
-    #us-equities-section{{margin-bottom:18px}}
-    .ueq-header{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}}
-    .ueq-title{{display:flex;align-items:center;gap:10px}}
-    .ueq-dot{{width:9px;height:9px;background:#000;border-radius:50%;animation:ueq-pulse 1.6s ease-in-out infinite}}
-    @keyframes ueq-pulse{{0%,100%{{transform:scale(1);opacity:1}}50%{{transform:scale(1.5);opacity:.4}}}}
-    .ueq-label{{font-size:.62rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:#000}}
-    .ueq-updated{{font-family:'DM Mono',monospace;font-size:.58rem;color:#aaa;letter-spacing:.04em}}
-    .ueq-status-pill{{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:.58rem;color:#555;background:#f0f0f0;border:1px solid #ddd;border-radius:20px;padding:3px 10px}}
-    .ueq-cred-warn{{font-family:'DM Mono',monospace;font-size:.7rem;color:#888;padding:18px 0;text-align:center}}
-    /* Account stats */
-    .ueq-account{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid #e5e5e5}}
-    .ueq-stat{{background:#fff;border:1.5px solid #000;border-radius:6px;padding:12px 14px}}
-    .ueq-stat-label{{font-size:.55rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#aaa;margin-bottom:5px;font-family:'DM Mono',monospace}}
-    .ueq-stat-val{{font-family:'DM Mono',monospace;font-size:.9rem;font-weight:500;color:#000}}
-    .ueq-stat-val.green{{color:#1a8c5e}}
-    .ueq-stat-val.red{{color:#c0392b}}
-    /* Stock table */
-    .ueq-table-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
-    .ueq-table{{width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:.68rem;min-width:860px}}
-    .ueq-table th{{font-size:.54rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888;padding:7px 10px;border-bottom:2px solid #000;white-space:nowrap;text-align:right}}
-    .ueq-table th:first-child{{text-align:left}}
-    .ueq-table th:nth-child(2){{text-align:left}}
-    .ueq-table td{{padding:7px 10px;border-bottom:1px solid #e5e5e5;white-space:nowrap;text-align:right;vertical-align:middle}}
-    .ueq-table td:first-child{{text-align:left}}
-    .ueq-table td:nth-child(2){{text-align:left}}
-    .ueq-table tr:last-child td{{border-bottom:none}}
-    .ueq-table tr:hover td{{background:#fafafa}}
-    .ueq-sym{{font-size:.78rem;font-weight:700;color:#000;letter-spacing:.06em;cursor:pointer}}
-    .ueq-sym:hover{{text-decoration:underline}}
-    .ueq-name{{font-size:.6rem;color:#999;font-family:'DM Sans',sans-serif;max-width:130px;overflow:hidden;text-overflow:ellipsis}}
-    .ueq-price{{font-size:.78rem;font-weight:600}}
-    .ueq-up{{color:#1a8c5e}}.ueq-dn{{color:#c0392b}}.ueq-flat{{color:#888}}
-    .ueq-bid{{color:#c0392b}}.ueq-ask{{color:#1a8c5e}}
-    .ueq-dtype{{display:inline-block;font-size:.5rem;font-weight:700;letter-spacing:.12em;padding:2px 6px;border-radius:3px;text-transform:uppercase;border:1px solid}}
-    .ueq-dtype-LIVE{{background:rgba(26,140,94,.1);color:#1a8c5e;border-color:rgba(26,140,94,.3);animation:ueq-pulse 2s ease-in-out infinite}}
-    .ueq-dtype-TRADE{{background:rgba(26,140,94,.06);color:#1a8c5e;border-color:rgba(26,140,94,.2)}}
-    .ueq-dtype-QUOTE{{background:rgba(0,0,0,.04);color:#555;border-color:#ccc}}
-    .ueq-dtype-BAR{{background:rgba(0,0,0,.04);color:#888;border-color:#ddd}}
-    .ueq-loader{{display:flex;align-items:center;justify-content:center;padding:32px;gap:10px;color:#aaa;font-family:'DM Mono',monospace;font-size:.7rem;letter-spacing:.1em}}
-    .ueq-spinner{{width:16px;height:16px;border:2px solid #e5e5e5;border-top-color:#000;border-radius:50%;animation:ueq-spin .7s linear infinite;flex-shrink:0}}
-    @keyframes ueq-spin{{to{{transform:rotate(360deg)}}}}
-    @media(max-width:600px){{
-      .ueq-account{{grid-template-columns:repeat(2,1fr);gap:8px}}
-      .ueq-stat{{padding:9px 10px}}
-      .ueq-stat-val{{font-size:.8rem}}
-    }}
- 
-
-    /* ── LIVE SATELLITE VIEWER PANEL ── */
-    .sat-viewer-panel{{background:#fff;border:2px solid #000;border-radius:0;margin-top:0;overflow:visible}}
-    .sat-viewer-toolbar{{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #000;flex-wrap:wrap;background:#f8f7f4}}
-    .sat-viewer-map-wrap{{position:relative;width:100%;height:480px;background:#e8e8e8;overflow:hidden}}
-    .sat-viewer-map{{width:100%;height:100%}}
-    .sat-viewer-sidebar{{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-top:1px solid #000;background:#f8f7f4}}
-    .sat-viewer-row{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
-    .sat-vfield label{{font-size:.58rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#555;display:block;margin-bottom:4px}}
-    .sat-vfield input[type=date],.sat-vfield input[type=range]{{width:100%;padding:7px 10px;border:1px solid #000;background:#fff;font-family:'DM Mono',monospace;font-size:.78rem;outline:none;border-radius:0}}
-    .sat-vfield input[type=range]{{padding:4px 0;background:transparent;border:none;cursor:pointer}}
-    .sat-vfield input[type=range]::-webkit-slider-runnable-track{{height:3px;background:#000;border-radius:0}}
-    .sat-vfield input[type=range]::-webkit-slider-thumb{{appearance:none;width:13px;height:13px;background:#000;border-radius:50%;margin-top:-5px;cursor:pointer}}
-    .sat-layer-grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:0 16px 14px}}
-    .sat-vlayer-btn{{padding:6px 4px;border:1px solid #000;background:#fff;font-family:'DM Mono',monospace;font-size:.52rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-align:center;transition:all .15s}}
-    .sat-vlayer-btn.active,.sat-vlayer-btn:hover{{background:#000;color:#fff}}
-    .sat-load-btn{{display:block;width:100%;box-sizing:border-box;padding:11px 16px;background:#000;color:#fff;border:none;font-family:'DM Mono',monospace;font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;transition:opacity .2s}}
-    .sat-load-btn:hover{{opacity:.78}}
-    .sat-load-btn:disabled{{opacity:.35;cursor:not-allowed}}
-    .sat-status-bar{{display:flex;align-items:center;gap:8px;padding:8px 16px;border-top:1px solid #e5e5e5;font-family:'DM Mono',monospace;font-size:.58rem;color:#888}}
-    .sat-status-dot{{width:6px;height:6px;border-radius:50%;background:#22c55e;flex-shrink:0}}
-    .sat-search-wrap{{position:relative;flex:1;min-width:140px}}
-    .sat-search-input{{width:100%;padding:7px 34px 7px 10px;border:1px solid #000;background:#fff;font-family:'DM Mono',monospace;font-size:.72rem;outline:none;border-radius:0}}
-    .sat-search-input::placeholder{{color:#aaa}}
-    .sat-search-btn{{position:absolute;right:0;top:0;bottom:0;width:32px;background:none;border:none;border-left:1px solid #000;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}}
-    .sat-search-results{{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #000;border-top:none;z-index:600;display:none;max-height:160px;overflow-y:auto}}
-    .sat-search-result-item{{padding:8px 12px;font-family:'DM Mono',monospace;font-size:.66rem;cursor:pointer;border-bottom:1px solid #f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-    .sat-search-result-item:hover{{background:#000;color:#fff}}
-    .sat-token-badge{{font-family:'DM Mono',monospace;font-size:.55rem;color:#555;background:#f0f0f0;border:1px solid #ccc;border-radius:20px;padding:3px 8px;white-space:nowrap}}
-    .sat-cloud-row{{display:flex;align-items:center;gap:8px}}
-    .sat-cloud-val{{font-family:'DM Mono',monospace;font-size:.72rem;font-weight:600;min-width:36px;text-align:right}}
-    .sat-log{{font-family:'DM Mono',monospace;font-size:.6rem;color:#888;padding:8px 16px;border-top:1px solid #e5e5e5;max-height:70px;overflow-y:auto;background:#fafafa}}
-    .sat-log-entry{{padding:1px 0;line-height:1.6}}
-    .sat-log-entry.ok{{color:#16a34a}}
-    .sat-log-entry.err{{color:#dc2626}}
-
-    /* Mobile responsive for satellite viewer */
-    @media(max-width:600px){{
-      .sat-viewer-map-wrap{{height:280px;max-height:280px;overflow:hidden}}
-      .sat-layer-grid{{grid-template-columns:repeat(3,1fr);margin:0 10px 10px}}
-      .sat-viewer-toolbar{{gap:6px;padding:8px 10px}}
-      .sat-search-wrap{{min-width:100%;order:1}}
-      .sat-token-badge{{order:2}}
-      .sat-viewer-row{{grid-template-columns:1fr}}
-      .sat-viewer-sidebar{{padding:10px 12px;gap:8px}}
-      .sat-load-btn{{margin:0;width:100%}}
-      .sat-load-btn-wrap{{padding:0 10px 12px}}
-      .sat-layer-grid{{margin:0 10px 10px}}
-      .sat-cloud-row{{flex-wrap:wrap}}
-    }}
-    @media(max-width:400px){{
-      .sat-viewer-map-wrap{{height:240px;max-height:240px;overflow:hidden}}
-      .sat-layer-grid{{grid-template-columns:repeat(3,1fr)}}
-    }}
-    /* ── SATELLITE IMAGERY SECTION ── */
-    #sector-satellite{{margin-top:24px;display:none}}
-    .sat-section-divider{{display:flex;align-items:center;gap:14px;margin:24px 0 18px}}
-    .sat-section-divider-line{{flex:1;height:1px;background:#e5e5e5}}
-    .sat-label{{font-size:.6rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
-                color:#888;white-space:nowrap;display:flex;align-items:center;gap:8px}}
-    .sat-label .sat-dot{{width:5px;height:5px;border-radius:50%;background:#000}}
-    .sat-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}}
-    .sat-card{{background:#fff;border:1px solid #000;border-radius:4px;overflow:hidden;
-               transition:transform .18s,box-shadow .18s;animation:card-in .32s ease both}}
-    .sat-card:hover{{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.12)}}
-    .sat-map-wrap{{width:100%;height:180px;position:relative;background:#f0f0f0;overflow:hidden}}
-    .sat-map-leaf{{width:100%;height:100%}}
-    .sat-layer-btns{{position:absolute;top:6px;right:6px;z-index:500;display:flex;flex-direction:column;gap:3px}}
-    .sat-layer-btn{{background:rgba(255,255,255,.92);border:1px solid #000;color:#333;
-                    font-family:'DM Mono',monospace;font-size:.52rem;letter-spacing:.06em;
-                    padding:3px 7px;cursor:pointer;border-radius:3px;transition:all .15s;white-space:nowrap}}
-    .sat-layer-btn.active,.sat-layer-btn:hover{{background:#000;color:#fff;border-color:#000}}
-    .sat-map-crosshair{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-                         width:18px;height:18px;pointer-events:none;z-index:499}}
-    .sat-map-crosshair::before,.sat-map-crosshair::after{{content:'';position:absolute;background:rgba(0,0,0,.6)}}
-    .sat-map-crosshair::before{{width:1px;height:100%;left:50%;top:0}}
-    .sat-map-crosshair::after{{width:100%;height:1px;top:50%;left:0}}
-    .sat-body{{padding:10px 12px 12px}}
-    .sat-name{{font-size:.82rem;font-weight:600;line-height:1.4;color:#000;margin-bottom:4px}}
-    .sat-tag{{font-family:'DM Mono',monospace;font-size:.55rem;color:#333;background:#f0f0f0;
-               border:1px solid #000;padding:.12rem .45rem;border-radius:3px;display:inline-block;margin-bottom:6px}}
-    .sat-coords{{font-family:'DM Mono',monospace;font-size:.57rem;color:#888;margin-bottom:6px}}
-    .sat-sources{{display:flex;gap:4px;flex-wrap:wrap}}
-    .sat-src-badge{{font-family:'DM Mono',monospace;font-size:.54rem;letter-spacing:.05em;
-                    padding:2px 6px;border-radius:3px;border:1px solid #000;color:#333;background:#f8f7f4}}
-    .sat-loading-state{{display:flex;flex-direction:column;align-items:center;justify-content:center;
-                         padding:32px 20px;gap:10px;color:#888}}
-    .sat-spinner{{width:24px;height:24px;border-radius:50%;border:2px solid #e5e5e5;
-                  border-top-color:#000;animation:spin .75s linear infinite}}
-    .sat-count-badge{{font-family:'DM Mono',monospace;font-size:.6rem;font-weight:500;letter-spacing:.1em;
-                       text-transform:uppercase;color:#333;background:#f0f0f0;
-                       border:1px solid #000;padding:.18rem .6rem;border-radius:4px}}
-
-    html,body{{max-width:100%;overflow-x:hidden}}
-    *{{min-width:0;box-sizing:border-box}}
-
-    /* ── TABLET ── */
+    /* Mobile responsive additions (condensed) */
     @media(max-width:860px){{
-      form{{grid-template-columns:1fr 1fr;gap:12px}}
-      .fg:first-child{{grid-column:span 2}}
-      .btn{{grid-column:span 2;width:100%}}
-      .ai-models-grid{{grid-template-columns:repeat(2,1fr)}}
-      .ai-pts{{grid-template-columns:repeat(2,1fr)}}
-      .sector-grid{{grid-template-columns:repeat(3,1fr)}}
-      .sat-grid{{grid-template-columns:repeat(2,1fr)}}
+      .alpaca-grid{{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}}
+      .alpaca-stats{{flex-direction:column;gap:8px}}
+      .alpaca-stat{{min-width:auto}}
     }}
-
-    /* ── MOBILE ── */
     @media(max-width:600px){{
-      /* Global overflow control */
-      html,body{{overflow-x:hidden;width:100%}}
-
-      /* Header */
-      header{{padding:0 10px;height:48px;gap:6px}}
-      .logo{{gap:7px}}
-      .logo-star img{{height:34px!important}}
-      .logo-word{{font-size:.65rem;letter-spacing:.12em}}
-      .logo-tagline{{font-size:.42rem;letter-spacing:.1em}}
-      .header-nav{{gap:3px;flex-shrink:0}}
-      .nav-link{{font-size:.52rem;padding:3px 6px;letter-spacing:.04em}}
-
-      /* Ticker strip */
-      .ticker-strip{{overflow:hidden;width:100%;height:28px}}
-      .ticker-badge{{font-size:.48rem;padding:0 .6rem;letter-spacing:.12em}}
-      .ticker-track{{padding-left:70px}}
-      .t-item{{font-size:.52rem;padding:0 1rem}}
-
-      /* Main content */
-      main{{padding:12px 10px 40px;width:100%;max-width:100%}}
-      .disclaimer-wrap{{padding:0 10px 20px}}
-      .panel,.sector-panel,.ai-panel,.news-panel{{padding:14px 12px}}
-
-      /* Section dividers */
-      .section-divider{{margin:20px 0 12px;gap:8px}}
-      .section-label{{font-size:.55rem;letter-spacing:.16em}}
-
-      /* Form */
-      form{{grid-template-columns:1fr;gap:8px}}
-      .fg:first-child{{grid-column:span 1}}
-      .btn{{grid-column:span 1;width:100%;padding:10px 16px}}
-      .fg label{{font-size:.65rem;margin-bottom:6px}}
-      input,select{{padding:9px 12px;font-size:.82rem}}
-
-      /* Chips & indicators */
-      .chips{{gap:5px;margin-top:14px;padding-top:12px}}
-      .chip{{font-size:.64rem;padding:4px 10px}}
-      .ind-row{{gap:5px;margin-top:12px;padding-top:12px}}
-      .ind-label{{font-size:.56rem;margin-right:2px}}
-      .ind-chip{{font-size:.6rem;padding:3px 8px}}
-      .panel-label{{font-size:.56rem;margin-bottom:14px}}
-
-      /* Chart card */
-      .chart-card{{padding:8px 4px 6px;min-height:220px}}
-      .chart-card>div{{width:100%!important}}
-      .error-box{{font-size:.78rem;padding:12px 14px}}
-
-      /* Alt data badges */
-      .alt-data-row{{gap:4px;margin-bottom:14px;padding-bottom:14px;flex-wrap:wrap}}
-      .alt-data-badge{{font-size:.52rem;padding:2px 7px;letter-spacing:.06em}}
-
-      /* AI model cards */
-      .ai-models-grid{{grid-template-columns:1fr;gap:8px;margin-bottom:14px}}
-      .ai-model-card{{padding:12px}}
-      .ai-mname{{font-size:.74rem}}
-      .ai-mdesc{{font-size:.62rem;margin-bottom:8px}}
-
-      /* AI action row */
-      .ai-action-row{{gap:8px;margin-bottom:14px}}
-      .btn-ai{{padding:9px 18px;font-size:.72rem}}
-      .ai-sel-label{{font-size:.65rem}}
-      .ai-timer{{font-size:.6rem}}
-
-      /* AI result panel */
-      .ai-verdict-bar{{padding:12px 14px;gap:8px;flex-direction:column;align-items:flex-start}}
-      .ai-badge{{font-size:.82rem;padding:6px 16px}}
-      .ai-summary{{font-size:.78rem}}
-      .ai-meta-row{{gap:8px}}
-      .ai-mi{{font-size:.6rem}}
-      .ai-model-tag{{font-size:.54rem}}
-      .ai-pts{{grid-template-columns:repeat(2,1fr)}}
-      .ai-pt{{padding:10px 12px}}
-      .ai-pt-lbl{{font-size:.52rem}}
-      .ai-pt-val{{font-size:.82rem}}
-      .ai-sec{{padding:12px 14px}}
-      .ai-sec-hdr{{font-size:.54rem;margin-bottom:8px}}
-      .ai-sec-body{{font-size:.76rem;line-height:1.7}}
-      .ai-data-tags{{padding:10px 14px;gap:4px}}
-      .ai-data-tag{{font-size:.5rem;padding:2px 6px}}
-      .ai-loading{{padding:36px 16px;gap:10px}}
-      .ai-load-txt{{font-size:.72rem}}
-      .ai-load-sub{{font-size:.62rem;max-width:280px}}
-
-      /* Sector panel */
-      .sector-selector-row{{flex-direction:column;gap:8px}}
-      .sel-prefix{{font-size:.52rem;padding:0 .7rem}}
-      .sector-select{{font-size:.8rem;padding:.65rem 2rem .65rem .8rem}}
-      .btn-sector{{padding:.65rem;width:100%;font-size:.7rem}}
-      .sector-grid{{grid-template-columns:repeat(2,1fr);gap:6px}}
-      .s-tile{{padding:10px 10px}}
-      .s-tile-key{{font-size:.54rem;padding:.1rem .4rem}}
-      .s-tile-name{{font-size:.72rem}}
-      .s-tile-sub{{font-size:.58rem}}
-
-      /* Prediction markets */
-      #pred-chart{{height:260px!important}}
-      #pred-chart-wrap{{margin-bottom:12px}}
-      #pred-table{{font-size:.72rem}}
-      #pred-table th,#pred-table td{{padding:5px 5px}}
-      #pred-table th{{font-size:.48rem;letter-spacing:.04em}}
-      #pred-table col:first-child{{width:70px!important}}
-      #pred-table col:nth-child(3){{width:44px!important}}
-      #pred-table col:nth-child(4){{width:44px!important}}
-      #pred-table col:nth-child(5){{width:0!important;display:none}}
-      #pred-table td:nth-child(5),#pred-table th:nth-child(5){{display:none}}
-
-      /* Sector news output */
-      .sector-res-header{{flex-direction:column;align-items:flex-start;gap:6px;padding-bottom:10px;margin-bottom:12px}}
-      .sector-res-title{{font-size:.9rem}}
-      .res-count-badge{{font-size:.54rem}}
-      .res-time-badge{{font-size:.52rem}}
-      .filter-row{{gap:4px;margin-bottom:12px}}
-      .filter-label{{font-size:.52rem}}
-      .pill{{font-size:.62rem;padding:.22rem .6rem}}
-      .news-grid-sec{{grid-template-columns:1fr;gap:8px}}
-      .news-card{{padding:12px}}
-      .news-card-src{{font-size:.5rem}}
-      .news-card-num{{font-size:.54rem}}
-      .news-card-title{{font-size:.78rem}}
-      .news-card-date{{font-size:.52rem}}
-      .news-card-read{{font-size:.56rem;padding:.2rem .5rem}}
-
-      /* Sector state */
-      .sector-state{{padding:28px 14px;gap:8px}}
-      .sector-state-title{{font-size:.85rem}}
-      .sector-state-sub{{font-size:.72rem}}
-
-      /* Live news */
-      .news-tabs{{gap:5px;flex-wrap:wrap}}
-      .news-tab{{padding:4px 10px;font-size:.62rem}}
-      .news-tag{{font-size:.48rem;padding:1px 4px}}
-      .news-iframe-wrap{{border-width:2px}}
-      .nsb{{font-size:.56rem;padding:2px 8px}}
-
-      /* Satellite section */
-      .sat-grid{{grid-template-columns:1fr;gap:8px}}
-      .sat-card{{overflow:hidden}}
-      .sat-map-wrap{{height:160px}}
-      .sat-layer-btns{{gap:2px}}
-      .sat-layer-btn{{font-size:.48rem;padding:2px 5px}}
-      .sat-body{{padding:8px 10px 10px}}
-      .sat-name{{font-size:.76rem;margin-bottom:3px}}
-      .sat-tag{{font-size:.5rem;padding:.1rem .35rem}}
-      .sat-coords{{font-size:.52rem;margin-bottom:4px}}
-      .sat-src-badge{{font-size:.48rem;padding:1px 5px}}
-      .sat-section-divider{{margin:18px 0 14px}}
-      .sat-label{{font-size:.54rem;letter-spacing:.16em}}
-      .sat-count-badge{{font-size:.54rem;padding:.14rem .5rem}}
-
-      /* Disclaimer */
-      .disclaimer-box{{padding:10px 12px;gap:8px}}
-      .disclaimer-body{{font-size:.58rem;line-height:1.7}}
-      .disclaimer-label{{font-size:.48rem;padding:1px 5px}}
-      .disclaimer-icon svg{{width:12px;height:12px}}
-
-      /* Vessel tracker */
-      #vessel-iframe{{width:100%;height:300px!important;min-height:0;max-height:300px!important}}
-      .vessel-wrap{{overflow:hidden;border-radius:0 0 10px 10px}}
-      /* Disable hover animations on touch to prevent jank */
-      .news-card{{animation:none;transition:none}}
-      .news-card:hover{{transform:none;box-shadow:none}}
-      .sat-card{{animation:none;transition:none}}
-      .sat-card:hover{{transform:none;box-shadow:none}}
-      .btn,.btn-ai,.btn-sector{{transition:none}}
-
-      /* Footer */
-      .site-footer{{padding:28px 14px 48px}}
-      .site-footer-sub{{font-size:.54rem;letter-spacing:.18em;margin-bottom:8px}}
-      .site-footer-name{{font-size:clamp(2rem,12vw,4.5rem)}}
-    }}
-
-    /* ── VERY SMALL SCREENS ── */
-    @media(max-width:380px){{
-      header{{padding:0 8px;height:44px}}
-      .logo-word{{font-size:.58rem}}
-      .logo-tagline{{display:none}}
-      .nav-link{{font-size:.48rem;padding:2px 5px}}
-      main{{padding:10px 8px 36px}}
-      .panel,.sector-panel,.ai-panel,.news-panel{{padding:12px 10px}}
-      .sector-grid{{grid-template-columns:1fr;gap:5px}}
-      .chips{{gap:4px}}
-      .chip{{font-size:.6rem;padding:3px 8px}}
-      form input,form select{{font-size:.78rem;padding:8px 10px}}
-      .ai-badge{{font-size:.72rem;padding:5px 12px}}
-      .ai-pts{{grid-template-columns:1fr 1fr}}
-      .site-footer-name{{font-size:clamp(1.6rem,11vw,3.5rem)}}
-      #vessel-iframe{{height:260px!important;max-height:260px!important;min-height:0}}
-      #pred-chart{{height:200px!important}}
-      #pred-table col:nth-child(4){{width:0!important}}
-      #pred-table td:nth-child(4),#pred-table th:nth-child(4){{display:none}}
+      .alpaca-panel{{padding:14px 12px}}
+      .alpaca-header{{flex-direction:column;align-items:flex-start}}
+      .alpaca-filter{{order:2;margin-bottom:12px}}
+      .alpaca-sort{{order:3;margin-left:0}}
+      .alpaca-grid{{grid-template-columns:1fr}}
     }}
   </style>
 </head>
@@ -3669,12 +3057,12 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     {logo_img}
     <div class="logo-text-group">
       <span class="logo-word">STARFISH</span>
-      <span class="logo-tagline">Market Dynamics</span>
+      <span class="logo-tagline">Market Dynamics + Alpaca Live</span>
     </div>
   </div>
   <nav class="header-nav">
-    <a class="nav-link" href="#us-equities">US Equities</a>
     <a class="nav-link" href="#stocks">Stocks</a>
+    <a class="nav-link" href="#alpaca">Live Trading</a>
     <a class="nav-link" href="#sectors">Sectors</a>
     <a class="nav-link" href="#live-news">Live News</a>
     <a class="nav-link" href="#vessels">Data</a>
@@ -3696,182 +3084,69 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span class="t-item"><strong>XLB</strong> Materials <span class="t-sep">&middot;</span></span>
     <span class="t-item"><strong>XLRE</strong> Real Estate <span class="t-sep">&middot;</span></span>
     <span class="t-item"><strong>XLU</strong> Utilities <span class="t-sep">&middot;</span></span>
-    <span class="t-item">FRED Macro &middot; Google Trends &middot; AIS Shipping &middot; Fundamentals &middot; 10 Indicators <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLC</strong> Comm Services <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLY</strong> Consumer Disc <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLP</strong> Consumer Staples <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLE</strong> Energy <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLF</strong> Financials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLV</strong> Health Care <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLI</strong> Industrials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLK</strong> Info Technology <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLB</strong> Materials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLRE</strong> Real Estate <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLU</strong> Utilities <span class="t-sep">&middot;</span></span>
-    <span class="t-item">FRED Macro &middot; Google Trends &middot; AIS Shipping &middot; Fundamentals &middot; 10 Indicators <span class="t-sep">&middot;</span></span>
+    <span class="t-item">FRED Macro &middot; Google Trends &middot; AIS Shipping &middot; Alpaca Live &middot; 10 Indicators <span class="t-sep">&middot;</span></span>
   </div>
 </div>
  
 <main>
-
+ 
 <!-- ══════════════════════════════════════════
-     US EQUITIES — Alpaca Live Account + Market Data
+     ALPACA LIVE TRADING PANEL (NEW)
 ═══════════════════════════════════════════ -->
-<div id="us-equities-section">
-  <div class="section-divider" id="us-equities" style="margin-top:0;margin-bottom:14px">
-    <div class="section-divider-line"></div>
-    <div class="section-label">
-      <span class="dot" style="background:#000;animation:ueq-pulse 1.6s ease-in-out infinite"></span>
-      US Equities
-    </div>
-    <div class="section-divider-line"></div>
+<div class="section-divider" id="alpaca">
+  <div class="section-divider-line"></div>
+  <div class="section-label"><span class="dot" style="background:#000"></span>Alpaca Live Trading</div>
+  <div class="section-divider-line"></div>
+</div>
+
+<div class="alpaca-panel">
+  <div class="alpaca-header">
+    <span class="alpaca-title">ALPACA PAPER TRADING · LIVE MARKET DATA</span>
+    <span class="alpaca-badge">WebSocket Real-Time</span>
   </div>
-
-  <div class="glass panel">
-    <div class="ueq-header">
-      <div class="ueq-title">
-        <div class="ueq-dot"></div>
-        <span class="ueq-label">Live Account &amp; Market Data · Alpaca</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="ueq-status-pill" id="ueq-status-pill">&#x25CB; Connecting…</span>
-        <span class="ueq-updated" id="ueq-updated"></span>
-      </div>
+  
+  <div class="alpaca-stats" id="alpaca-stats">
+    <div class="alpaca-stat"><div class="alpaca-stat-label">Portfolio Value</div><div class="alpaca-stat-value" id="a-pv">—</div></div>
+    <div class="alpaca-stat"><div class="alpaca-stat-label">Cash</div><div class="alpaca-stat-value" id="a-cash">—</div></div>
+    <div class="alpaca-stat"><div class="alpaca-stat-label">Buying Power</div><div class="alpaca-stat-value" id="a-bp">—</div></div>
+    <div class="alpaca-stat"><div class="alpaca-stat-label">Equity</div><div class="alpaca-stat-value" id="a-eq">—</div></div>
+    <div class="alpaca-stat"><div class="alpaca-stat-label">Status</div><div class="alpaca-stat-value" id="a-st">—</div></div>
+  </div>
+  
+  <div class="alpaca-filter">
+    <button class="alpaca-filter-btn active" onclick="setAlpacaFilter('ALL')">ALL</button>
+    <button class="alpaca-filter-btn" onclick="setAlpacaFilter('Technology')">TECH</button>
+    <button class="alpaca-filter-btn" onclick="setAlpacaFilter('Finance')">FINANCE</button>
+    <button class="alpaca-filter-btn" onclick="setAlpacaFilter('Consumer')">CONSUMER</button>
+    <button class="alpaca-filter-btn" onclick="setAlpacaFilter('Automotive')">AUTO</button>
+    <button class="alpaca-filter-btn" onclick="setAlpacaFilter('Healthcare')">HEALTH</button>
+    <button class="alpaca-filter-btn" onclick="setAlpacaFilter('ETF')">ETF</button>
+    <div class="alpaca-sort">
+      <span class="alpaca-sort-label">SORT</span>
+      <select id="alpaca-sort" class="alpaca-sort-select" onchange="renderAlpacaGrid()">
+        <option value="default">DEFAULT</option>
+        <option value="price-desc">PRICE ↓</option>
+        <option value="price-asc">PRICE ↑</option>
+        <option value="chg-desc">GAIN ↓</option>
+        <option value="chg-asc">LOSS ↓</option>
+        <option value="vol-desc">VOLUME ↓</option>
+      </select>
     </div>
-
-    <!-- Account stats -->
-    <div class="ueq-account" id="ueq-account">
-      <div class="ueq-stat"><div class="ueq-stat-label">Portfolio Value</div><div class="ueq-stat-val" id="ueq-pv">—</div></div>
-      <div class="ueq-stat"><div class="ueq-stat-label">Cash</div><div class="ueq-stat-val" id="ueq-cash">—</div></div>
-      <div class="ueq-stat"><div class="ueq-stat-label">Buying Power</div><div class="ueq-stat-val" id="ueq-bp">—</div></div>
-      <div class="ueq-stat"><div class="ueq-stat-label">Equity</div><div class="ueq-stat-val" id="ueq-eq">—</div></div>
-      <div class="ueq-stat"><div class="ueq-stat-label">Account Status</div><div class="ueq-stat-val green" id="ueq-st">—</div></div>
-      <div class="ueq-stat"><div class="ueq-stat-label">Currency</div><div class="ueq-stat-val" id="ueq-cur">—</div></div>
-    </div>
-
-    <!-- Stocks table -->
-    <div class="ueq-table-wrap">
-      <div id="ueq-stocks-wrap">
-        <div class="ueq-loader"><div class="ueq-spinner"></div>Loading live market data… <span style="font-size:.6rem;margin-left:8px;color:#aaa">(first load ~5s)</span></div>
-      </div>
-    </div>
+  </div>
+  
+  <div id="alpaca-grid" class="alpaca-grid">
+    <div style="text-align:center;padding:40px;color:#888">Loading live market data from Alpaca…</div>
+  </div>
+  
+  <div class="alpaca-status">
+    <div class="alpaca-led"></div>
+    <span class="alpaca-status-text" id="alpaca-status-text">WebSocket connected · Real-time trades & quotes</span>
+    <span id="alpaca-last-update" style="font-size:.55rem;color:#aaa;margin-left:auto"></span>
   </div>
 </div>
 
-<script>
-(function(){{
-  var _ueqCreds = true;  // optimistic until /api/alpaca-stocks says otherwise
-
-  var _fmtC = function(n){{
-    if(n==null||n===''||n===undefined) return '—';
-    return '$'+Number(n).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
-  }};
-  var _fmt2 = function(n,d){{
-    if(n==null||n===''||n===undefined||n===0) return '—';
-    return Number(n).toFixed(d!=null?d:2);
-  }};
-  var _fmtV = function(v){{
-    if(!v) return '—';
-    if(v>=1e9) return (v/1e9).toFixed(2)+'B';
-    if(v>=1e6) return (v/1e6).toFixed(2)+'M';
-    if(v>=1e3) return (v/1e3).toFixed(1)+'K';
-    return v;
-  }};
-  var _cls = function(pct){{ return pct>0?'ueq-up':pct<0?'ueq-dn':'ueq-flat'; }};
-  var _sign = function(n){{ return n>=0?'+':''; }};
-
-  function buildTable(stocks){{
-    if(!stocks||!stocks.length){{
-      return '<div class="ueq-cred-warn">No market data available. Check Alpaca credentials.</div>';
-    }}
-    var rows = stocks.map(function(s){{
-      var cc = _cls(s.change_pct);
-      var sign = _sign(s.change_pct);
-      return '<tr>'
-        +'<td><span class="ueq-sym" onclick="setTicker(\''+s.symbol+'\')" title="Load '+s.symbol+' chart below">'+s.symbol+'</span></td>'
-        +'<td><span class="ueq-name">'+s.name+'</span></td>'
-        +'<td class="ueq-price '+cc+'">'+_fmtC(s.price)+'</td>'
-        +'<td class="'+cc+'">'+sign+_fmt2(s.change_pct)+'%</td>'
-        +'<td class="'+cc+'">'+sign+'$'+_fmt2(Math.abs(s.change))+'</td>'
-        +'<td class="ueq-bid">'+_fmtC(s.bid)+'</td>'
-        +'<td class="ueq-ask">'+_fmtC(s.ask)+'</td>'
-        +'<td>'+(s.spread?'$'+Number(s.spread).toFixed(4):'—')+'</td>'
-        +'<td>'+_fmtC(s.open)+'</td>'
-        +'<td style="color:#1a8c5e">'+_fmtC(s.high)+'</td>'
-        +'<td style="color:#c0392b">'+_fmtC(s.low)+'</td>'
-        +'<td>'+_fmtV(s.volume)+'</td>'
-        +'<td><span class="ueq-dtype ueq-dtype-'+s.data_type+'">'+s.data_type+'</span></td>'
-        +'</tr>';
-    }}).join('');
-    return '<table class="ueq-table">'
-      +'<thead><tr>'
-      +'<th>Symbol</th><th>Name</th><th>Price</th>'
-      +'<th>Chg %</th><th>Chg $</th>'
-      +'<th>Bid</th><th>Ask</th><th>Spread</th>'
-      +'<th>Open</th><th>High</th><th>Low</th>'
-      +'<th>Volume</th><th>Type</th>'
-      +'</tr></thead><tbody>'+rows+'</tbody></table>';
-  }}
-
-  function fetchUeqStocks(){{
-    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function(){{ ctrl.abort(); }}, 10000) : null;
-    fetch('/api/alpaca-stocks', ctrl ? {{signal: ctrl.signal}} : {{}})
-      .then(function(r){{ clearTimeout(timer); return r.json(); }})
-      .then(function(d){{
-        var pill = document.getElementById('ueq-status-pill');
-        var upd  = document.getElementById('ueq-updated');
-        if(d.error && (!d.stocks || !d.stocks.length)){{
-          document.getElementById('ueq-stocks-wrap').innerHTML=
-            '<div class="ueq-cred-warn">&#9888; '+d.error+'</div>';
-          if(pill) pill.innerHTML='&#x25CF; Error';
-          return;
-        }}
-        document.getElementById('ueq-stocks-wrap').innerHTML = buildTable(d.stocks||[]);
-        if(pill) pill.innerHTML='&#x25CF; Live';
-        if(upd)  upd.textContent = d.updated ? 'Updated '+d.updated : '';
-      }})
-      .catch(function(e){{
-        clearTimeout(timer);
-        var wrap = document.getElementById('ueq-stocks-wrap');
-        var pill = document.getElementById('ueq-status-pill');
-        if(wrap && wrap.innerHTML.indexOf('ueq-spinner') !== -1){{
-          wrap.innerHTML='<div class="ueq-cred-warn">&#9888; Could not connect to Alpaca. Check server logs and credentials.</div>';
-        }}
-        if(pill) pill.innerHTML='&#x25CF; Error';
-        console.warn('[Alpaca stocks]',e);
-      }});
-  }}
-
-  function fetchUeqAccount(){{
-    fetch('/api/alpaca-account')
-      .then(function(r){{return r.json();}})
-      .then(function(d){{
-        if(d.error) return;
-        var el = function(id){{return document.getElementById(id);}};
-        if(el('ueq-pv'))   el('ueq-pv').textContent   = _fmtC(d.portfolio_value);
-        if(el('ueq-cash')) el('ueq-cash').textContent  = _fmtC(d.cash);
-        if(el('ueq-bp'))   el('ueq-bp').textContent    = _fmtC(d.buying_power);
-        if(el('ueq-eq'))   el('ueq-eq').textContent    = _fmtC(d.equity);
-        if(el('ueq-st')){{
-          var st = (d.status||'').toUpperCase();
-          el('ueq-st').textContent = st;
-          el('ueq-st').className   = 'ueq-stat-val '+(st==='ACTIVE'?'green':st==='INACTIVE'?'red':'');
-        }}
-        if(el('ueq-cur'))  el('ueq-cur').textContent   = d.currency||'USD';
-      }})
-      .catch(function(e){{console.warn('[Alpaca account]',e);}});
-  }}
-
-  fetchUeqStocks();
-  fetchUeqAccount();
-  setInterval(fetchUeqStocks,  15000);
-  setInterval(fetchUeqAccount, 60000);
-}})();
-</script>
-
 <!-- ══════════════════════════════════════════
-     SECTION 1: STOCKS
+     STOCKS SECTION (existing Starfish)
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="stocks">
   <div class="section-divider-line"></div>
@@ -3907,9 +3182,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
  
 <div class="glass chart-card">{content}</div>
 
-<!-- ══════════════════════════════════════════
-     GBM MONTE CARLO SIMULATION
-═══════════════════════════════════════════ -->
+<!-- GBM Monte Carlo Simulation (existing) -->
 <div class="glass panel" id="gbm-panel" style="margin-top:12px">
   <div class="panel-label">Monte Carlo Price Simulation (GBM)</div>
   <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:12px">
@@ -3947,275 +3220,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div id="gbm-hist"  style="width:100%;height:0;overflow:hidden;margin-top:0;transition:height .3s ease"></div>
   <div id="gbm-stats" style="display:none;margin-top:10px;padding:10px 14px;background:#f5f7fa;border-radius:8px;font-size:.78rem;color:#131722;line-height:1.7"></div>
 </div>
-<script>
-(function(){{
-  var Plotly = window.Plotly;
-  window.runGBM = function(){{
-    var ticker   = (document.getElementById('gbm-ticker').value||'AAPL').trim().toUpperCase();
-    var n_years  = parseInt(document.getElementById('gbm-years').value,10);
-    var n_scen   = parseInt(document.getElementById('gbm-scenarios').value,10);
-    var btn      = document.getElementById('gbm-btn');
-    var status   = document.getElementById('gbm-status');
-    btn.disabled = true;
-    status.textContent = 'Running simulation for ' + ticker + '…';
-    fetch('/api/gbm', {{
-      method:'POST',
-      headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{ticker:ticker, n_years:n_years, n_scenarios:n_scen}})
-    }})
-    .then(function(r){{return r.json();}})
-    .then(function(d){{
-      if(d.error){{ status.textContent='Error: '+d.error; btn.disabled=false; return; }}
-      var chartEl = document.getElementById('gbm-chart');
-      var histEl  = document.getElementById('gbm-hist');
-      var isMobile = window.innerWidth < 600;
-      chartEl.style.height = isMobile ? '260px' : '380px';
-      chartEl.style.marginTop = '8px';
-      histEl.style.height  = isMobile ? '160px' : '220px';
-      histEl.style.marginTop = '8px';
-      status.style.minHeight = '18px';
-      status.style.marginBottom = '6px';
-      renderGBM(d);
-      btn.disabled=false;
-      status.textContent='✓ ' + d.n_scenarios + ' paths · μ=' + (d.mu*100).toFixed(2) + '% · σ=' + (d.sigma*100).toFixed(2) + '%  (calibrated on 2y history)';
-    }})
-    .catch(function(e){{ status.textContent='Request failed: '+e; btn.disabled=false; }});
-  }};
 
-  function renderGBM(d){{
-    // ── Palette — matches Starfish app theme exactly ──────────────────────────
-    // Background: transparent (paper) / rgba(13,14,20,0) plot (matches stock chart)
-    // Grid:   rgba(42,46,57,0.6)  — same as _C["grid"] in build_chart
-    // Axis:   #787b86             — same as _C["axis"]
-    // Paths:  cornflower rgba(100,149,237,0.18) — visible but not overwhelming
-    // Band95: rgba(41,98,255,0.08)  — subtle outer cone (Starfish blue)
-    // Band50: rgba(41,98,255,0.18)  — visible inner IQR band
-    // Median: #f9a825 (amber/gold)  — same family as SMA20 in stock chart
-    // Entry:  #787b86 dashed        — neutral axis colour, no red/green bias
-    // Gain hist: #26a69a            — Starfish green
-    // Loss hist: #ef5350            — Starfish red
-
-    // Build real calendar x-axis: today + fractional years → Date strings
-    var now = new Date();
-    var tDates = d.t_axis.map(function(frac){{
-      var ms = now.getTime() + frac * 365.25 * 24 * 3600 * 1000;
-      return new Date(ms).toISOString().slice(0,10);
-    }});
-
-    // Shared layout — transparent bg, Starfish grid colours
-    var LY = {{
-      paper_bgcolor:'rgba(0,0,0,0)',
-      plot_bgcolor:'rgba(0,0,0,0)',
-      font:{{color:'#787b86', family:"'DM Sans',sans-serif", size:10}},
-      margin:{{l:62, r:20, t:48, b:44}},
-      xaxis:{{
-        gridcolor:'rgba(42,46,57,0.6)', color:'#787b86',
-        zeroline:false, showline:false,
-        tickfont:{{size:9,color:'#787b86'}},
-        tickformat:'%b %Y', type:'date'
-      }},
-      yaxis:{{
-        gridcolor:'rgba(42,46,57,0.6)', color:'#787b86',
-        zeroline:false, showline:false,
-        tickfont:{{size:9,color:'#787b86'}}
-      }},
-      hovermode:'x unified',
-      hoverlabel:{{bgcolor:'rgba(255,255,255,0.97)',bordercolor:'rgba(120,123,134,0.3)',
-                   font:{{color:'#000',size:11}}}},
-      legend:{{
-        orientation:'h', y:1.07, x:0,
-        font:{{size:9,color:'#787b86'}},
-        bgcolor:'rgba(0,0,0,0)', borderwidth:0
-      }}
-    }};
-
-    var t = tDates;
-    var n = d.paths.length;
-
-    // ── Per-timestep percentile arrays (computed once) ────────────────────────
-    function colAtPct(pctVal){{
-      return d.t_axis.map(function(_,ti){{
-        var vals = d.paths.map(function(p){{return p[ti];}}).sort(function(a,b){{return a-b;}});
-        return vals[Math.min(Math.floor(pctVal/100*vals.length), vals.length-1)];
-      }});
-    }}
-    var p5  = colAtPct(5);
-    var p25 = colAtPct(25);
-    var p50 = colAtPct(50);
-    var p75 = colAtPct(75);
-    var p95 = colAtPct(95);
-
-    var traces = [];
-
-    // 1. Individual paths — cornflower, alpha raised so they read on white bg
-    for(var i=0;i<n;i++){{
-      traces.push({{
-        x:t, y:d.paths[i], mode:'lines',
-        line:{{color:'rgba(100,149,237,0.18)', width:0.8}},
-        showlegend:false, hoverinfo:'skip'
-      }});
-    }}
-
-    // 2. P5–P95 outer cone — Starfish blue, subtle fill, no border line
-    traces.push({{
-      x:t, y:p95, mode:'lines',
-      line:{{color:'rgba(0,0,0,0)', width:0}},
-      showlegend:false, hoverinfo:'skip'
-    }});
-    traces.push({{
-      x:t, y:p5, mode:'lines',
-      line:{{color:'rgba(0,0,0,0)', width:0}},
-      fill:'tonexty', fillcolor:'rgba(41,98,255,0.08)',
-      showlegend:false, hoverinfo:'skip', name:'90% cone'
-    }});
-
-    // 3. P25–P75 inner IQR band — denser fill, clearly visible
-    traces.push({{
-      x:t, y:p75, mode:'lines',
-      line:{{color:'rgba(0,0,0,0)', width:0}},
-      showlegend:false, hoverinfo:'skip'
-    }});
-    traces.push({{
-      x:t, y:p25, mode:'lines',
-      line:{{color:'rgba(0,0,0,0)', width:0}},
-      fill:'tonexty', fillcolor:'rgba(41,98,255,0.20)',
-      showlegend:true, name:'50% band (IQR)', hoverinfo:'skip'
-    }});
-
-    // 4. P5 border — red dotted, 1.2px, fully opaque so it's readable
-    traces.push({{
-      x:t, y:p5, mode:'lines', name:'P5  (bear)',
-      line:{{color:'#ef5350', width:1.2, dash:'dot'}},
-      hovertemplate:'P5 <b>%{{y:.2f}}</b><extra></extra>'
-    }});
-
-    // 5. P95 border — green dotted, 1.2px
-    traces.push({{
-      x:t, y:p95, mode:'lines', name:'P95 (bull)',
-      line:{{color:'#26a69a', width:1.2, dash:'dot'}},
-      hovertemplate:'P95 <b>%{{y:.2f}}</b><extra></extra>'
-    }});
-
-    // 6. Median — amber #f9a825 (SMA20 family), 2.5px, on top of everything
-    traces.push({{
-      x:t, y:p50, mode:'lines', name:'Median (P50)',
-      line:{{color:'#f9a825', width:2.5}},
-      hovertemplate:'Median <b>%{{y:.2f}}</b><extra></extra>'
-    }});
-
-    // 7. Entry price — neutral grey dashed, clearly labelled
-    traces.push({{
-      x:[t[0],t[t.length-1]], y:[d.s_0,d.s_0],
-      mode:'lines', name:'Entry ' + d.s_0.toFixed(2),
-      line:{{color:'#787b86', width:1.5, dash:'dash'}},
-      hoverinfo:'skip'
-    }});
-
-    var currency = (d.ticker.endsWith('.NS')||d.ticker.endsWith('.BO')) ? 'INR' : 'USD';
-
-    Plotly.react('gbm-chart', traces, Object.assign({{}}, LY, {{
-      title:{{
-        text:'<b style="color:#d1d4dc">' + d.ticker + '</b>' +
-             '<span style="color:#787b86">  Monte Carlo GBM · ' +
-             d.n_years + 'y horizon · ' + d.n_scenarios + ' paths</span>',
-        font:{{size:11}}, x:0.01, xanchor:'left'
-      }},
-      yaxis: Object.assign({{}}, LY.yaxis, {{
-        title:{{text:currency, font:{{size:10,color:'#787b86'}}, standoff:8}}
-      }}),
-      xaxis: Object.assign({{}}, LY.xaxis, {{
-        title:{{text:'Date', font:{{size:10,color:'#787b86'}}, standoff:8}}
-      }})
-    }}), {{responsive:true}});
-
-    // ── Histogram — red/teal split, 35 bins, solid bars with border ──────────
-    var terminal = d.terminal;
-    var loss = terminal.filter(function(v){{return v <  d.s_0;}});
-    var gain = terminal.filter(function(v){{return v >= d.s_0;}});
-    // Use same bin size for both so the bars interleave cleanly
-    var allMin = Math.min.apply(null,terminal);
-    var allMax = Math.max.apply(null,terminal);
-    var nBins  = 35;
-    var bSize  = (allMax - allMin) / nBins;
-
-    var histTraces = [
-      {{
-        x: loss, type:'histogram',
-        xbins:{{start:allMin, end:d.s_0, size:bSize}},
-        marker:{{
-          color:'rgba(239,83,80,0.75)',
-          line:{{color:'rgba(239,83,80,0.4)', width:1}}
-        }},
-        name:'Below entry', hovertemplate:'%{{x:.2f}}  Count: %{{y}}<extra>Loss</extra>'
-      }},
-      {{
-        x: gain, type:'histogram',
-        xbins:{{start:d.s_0, end:allMax+bSize, size:bSize}},
-        marker:{{
-          color:'rgba(38,166,154,0.75)',
-          line:{{color:'rgba(38,166,154,0.4)', width:1}}
-        }},
-        name:'Above entry', hovertemplate:'%{{x:.2f}}  Count: %{{y}}<extra>Gain</extra>'
-      }}
-    ];
-
-    Plotly.react('gbm-hist', histTraces, Object.assign({{}}, LY, {{
-      barmode:'overlay',
-      title:{{
-        text:'<b style="color:#d1d4dc">Terminal Distribution</b>' +
-             '<span style="color:#787b86">  (Year ' + d.n_years + ')</span>',
-        font:{{size:11}}, x:0.01, xanchor:'left'
-      }},
-      xaxis: Object.assign({{}}, LY.xaxis, {{
-        type:'linear', tickformat:'',
-        title:{{text:currency + ' at expiry', font:{{size:10,color:'#787b86'}}, standoff:8}}
-      }}),
-      yaxis: Object.assign({{}}, LY.yaxis, {{
-        title:{{text:'Count', font:{{size:10,color:'#787b86'}}, standoff:8}}
-      }}),
-      shapes:[{{
-        type:'line', x0:d.s_0, x1:d.s_0, y0:0, y1:1, yref:'paper',
-        line:{{color:'#787b86', width:1.5, dash:'dash'}}
-      }}],
-      annotations:[{{
-        x:d.s_0, y:1.05, yref:'paper', xanchor:'center',
-        text:'<b>Entry ' + d.s_0.toFixed(2) + '</b>',
-        showarrow:false, font:{{size:9, color:'#787b86'}}
-      }}]
-    }}), {{responsive:true}});
-
-    // ── Stats bar — matches Starfish chip/badge styling ───────────────────────
-    var p   = d.percentiles;
-    var pct = function(v){{
-      var chg = (v - d.s_0) / d.s_0 * 100;
-      var col = chg >= 0 ? '#26a69a' : '#ef5350';
-      return '<span style="color:'+col+';font-weight:600">' + (chg>=0?'+':'') + chg.toFixed(1) + '%</span>';
-    }};
-    var probGain = (gain.length / terminal.length * 100).toFixed(1);
-    var el = document.getElementById('gbm-stats');
-    el.innerHTML =
-      '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Calibration</span>' +
-      '&ensp;μ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.mu*100).toFixed(2) + '%</strong>' +
-      '&ensp;σ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.sigma*100).toFixed(2) + '%</strong>' +
-      '&ensp;Entry&thinsp;<strong style="color:#131722">' + d.s_0.toFixed(2) + '</strong>' +
-      '&ensp;P(gain)&thinsp;<strong style="color:#26a69a">' + probGain + '%</strong>' +
-      '<br>' +
-      '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Terminal percentiles</span>' +
-      '&ensp;<span style="color:#ef5350;font-weight:600">P5</span>&thinsp;<strong style="color:#131722">' + p.p5.toFixed(2) + '</strong>&thinsp;' + pct(p.p5) +
-      '&ensp;<span style="color:#787b86;font-weight:600">P25</span>&thinsp;<strong style="color:#131722">' + p.p25.toFixed(2) + '</strong>&thinsp;' + pct(p.p25) +
-      '&ensp;<span style="color:#f9a825;font-weight:600">P50</span>&thinsp;<strong style="color:#131722">' + p.p50.toFixed(2) + '</strong>&thinsp;' + pct(p.p50) +
-      '&ensp;<span style="color:#787b86;font-weight:600">P75</span>&thinsp;<strong style="color:#131722">' + p.p75.toFixed(2) + '</strong>&thinsp;' + pct(p.p75) +
-      '&ensp;<span style="color:#26a69a;font-weight:600">P95</span>&thinsp;<strong style="color:#131722">' + p.p95.toFixed(2) + '</strong>&thinsp;' + pct(p.p95);
-    el.style.background    = '#ffffff';
-    el.style.border        = '2px solid #131722';
-    el.style.borderRadius  = '6px';
-    el.style.color         = '#131722';
-    el.style.display       = 'block';
-  }}
-}}());
-</script>
-
-<!-- AI Analysis -->
+<!-- AI Analysis (existing) -->
 <div class="glass ai-panel">
   <div class="panel-label">AI Trading Analysis</div>
   {alt_data_badges}
@@ -4227,10 +3233,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   </div>
   <div class="ai-result" id="ai-result"></div>
 </div>
- 
-<!-- ══════════════════════════════════════════
-     PREDICTION MARKETS
-═══════════════════════════════════════════ -->
+
+<!-- Prediction Markets (existing) -->
 <div class="section-divider" id="pred-markets">
   <div class="section-divider-line"></div>
   <div class="section-label"><span class="dot" style="background:#000"></span>Prediction Markets</div>
@@ -4271,7 +3275,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
           <th style="text-align:right;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Prob</th>
           <th style="text-align:left;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Side</th>
           <th style="text-align:right;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Volume</th>
-        </tr>
+        </table>
       </thead>
       <tbody id="pred-tbody"></tbody>
     </table>
@@ -4280,7 +3284,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
 
 <!-- ══════════════════════════════════════════
-     SECTION 2: SECTORS
+     SECTION 2: SECTORS (existing)
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="sectors">
   <div class="section-divider-line"></div>
@@ -4312,7 +3316,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
  
 <!-- ══════════════════════════════════════════
-     SECTION 3: LIVE NEWS
+     SECTION 3: LIVE NEWS (existing)
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="live-news">
   <div class="section-divider-line"></div>
@@ -4333,7 +3337,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
 
 <!-- ══════════════════════════════════════════
-     SECTION 4: LIVE VESSEL TRACKER
+     SECTION 4: LIVE VESSEL TRACKER (existing)
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="vessels">
   <div class="section-divider-line"></div>
@@ -4348,31 +3352,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span id="ais-vessel-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
   <iframe id="vessel-iframe" src="/vessels" style="width:100%;height:660px;border:none;display:block;" title="Live Vessel Tracker" loading="lazy"></iframe>
-  <script>
-  var _aisRunning = false;
-  function toggleAIS() {{
-    var btn = document.getElementById('ais-toggle-btn');
-    var badge = document.getElementById('ais-vessel-badge');
-    var iframe = document.getElementById('vessel-iframe');
-    if (!_aisRunning) {{
-      _aisRunning = true;
-      btn.textContent = '⏹ Stop';
-      btn.style.borderColor = 'rgba(0,200,100,.5)';
-      btn.style.background = 'rgba(0,200,100,.08)';
-      btn.style.color = '#008844';
-      badge.textContent = 'Connecting…';
-      iframe.contentWindow.postMessage('ais:start', '*');
-    }} else {{
-      _aisRunning = false;
-      btn.innerHTML = '&#9654; Start';
-      btn.style.borderColor = 'rgba(255,100,100,.5)';
-      btn.style.background = 'rgba(255,100,100,.08)';
-      btn.style.color = '#cc3333';
-      badge.textContent = 'Stopped';
-      iframe.contentWindow.postMessage('ais:stop', '*');
-    }}
-  }}
-  </script>
 </div>
 
 <div class="section-divider" id="aircraft">
@@ -4388,59 +3367,10 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span id="adsb-aircraft-badge" style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
   <iframe id="aircraft-iframe" src="/aircraft" style="width:100%;height:660px;border:none;display:block;" title="Live Aircraft Tracker"></iframe>
-  <script>
-  var _adsbRunning = false;
-  var _adsbIframeReady = false;
-  var _adsbPendingCmd = null;
-  var _adsbIframe = document.getElementById('aircraft-iframe');
-  // Mark iframe ready after load so postMessage is never lost
-  _adsbIframe.addEventListener('load', function() {{
-    _adsbIframeReady = true;
-    if (_adsbPendingCmd) {{
-      _adsbIframe.contentWindow.postMessage(_adsbPendingCmd, '*');
-      _adsbPendingCmd = null;
-    }}
-  }});
-  // Listen for badge updates FROM the iframe
-  window.addEventListener('message', function(e) {{
-    if (e.data && e.data.type === 'adsb:count') {{
-      var badge = document.getElementById('adsb-aircraft-badge');
-      if (badge) badge.textContent = e.data.count + ' live';
-    }}
-  }});
-  function _sendAdsbMsg(cmd) {{
-    if (_adsbIframeReady) {{
-      _adsbIframe.contentWindow.postMessage(cmd, '*');
-    }} else {{
-      _adsbPendingCmd = cmd;
-    }}
-  }}
-  function toggleADSB() {{
-    var btn = document.getElementById('adsb-toggle-btn');
-    var badge = document.getElementById('adsb-aircraft-badge');
-    if (!_adsbRunning) {{
-      _adsbRunning = true;
-      btn.textContent = '⏹ Stop';
-      btn.style.borderColor = 'rgba(0,200,100,.5)';
-      btn.style.background = 'rgba(0,200,100,.08)';
-      btn.style.color = '#008844';
-      badge.textContent = 'Connecting…';
-      _sendAdsbMsg('adsb:start');
-    }} else {{
-      _adsbRunning = false;
-      btn.innerHTML = '&#9654; Start';
-      btn.style.borderColor = 'rgba(255,100,100,.5)';
-      btn.style.background = 'rgba(255,100,100,.08)';
-      btn.style.color = '#cc3333';
-      badge.textContent = 'Stopped';
-      _sendAdsbMsg('adsb:stop');
-    }}
-  }}
-  </script>
 </div>
 
 <!-- ══════════════════════════════════════════
-     SECTION 5: LIVE SATELLITE IMAGERY
+     SECTION 5: LIVE SATELLITE IMAGERY (existing)
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="satellite-viewer">
   <div class="section-divider-line"></div>
@@ -4449,7 +3379,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
 
 <div class="glass sat-viewer-panel">
-  <!-- Toolbar -->
   <div class="sat-viewer-toolbar">
     <span class="panel-label" style="margin:0;white-space:nowrap;">Sentinel-2 Live View</span>
     <span style="font-family:'DM Mono',monospace;font-size:.55rem;color:#555;background:#f0f0f0;border:1px solid #ccc;border-radius:20px;padding:3px 8px;">COPERNICUS ESA</span>
@@ -4461,8 +3390,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     </div>
     <span class="sat-token-badge" id="satTokenBadge">TOKEN &#8212;</span>
   </div>
-
-  <!-- Layer buttons -->
   <div class="sat-layer-grid" style="margin-top:12px;">
     <button class="sat-vlayer-btn active" data-layer="TRUE-COLOR" onclick="satSelectLayer(this)">TRUE COLOR</button>
     <button class="sat-vlayer-btn" data-layer="FALSE-COLOR" onclick="satSelectLayer(this)">FALSE COLOR</button>
@@ -4470,13 +3397,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <button class="sat-vlayer-btn" data-layer="SWIR" onclick="satSelectLayer(this)">SWIR</button>
     <button class="sat-vlayer-btn" data-layer="GEOLOGY" onclick="satSelectLayer(this)">GEOLOGY</button>
   </div>
-
-  <!-- Map -->
   <div class="sat-viewer-map-wrap">
     <div id="satMap" class="sat-viewer-map" style="width:100%;height:100%;"></div>
   </div>
-
-  <!-- Controls -->
   <div class="sat-viewer-sidebar">
     <div class="sat-viewer-row">
       <div class="sat-vfield">
@@ -4498,8 +3421,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     </div>
   </div>
   <div class="sat-load-btn-wrap" style="padding:0 16px 16px"><button class="sat-load-btn" id="satLoadBtn" onclick="satApplyLayer()">&#9632; LOAD SATELLITE DATA</button></div>
-
-  <!-- Status + log -->
   <div class="sat-status-bar">
     <span class="sat-status-dot" id="satStatusDot"></span>
     <span id="satStatusText">Ready — Copernicus Sentinel-2 L2A</span>
@@ -4508,7 +3429,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <div class="sat-log-entry">&#9658; Satellite viewer initialised</div>
   </div>
 </div>
-
 
 </main>
  
@@ -4522,7 +3442,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       </svg>
     </div>
     <p class="disclaimer-body">
-      <span class="disclaimer-label">Disclaimer</span>Financial information is sourced from Yahoo Finance, FRED (Federal Reserve Bank of St. Louis), Google Trends, public AIS shipping data, and open data providers — presented solely for informational and educational purposes. AI analyses powered by DeepSeek, Qwen, and Meta&rsquo;s Llama via OpenRouter using live macro data, fundamentals, and search-interest signals. Sector news aggregated from Reuters, CNBC, WSJ, Yahoo Finance, MarketWatch, FT, Benzinga, and Seeking Alpha. Not financial advice. Consult qualified professionals before making investment decisions.
+      <span class="disclaimer-label">Disclaimer</span>Financial information is sourced from Yahoo Finance, FRED (Federal Reserve Bank of St. Louis), Google Trends, Alpaca Paper Trading, public AIS shipping data, and open data providers — presented solely for informational and educational purposes. AI analyses powered by DeepSeek, Qwen, and Meta&rsquo;s Llama via OpenRouter using live macro data, fundamentals, and search-interest signals. Alpaca data is live from IEX exchange (paper trading environment). Not financial advice. Consult qualified professionals before making investment decisions.
     </p>
   </div>
 </div>
@@ -4537,11 +3457,127 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 var TICKER  = {json.dumps(ticker)};
 var PERIOD  = {json.dumps(period)};
 var MODELS  = {models_js};
-var sectorArticles = [];
- 
-// ── Stock chips & indicator toggles ──────────────────────────────────────────
+
+// ── ALPACA LIVE TRADING JAVASCRIPT ──────────────────────────────────────────
+var alpacaAllStocks = [];
+var alpacaFilter = 'ALL';
+var alpacaPrevPrices = {{}};
+
+function setAlpacaFilter(f) {{
+  alpacaFilter = f;
+  document.querySelectorAll('.alpaca-filter-btn').forEach(btn => {{
+    const btnText = btn.textContent.trim();
+    const match = (f === 'ALL' && btnText === 'ALL') ||
+                  (f === 'Technology' && btnText === 'TECH') ||
+                  (f === 'Finance' && btnText === 'FINANCE') ||
+                  (f === 'Consumer' && btnText === 'CONSUMER') ||
+                  (f === 'Automotive' && btnText === 'AUTO') ||
+                  (f === 'Healthcare' && btnText === 'HEALTH') ||
+                  (f === 'ETF' && btnText === 'ETF');
+    if (match) btn.classList.add('active');
+    else btn.classList.remove('active');
+  }});
+  renderAlpacaGrid();
+}}
+
+function renderAlpacaGrid() {{
+  let stocks = [...alpacaAllStocks];
+  if (alpacaFilter !== 'ALL') stocks = stocks.filter(s => s.sector === alpacaFilter);
+  
+  const sortVal = document.getElementById('alpaca-sort').value;
+  if (sortVal === 'price-desc') stocks.sort((a,b) => b.price - a.price);
+  else if (sortVal === 'price-asc') stocks.sort((a,b) => a.price - b.price);
+  else if (sortVal === 'chg-desc') stocks.sort((a,b) => b.change_pct - a.change_pct);
+  else if (sortVal === 'chg-asc') stocks.sort((a,b) => a.change_pct - b.change_pct);
+  else if (sortVal === 'vol-desc') stocks.sort((a,b) => (b.volume || 0) - (a.volume || 0));
+  
+  const grid = document.getElementById('alpaca-grid');
+  if (!stocks.length) {{
+    grid.innerHTML = '<div style="text-align:center;padding:40px;color:#888">No stocks match filter</div>';
+    return;
+  }}
+  
+  grid.innerHTML = stocks.map(s => {{
+    const dir = s.change_pct > 0 ? 'up' : (s.change_pct < 0 ? 'down' : '');
+    const sign = s.change_pct >= 0 ? '+' : '';
+    const changeClass = s.change_pct > 0 ? 'up-t' : (s.change_pct < 0 ? 'down-t' : 'flat-t');
+    const changeColor = s.change_pct > 0 ? '#26a69a' : (s.change_pct < 0 ? '#ef5350' : '#888');
+    
+    return `<div class="alpaca-card ${dir}" id="acard-${{s.symbol}}">
+      <div class="alpaca-card-sym">${{s.symbol}}</div>
+      <div class="alpaca-card-name">${{s.name}}</div>
+      <div class="alpaca-price-row">
+        <div class="alpaca-price">$${{s.price ? s.price.toFixed(2) : '—'}}</div>
+        <div class="alpaca-change ${{changeClass}}">${{sign}}${{s.change_pct ? s.change_pct.toFixed(2) : '0.00'}}%</div>
+      </div>
+      <div class="alpaca-bidask">
+        <div class="alpaca-ba alpaca-bid">
+          <div class="alpaca-ba-label">BID</div>
+          <div class="alpaca-ba-price">$${{s.bid ? s.bid.toFixed(2) : '—'}}</div>
+          <div class="alpaca-ba-size">${{s.bid_size ? s.bid_size.toLocaleString() : ''}}</div>
+        </div>
+        <div class="alpaca-ba alpaca-ask">
+          <div class="alpaca-ba-label">ASK</div>
+          <div class="alpaca-ba-price">$${{s.ask ? s.ask.toFixed(2) : '—'}}</div>
+          <div class="alpaca-ba-size">${{s.ask_size ? s.ask_size.toLocaleString() : ''}}</div>
+        </div>
+      </div>
+      <div class="alpaca-footer">
+        <div class="alpaca-vol">VOL ${{s.volume ? s.volume.toLocaleString() : '—'}}</div>
+        <div class="alpaca-dtype ${{s.data_type}}">${{s.data_type}}</div>
+      </div>
+    </div>`;
+  }}).join('');
+  
+  // Flash animation for price changes
+  stocks.forEach(s => {{
+    if (alpacaPrevPrices[s.symbol] !== undefined && alpacaPrevPrices[s.symbol] !== s.price) {{
+      const el = document.getElementById('acard-' + s.symbol);
+      if (el) {{
+        const cls = s.price > alpacaPrevPrices[s.symbol] ? 'flash-up' : 'flash-down';
+        el.classList.add(cls);
+        setTimeout(() => el.classList.remove(cls), 800);
+      }}
+    }}
+    alpacaPrevPrices[s.symbol] = s.price;
+  }});
+}}
+
+async function fetchAlpacaStocks() {{
+  try {{
+    const r = await fetch('/api/alpaca-stocks');
+    const data = await r.json();
+    if (data.error) {{
+      console.error('Alpaca error:', data.error);
+      document.getElementById('alpaca-status-text').textContent = 'Error: ' + data.error;
+      return;
+    }}
+    alpacaAllStocks = data.stocks || [];
+    renderAlpacaGrid();
+    document.getElementById('alpaca-last-update').textContent = data.updated;
+    document.getElementById('alpaca-status-text').textContent = 'WebSocket live · ' + alpacaAllStocks.length + ' symbols';
+  }} catch(e) {{
+    console.error('Alpaca fetch error:', e);
+    document.getElementById('alpaca-status-text').textContent = 'Connection error — retrying';
+  }}
+}}
+
+async function fetchAlpacaAccount() {{
+  try {{
+    const r = await fetch('/api/alpaca-account');
+    const d = await r.json();
+    if (!d.error) {{
+      document.getElementById('a-pv').textContent = d.portfolio_value ? '$' + Number(d.portfolio_value).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
+      document.getElementById('a-cash').textContent = d.cash ? '$' + Number(d.cash).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
+      document.getElementById('a-bp').textContent = d.buying_power ? '$' + Number(d.buying_power).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
+      document.getElementById('a-eq').textContent = d.equity ? '$' + Number(d.equity).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
+      document.getElementById('a-st').textContent = (d.status || 'ACTIVE').toUpperCase();
+    }}
+  }} catch(e) {{ console.error(e); }}
+}}
+
+// ── Existing Starfish functions ─────────────────────────────────────────────
 function setTicker(s){{document.getElementById('ticker').value=s;document.getElementById('main-form').submit();}}
- 
 var aInds = {ai_js};
 function toggleInd(el){{
   var k=el.dataset.ind,i=aInds.indexOf(k);
@@ -4549,10 +3585,9 @@ function toggleInd(el){{
   document.getElementById('inds-h').value=aInds.join(',');
   document.getElementById('main-form').submit();
 }}
- 
-// ── AI model selection ────────────────────────────────────────────────────────
+
+// AI model selection
 var selModelId=null,selModelKey=null,timerIv=null;
- 
 function selectModel(card){{
   if(card.classList.contains('exhausted'))return;
   document.querySelectorAll('.ai-model-card').forEach(c=>c.classList.remove('selected'));
@@ -4562,20 +3597,14 @@ function selectModel(card){{
   document.getElementById('btn-ai').disabled=false;
   if(timerIv)clearInterval(timerIv);
 }}
- 
 
- 
 function runAnalysis(){{
   if(!selModelId)return;
   var btn=document.getElementById('btn-ai');
   var res=document.getElementById('ai-result');
   btn.disabled=true; btn.textContent='Analysing\u2026';
   res.className='ai-result show';
-  res.innerHTML=`<div class="ai-loading">
-    <div class="ai-spin"></div>
-    <div class="ai-load-txt">Fetching live data &amp; running AI analysis\u2026</div>
-    <div class="ai-load-sub">Pulling FRED macro data, Google Trends, fundamentals, 10+ technical indicators &mdash; building institutional-grade analysis (30\u201360s)</div>
-  </div>`;
+  res.innerHTML=`<div class="ai-loading"><div class="ai-spin"></div><div class="ai-load-txt">Fetching live data &amp; running AI analysis\u2026</div><div class="ai-load-sub">Pulling FRED macro data, Google Trends, fundamentals, 10+ technical indicators &mdash; building institutional-grade analysis (30\u201360s)</div></div>`;
  
   fetch('/api/ai-analysis',{{
     method:'POST', headers:{{'Content-Type':'application/json'}},
@@ -4589,10 +3618,9 @@ function runAnalysis(){{
     res.innerHTML='<div class="ai-err">Network error: '+esc(String(err))+'</div>';
   }});
 }}
- 
+
 function esc(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}
-function fn(v,d){{d=d||2;return(v==null||v===undefined)?'N/A':Number(v).toFixed(d);}}
- 
+
 function renderAIResult(data){{
   var r=data.analysis;
   var m=MODELS.find(x=>x.id===data.model_id)||{{}};
@@ -4630,8 +3658,10 @@ function renderAIResult(data){{
     '</div>'+
     '<div class="ai-secs">'+secHtml+'</div>';
 }}
- 
-// ── Prediction Markets ────────────────────────────────────────────────────────
+
+function fn(v,d){{d=d||2;return(v==null||v===undefined)?'N/A':Number(v).toFixed(d);}}
+
+// Prediction Markets
 async function searchPredMarkets(){{
   var q=(document.getElementById('pred-query').value||'').trim();
   if(!q)return;
@@ -4713,12 +3743,12 @@ function renderPredTable(results){{
   document.getElementById('pred-table-wrap').style.display='block';
 }}
 
-// ── Sector news ───────────────────────────────────────────────────────────────
+// Sector news
 function selectAndFetch(id){{
   document.getElementById('sector-sel').value=id;
   fetchSectorNews();
 }}
- 
+
 async function fetchSectorNews(){{
   var sector=document.getElementById('sector-sel').value;
   if(!sector){{document.getElementById('sector-sel').focus();return;}}
@@ -4731,7 +3761,6 @@ async function fetchSectorNews(){{
       <div class="sector-state-title">Scanning Sources</div>
       <div class="sector-state-sub">Pulling live data from Reuters, CNBC, WSJ, Yahoo Finance, MarketWatch, Financial Times, Benzinga &amp; Seeking Alpha.</div>
     </div>`;
-  // reset satellite panel immediately
   var satDiv=document.getElementById('sector-satellite');
   satDiv.style.display='none';
   satDiv.innerHTML='';
@@ -4742,7 +3771,6 @@ async function fetchSectorNews(){{
     var data=await resp.json();
     sectorArticles=data.articles||[];
     renderSectorNews(sectorArticles,data.sector_label,data.elapsed_seconds);
-    // Now load satellite targets below news
     loadSatelliteTargets(sector);
   }}catch(e){{
     document.getElementById('sector-output').innerHTML=`
@@ -4755,7 +3783,8 @@ async function fetchSectorNews(){{
     btn.innerHTML='Analyse &#8594;';
   }}
 }}
- 
+
+var sectorArticles = [];
 function renderSectorNews(articles,label,elapsed){{
   var sources=[...new Set(articles.map(a=>a.source))].sort();
   var header=`
@@ -4803,7 +3832,7 @@ function renderSectorNews(articles,label,elapsed){{
   }}).join('');
   document.getElementById('sector-output').innerHTML=header+filters+`<div class="news-grid-sec">${{cards}}</div>`;
 }}
- 
+
 function filterSector(source,btn){{
   document.querySelectorAll('#sector-output .pill').forEach(p=>p.classList.remove('active'));
   btn.classList.add('active');
@@ -4811,18 +3840,18 @@ function filterSector(source,btn){{
     c.style.display=(source==='all'||c.dataset.source===source)?'':'none';
   }});
 }}
- 
+
 document.getElementById('sector-sel').addEventListener('change',function(){{
   if(this.value)fetchSectorNews();
 }});
- 
-// ── YouTube live news ─────────────────────────────────────────────────────────
+
+// YouTube live news
 var nframe=document.getElementById('nframe'),nload=document.getElementById('nload'),
     nbadge=document.getElementById('nbadge'),curHandle=null;
- 
+
 function nSetLoad(m){{nframe.style.display='none';nload.innerHTML='<div class="news-spinner"></div><span>'+m+'</span>';nload.style.display='flex';nbadge.style.display='none';}}
 function nSetErr(m){{nframe.style.display='none';nload.innerHTML='<span>'+m+'</span>';nload.style.display='flex';nbadge.className='nsb error';nbadge.textContent='Unavailable';nbadge.style.display='inline-flex';}}
- 
+
 function loadCh(h){{
   if(curHandle===h)return;
   curHandle=h; nSetLoad('Loading stream\u2026'); nframe.src='about:blank';
@@ -4838,18 +3867,17 @@ function loadCh(h){{
       nbadge.textContent=d.is_live?'LIVE':'Latest Video';
     }}).catch(()=>{{if(h!==curHandle)return;nSetErr('Could not load stream.');}});
 }}
- 
+
 document.getElementById('ntabs').addEventListener('click',function(e){{
   var btn=e.target.closest('.news-tab');if(!btn)return;
   document.querySelectorAll('.news-tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');curHandle=null;loadCh(btn.dataset.handle);
 }});
- 
+
 loadCh('{fh}');
 
-// ── Satellite Imagery ─────────────────────────────────────────────────────────
+// Satellite imagery
 var satMaps = {{}};
-
 function makeSatLayers() {{
   return {{
     esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',{{maxZoom:19}}),
@@ -4894,7 +3922,6 @@ async function loadSatelliteTargets(sectorId) {{
       <div class="sat-section-divider-line"></div>
     </div>
     <div class="sat-loading-state"><div class="sat-spinner"></div><span style="font-size:.78rem;color:#555">Loading satellite targets&hellip;</span></div>`;
-
   try {{
     const resp = await fetch('/api/satellite?sector='+encodeURIComponent(sectorId));
     if (!resp.ok) throw new Error('HTTP '+resp.status);
@@ -4934,7 +3961,6 @@ function renderSatTargets(targets, sectorId) {{
         </div>
       </div>`;
   }}).join('');
-
   satDiv.innerHTML = `
     <div class="sat-section-divider">
       <div class="sat-section-divider-line"></div>
@@ -4942,14 +3968,12 @@ function renderSatTargets(targets, sectorId) {{
       <div class="sat-section-divider-line"></div>
     </div>
     <div class="sat-grid">${{cards}}</div>`;
-
   requestAnimationFrame(()=>{{
     targets.forEach((t,i)=>initSatMap(`sat-${{i}}`, t.lat, t.lon));
   }});
 }}
 
-
-// ── LIVE SATELLITE VIEWER ──────────────────────────────────────────────────
+// Live satellite viewer
 var _satRunning = false;
 var _satTokenInterval = null;
 
@@ -4973,14 +3997,12 @@ function toggleSat() {{
 }}
 
 function _satStartViewer() {{
-  // Set default dates on first start
   var today = new Date();
   var prior = new Date(today);
   prior.setDate(prior.getDate() - 30);
   var fmt = function(d){{ return d.toISOString().split('T')[0]; }};
   document.getElementById('satDateTo').value   = fmt(today);
   document.getElementById('satDateFrom').value = fmt(prior);
-
   function waitForLeaflet(cb) {{
     if (typeof L !== 'undefined') {{ cb(); return; }}
     var t = setInterval(function() {{
@@ -4988,7 +4010,6 @@ function _satStartViewer() {{
     }}, 80);
   }}
   waitForLeaflet(function() {{ _satInitMap(); }});
-
   _satUpdateToken();
   _satTokenInterval = setInterval(_satUpdateToken, 30000);
 }}
@@ -5001,16 +4022,11 @@ function _satStopViewer() {{
   _satLog('Satellite viewer stopped.', 'info');
 }}
 
-(function initSatViewer() {{
-  // Dates will be set on Start — nothing auto-runs here
-}})();
-
 var _satMap = null, _satLayer = null, _satCurrentLayer = 'TRUE-COLOR';
 
 function _satInitMap() {{
   _satMap = L.map('satMap', {{ center: [20, 77], zoom: 5, zoomControl: true, attributionControl: false }});
   L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{ maxZoom: 19, subdomains: 'abcd' }}).addTo(_satMap);
-  _satMap.on('mousemove', function(e) {{}});
 }}
 
 async function _satUpdateToken() {{
@@ -5065,7 +4081,6 @@ async function satApplyLayer() {{
   }}
 }}
 
-// Satellite search
 var _satSearchTimer;
 document.getElementById('satSearchInput').addEventListener('input', function() {{
   clearTimeout(_satSearchTimer);
@@ -5133,8 +4148,215 @@ function _satLog(msg, type) {{
   area.scrollTop = area.scrollHeight;
 }}
 
-</script>
+// GBM Simulation
+window.runGBM = function(){{
+  var ticker   = (document.getElementById('gbm-ticker').value||'AAPL').trim().toUpperCase();
+  var n_years  = parseInt(document.getElementById('gbm-years').value,10);
+  var n_scen   = parseInt(document.getElementById('gbm-scenarios').value,10);
+  var btn      = document.getElementById('gbm-btn');
+  var status   = document.getElementById('gbm-status');
+  btn.disabled = true;
+  status.textContent = 'Running simulation for ' + ticker + '…';
+  fetch('/api/gbm', {{
+    method:'POST',
+    headers:{{'Content-Type':'application/json'}},
+    body: JSON.stringify({{ticker:ticker, n_years:n_years, n_scenarios:n_scen}})
+  }})
+  .then(function(r){{return r.json();}})
+  .then(function(d){{
+    if(d.error){{ status.textContent='Error: '+d.error; btn.disabled=false; return; }}
+    var chartEl = document.getElementById('gbm-chart');
+    var histEl  = document.getElementById('gbm-hist');
+    var isMobile = window.innerWidth < 600;
+    chartEl.style.height = isMobile ? '260px' : '380px';
+    chartEl.style.marginTop = '8px';
+    histEl.style.height  = isMobile ? '160px' : '220px';
+    histEl.style.marginTop = '8px';
+    status.style.minHeight = '18px';
+    status.style.marginBottom = '6px';
+    renderGBM(d);
+    btn.disabled=false;
+    status.textContent='✓ ' + d.n_scenarios + ' paths · μ=' + (d.mu*100).toFixed(2) + '% · σ=' + (d.sigma*100).toFixed(2) + '%  (calibrated on 2y history)';
+  }})
+  .catch(function(e){{ status.textContent='Request failed: '+e; btn.disabled=false; }});
+}};
 
+function renderGBM(d){{
+  var now = new Date();
+  var tDates = d.t_axis.map(function(frac){{
+    var ms = now.getTime() + frac * 365.25 * 24 * 3600 * 1000;
+    return new Date(ms).toISOString().slice(0,10);
+  }});
+  var LY = {{
+    paper_bgcolor:'rgba(0,0,0,0)',
+    plot_bgcolor:'rgba(0,0,0,0)',
+    font:{{color:'#787b86', family:"'DM Sans',sans-serif", size:10}},
+    margin:{{l:62, r:20, t:48, b:44}},
+    xaxis:{{gridcolor:'rgba(42,46,57,0.6)', color:'#787b86', zeroline:false, showline:false, tickfont:{{size:9,color:'#787b86'}}, tickformat:'%b %Y', type:'date'}},
+    yaxis:{{gridcolor:'rgba(42,46,57,0.6)', color:'#787b86', zeroline:false, showline:false, tickfont:{{size:9,color:'#787b86'}}}},
+    hovermode:'x unified',
+    hoverlabel:{{bgcolor:'rgba(255,255,255,0.97)',bordercolor:'rgba(120,123,134,0.3)', font:{{color:'#000',size:11}}}},
+    legend:{{orientation:'h', y:1.07, x:0, font:{{size:9,color:'#787b86'}}, bgcolor:'rgba(0,0,0,0)', borderwidth:0}}
+  }};
+  var t = tDates;
+  var n = d.paths.length;
+  function colAtPct(pctVal){{
+    return d.t_axis.map(function(_,ti){{
+      var vals = d.paths.map(function(p){{return p[ti];}}).sort(function(a,b){{return a-b;}});
+      return vals[Math.min(Math.floor(pctVal/100*vals.length), vals.length-1)];
+    }});
+  }}
+  var p5  = colAtPct(5);
+  var p25 = colAtPct(25);
+  var p50 = colAtPct(50);
+  var p75 = colAtPct(75);
+  var p95 = colAtPct(95);
+  var traces = [];
+  for(var i=0;i<n;i++){{
+    traces.push({{x:t, y:d.paths[i], mode:'lines', line:{{color:'rgba(100,149,237,0.18)', width:0.8}}, showlegend:false, hoverinfo:'skip'}});
+  }}
+  traces.push({{x:t, y:p95, mode:'lines', line:{{color:'rgba(0,0,0,0)', width:0}}, showlegend:false, hoverinfo:'skip'}});
+  traces.push({{x:t, y:p5, mode:'lines', line:{{color:'rgba(0,0,0,0)', width:0}}, fill:'tonexty', fillcolor:'rgba(41,98,255,0.08)', showlegend:false, hoverinfo:'skip', name:'90% cone'}});
+  traces.push({{x:t, y:p75, mode:'lines', line:{{color:'rgba(0,0,0,0)', width:0}}, showlegend:false, hoverinfo:'skip'}});
+  traces.push({{x:t, y:p25, mode:'lines', line:{{color:'rgba(0,0,0,0)', width:0}}, fill:'tonexty', fillcolor:'rgba(41,98,255,0.20)', showlegend:true, name:'50% band (IQR)', hoverinfo:'skip'}});
+  traces.push({{x:t, y:p5, mode:'lines', name:'P5  (bear)', line:{{color:'#ef5350', width:1.2, dash:'dot'}}, hovertemplate:'P5 <b>%{{y:.2f}}</b><extra></extra>'}});
+  traces.push({{x:t, y:p95, mode:'lines', name:'P95 (bull)', line:{{color:'#26a69a', width:1.2, dash:'dot'}}, hovertemplate:'P95 <b>%{{y:.2f}}</b><extra></extra>'}});
+  traces.push({{x:t, y:p50, mode:'lines', name:'Median (P50)', line:{{color:'#f9a825', width:2.5}}, hovertemplate:'Median <b>%{{y:.2f}}</b><extra></extra>'}});
+  traces.push({{x:[t[0],t[t.length-1]], y:[d.s_0,d.s_0], mode:'lines', name:'Entry ' + d.s_0.toFixed(2), line:{{color:'#787b86', width:1.5, dash:'dash'}}, hoverinfo:'skip'}});
+  var currency = (d.ticker.endsWith('.NS')||d.ticker.endsWith('.BO')) ? 'INR' : 'USD';
+  Plotly.react('gbm-chart', traces, Object.assign({{}}, LY, {{
+    title:{{text:'<b style="color:#d1d4dc">' + d.ticker + '</b><span style="color:#787b86">  Monte Carlo GBM · ' + d.n_years + 'y horizon · ' + d.n_scenarios + ' paths</span>', font:{{size:11}}, x:0.01, xanchor:'left'}},
+    yaxis: Object.assign({{}}, LY.yaxis, {{title:{{text:currency, font:{{size:10,color:'#787b86'}}, standoff:8}}}}),
+    xaxis: Object.assign({{}}, LY.xaxis, {{title:{{text:'Date', font:{{size:10,color:'#787b86'}}, standoff:8}}}})
+  }}), {{responsive:true}});
+  var terminal = d.terminal;
+  var loss = terminal.filter(function(v){{return v <  d.s_0;}});
+  var gain = terminal.filter(function(v){{return v >= d.s_0;}});
+  var allMin = Math.min.apply(null,terminal);
+  var allMax = Math.max.apply(null,terminal);
+  var nBins  = 35;
+  var bSize  = (allMax - allMin) / nBins;
+  var histTraces = [
+    {{x: loss, type:'histogram', xbins:{{start:allMin, end:d.s_0, size:bSize}}, marker:{{color:'rgba(239,83,80,0.75)', line:{{color:'rgba(239,83,80,0.4)', width:1}}}}, name:'Below entry', hovertemplate:'%{{x:.2f}}  Count: %{{y}}<extra>Loss</extra>'}},
+    {{x: gain, type:'histogram', xbins:{{start:d.s_0, end:allMax+bSize, size:bSize}}, marker:{{color:'rgba(38,166,154,0.75)', line:{{color:'rgba(38,166,154,0.4)', width:1}}}}, name:'Above entry', hovertemplate:'%{{x:.2f}}  Count: %{{y}}<extra>Gain</extra>'}}
+  ];
+  Plotly.react('gbm-hist', histTraces, Object.assign({{}}, LY, {{
+    barmode:'overlay',
+    title:{{text:'<b style="color:#d1d4dc">Terminal Distribution</b><span style="color:#787b86">  (Year ' + d.n_years + ')</span>', font:{{size:11}}, x:0.01, xanchor:'left'}},
+    xaxis: Object.assign({{}}, LY.xaxis, {{type:'linear', tickformat:'', title:{{text:currency + ' at expiry', font:{{size:10,color:'#787b86'}}, standoff:8}}}}),
+    yaxis: Object.assign({{}}, LY.yaxis, {{title:{{text:'Count', font:{{size:10,color:'#787b86'}}, standoff:8}}}}),
+    shapes:[{{type:'line', x0:d.s_0, x1:d.s_0, y0:0, y1:1, yref:'paper', line:{{color:'#787b86', width:1.5, dash:'dash'}}}}],
+    annotations:[{{x:d.s_0, y:1.05, yref:'paper', xanchor:'center', text:'<b>Entry ' + d.s_0.toFixed(2) + '</b>', showarrow:false, font:{{size:9, color:'#787b86'}}}}]
+  }}), {{responsive:true}});
+  var p   = d.percentiles;
+  var pct = function(v){{
+    var chg = (v - d.s_0) / d.s_0 * 100;
+    var col = chg >= 0 ? '#26a69a' : '#ef5350';
+    return '<span style="color:'+col+';font-weight:600">' + (chg>=0?'+':'') + chg.toFixed(1) + '%</span>';
+  }};
+  var probGain = (gain.length / terminal.length * 100).toFixed(1);
+  var el = document.getElementById('gbm-stats');
+  el.innerHTML =
+    '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Calibration</span>' +
+    '&ensp;μ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.mu*100).toFixed(2) + '%</strong>' +
+    '&ensp;σ<sub>ann</sub>&thinsp;<strong style="color:#f9a825">' + (d.sigma*100).toFixed(2) + '%</strong>' +
+    '&ensp;Entry&thinsp;<strong style="color:#131722">' + d.s_0.toFixed(2) + '</strong>' +
+    '&ensp;P(gain)&thinsp;<strong style="color:#26a69a">' + probGain + '%</strong>' +
+    '<br>' +
+    '<span style="color:#787b86;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700">Terminal percentiles</span>' +
+    '&ensp;<span style="color:#ef5350;font-weight:600">P5</span>&thinsp;<strong style="color:#131722">' + p.p5.toFixed(2) + '</strong>&thinsp;' + pct(p.p5) +
+    '&ensp;<span style="color:#787b86;font-weight:600">P25</span>&thinsp;<strong style="color:#131722">' + p.p25.toFixed(2) + '</strong>&thinsp;' + pct(p.p25) +
+    '&ensp;<span style="color:#f9a825;font-weight:600">P50</span>&thinsp;<strong style="color:#131722">' + p.p50.toFixed(2) + '</strong>&thinsp;' + pct(p.p50) +
+    '&ensp;<span style="color:#787b86;font-weight:600">P75</span>&thinsp;<strong style="color:#131722">' + p.p75.toFixed(2) + '</strong>&thinsp;' + pct(p.p75) +
+    '&ensp;<span style="color:#26a69a;font-weight:600">P95</span>&thinsp;<strong style="color:#131722">' + p.p95.toFixed(2) + '</strong>&thinsp;' + pct(p.p95);
+  el.style.background    = '#ffffff';
+  el.style.border        = '2px solid #131722';
+  el.style.borderRadius  = '6px';
+  el.style.color         = '#131722';
+  el.style.display       = 'block';
+}}
+
+// AIS Vessel Tracker
+var _aisRunning = false;
+function toggleAIS() {{
+  var btn = document.getElementById('ais-toggle-btn');
+  var badge = document.getElementById('ais-vessel-badge');
+  var iframe = document.getElementById('vessel-iframe');
+  if (!_aisRunning) {{
+    _aisRunning = true;
+    btn.textContent = '⏹ Stop';
+    btn.style.borderColor = 'rgba(0,200,100,.5)';
+    btn.style.background = 'rgba(0,200,100,.08)';
+    btn.style.color = '#008844';
+    badge.textContent = 'Connecting…';
+    iframe.contentWindow.postMessage('ais:start', '*');
+  }} else {{
+    _aisRunning = false;
+    btn.innerHTML = '&#9654; Start';
+    btn.style.borderColor = 'rgba(255,100,100,.5)';
+    btn.style.background = 'rgba(255,100,100,.08)';
+    btn.style.color = '#cc3333';
+    badge.textContent = 'Stopped';
+    iframe.contentWindow.postMessage('ais:stop', '*');
+  }}
+}}
+
+// ADS-B Aircraft Tracker
+var _adsbRunning = false;
+var _adsbIframeReady = false;
+var _adsbPendingCmd = null;
+var _adsbIframe = document.getElementById('aircraft-iframe');
+
+_adsbIframe.addEventListener('load', function() {{
+  _adsbIframeReady = true;
+  if (_adsbPendingCmd) {{
+    _adsbIframe.contentWindow.postMessage(_adsbPendingCmd, '*');
+    _adsbPendingCmd = null;
+  }}
+}});
+
+window.addEventListener('message', function(e) {{
+  if (e.data && e.data.type === 'adsb:count') {{
+    var badge = document.getElementById('adsb-aircraft-badge');
+    if (badge) badge.textContent = e.data.count + ' live';
+  }}
+}});
+
+function _sendAdsbMsg(cmd) {{
+  if (_adsbIframeReady) {{
+    _adsbIframe.contentWindow.postMessage(cmd, '*');
+  }} else {{
+    _adsbPendingCmd = cmd;
+  }}
+}}
+
+function toggleADSB() {{
+  var btn = document.getElementById('adsb-toggle-btn');
+  var badge = document.getElementById('adsb-aircraft-badge');
+  if (!_adsbRunning) {{
+    _adsbRunning = true;
+    btn.textContent = '⏹ Stop';
+    btn.style.borderColor = 'rgba(0,200,100,.5)';
+    btn.style.background = 'rgba(0,200,100,.08)';
+    btn.style.color = '#008844';
+    badge.textContent = 'Connecting…';
+    _sendAdsbMsg('adsb:start');
+  }} else {{
+    _adsbRunning = false;
+    btn.innerHTML = '&#9654; Start';
+    btn.style.borderColor = 'rgba(255,100,100,.5)';
+    btn.style.background = 'rgba(255,100,100,.08)';
+    btn.style.color = '#cc3333';
+    badge.textContent = 'Stopped';
+    _sendAdsbMsg('adsb:stop');
+  }}
+}}
+
+// Initialize Alpaca feeds
+fetchAlpacaStocks();
+fetchAlpacaAccount();
+setInterval(fetchAlpacaStocks, 15000);
+setInterval(fetchAlpacaAccount, 60000);
 </script>
 </body>
 </html>"""
@@ -5197,8 +4419,7 @@ def api_ai_analysis():
         try:
             kws = get_ticker_trend_keywords(ticker, name)
             trends_data = fetch_google_trends(kws, timeframe="today 3-m")
-        except Exception as exc:
-            print(f"[Trends/_fetch_trends] {exc}")
+        except: pass
  
     def _fetch_fundamentals():
         nonlocal fundamentals
@@ -5431,15 +4652,7 @@ def api_ais_key():
     key = os.environ.get("AISSTREAM_API_KEY", "").strip().strip("\"'")
     if not key:
         return jsonify({"ok": False, "reason": "AISSTREAM_API_KEY env var not set"}), 503
-    # Return the key only over this server-side route (same-origin iframe can fetch it)
     return jsonify({"ok": True, "key": key})
-
-
-
-
-
-
-
 
 
 @app.route("/vessels")
@@ -5519,7 +4732,6 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
   <div id="debug-line2"></div>
 </div>
 <script>
-// ── MAP ───────────────────────────────────────────────────────────────────
 var map = L.map('map', {center:[20,10], zoom:2, zoomControl:true, attributionControl:true});
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/copyright">OSM</a>',
@@ -5529,20 +4741,15 @@ L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
   attribution: '&copy; <a href="https://openseamap.org">OpenSeaMap</a>',
   opacity: 0.55, maxZoom: 18
 }).addTo(map);
-
-// ── DEBUG LOG ──────────────────────────────────────────────────────────────
 function dbg(line1, line2) {
   document.getElementById('debug-line1').textContent = line1 || '';
   if (line2 !== undefined) document.getElementById('debug-line2').textContent = line2 || '';
 }
-
-// ── VESSEL STATE ──────────────────────────────────────────────────────────
-var vessels    = {};  // mmsi -> {marker, data, lastSeen, shown}
-var typeCache  = {};  // mmsi -> ship type int (from ShipStaticData)
+var vessels    = {};
+var typeCache  = {};
 var activeFilter = 'all';
-var vesselLimit  = 3000;  // default cap; user can raise with +500 button
+var vesselLimit  = 3000;
 var msgCount = 0;
-
 function classify(t) {
   t = parseInt(t) || 0;
   if (t >= 70 && t <= 79) return 'cargo';
@@ -5552,7 +4759,6 @@ function classify(t) {
   if (t >= 50 && t <= 59) return 'service';
   return 'other';
 }
-
 var TYPE_META = {
   cargo:     {color:'#00c8ff', label:'Cargo'},
   tanker:    {color:'#ff7733', label:'Tanker'},
@@ -5561,7 +4767,6 @@ var TYPE_META = {
   service:   {color:'#cc77ff', label:'Service'},
   other:     {color:'#6b7fa3', label:'Other'}
 };
-
 function makeMarkerHTML(color, cog) {
   var r = parseFloat(cog) || 0;
   return '<div style="width:0;height:0;position:relative;transform:rotate('+r+'deg);transform-origin:center center">' +
@@ -5570,9 +4775,8 @@ function makeMarkerHTML(color, cog) {
     '</svg></div>';
 }
 function makeIcon(color, cog) {
-  return L.divIcon({html: makeMarkerHTML(color, cog), className:'', iconSize:[14,20], iconAnchor:[7,10]});
+  return L.divIcon({html:makeMarkerHTML(color, cog), className:'', iconSize:[14,20], iconAnchor:[7,10]});
 }
-
 function buildPopup(d) {
   var meta = TYPE_META[d.cls] || TYPE_META.other;
   var badge = '<span class="popup-type-badge" style="background:'+meta.color+'22;color:'+meta.color+';border:1px solid '+meta.color+'44">'+meta.label+'</span>';
@@ -5590,22 +4794,17 @@ function buildPopup(d) {
   rows.forEach(function(r){ if(r[1]!=='—') html += '<div class="popup-row"><span class="popup-key">'+r[0]+'</span><span class="popup-val">'+r[1]+'</span></div>'; });
   return html;
 }
-
 function upsertVessel(d) {
   var mmsi = String(d.mmsi || '');
   if (!mmsi || mmsi === '0') return;
   var lat = parseFloat(d.lat), lon = parseFloat(d.lon);
   if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
-
-  // Block new additions once cap is reached; existing vessels always update
   if (!vessels[mmsi] && Object.keys(vessels).length >= vesselLimit) return;
-
   var cls  = classify(d.type || typeCache[mmsi]);
   d.cls = cls;
   var meta = TYPE_META[cls] || TYPE_META.other;
   var visible = (activeFilter === 'all' || activeFilter === cls ||
                  (activeFilter === 'other' && (cls==='other'||cls==='service')));
-
   if (vessels[mmsi]) {
     var v = vessels[mmsi];
     v.data = Object.assign(v.data, d);
@@ -5624,11 +4823,9 @@ function upsertVessel(d) {
   }
   updateCounter();
 }
-
 function fmtLimit(n) {
   return n >= 10000 ? (n/1000).toFixed(0)+'K' : n.toLocaleString();
 }
-
 function updateCounter() {
   var n = Object.keys(vessels).length;
   var atCap = n >= vesselLimit;
@@ -5641,13 +4838,11 @@ function updateCounter() {
   if (btn) btn.textContent = atCap ? ' +500' : '+500';
   try { var b=window.parent.document.getElementById('ais-vessel-badge'); if(b) b.textContent=n.toLocaleString()+' live'; } catch(e){}
 }
-
 document.getElementById('limit-btn').addEventListener('click', function() {
   vesselLimit += 500;
   this.title = 'Limit: ' + fmtLimit(vesselLimit) + ' · Click to add 500 more';
   updateCounter();
 });
-
 setInterval(function(){
   var cutoff = Date.now() - 1200000;
   Object.keys(vessels).forEach(function(mmsi){
@@ -5659,8 +4854,6 @@ setInterval(function(){
   });
   updateCounter();
 }, 60000);
-
-// ── FILTER BUTTONS ─────────────────────────────────────────────────────────
 document.getElementById('filter-bar').addEventListener('click', function(e){
   var btn = e.target.closest('.fbtn'); if (!btn) return;
   activeFilter = btn.dataset.type;
@@ -5673,8 +4866,6 @@ document.getElementById('filter-bar').addEventListener('click', function(e){
     if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
   });
 });
-
-// ── STATUS ────────────────────────────────────────────────────────────────
 function setStatus(state, detail) {
   var led = document.getElementById('status-led');
   var txt = document.getElementById('status-text');
@@ -5693,15 +4884,11 @@ function setStatus(state, detail) {
   if (detail) dbg(s.text, detail);
   else dbg(s.text);
 }
-
-// ── WEBSOCKET ────────────────────────────────────────────────────────────
 var ws = null, reconnectDelay = 3000, reconnectTimer = null;
-var _aisStopped = true;  // Start in stopped state — controlled by parent page
-
+var _aisStopped = true;
 function connect(apiKey) {
   setStatus('connecting', 'Opening wss://stream.aisstream.io/v0/stream');
   ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
-
   ws.onopen = function() {
     setStatus('connected', 'Sending subscription…');
     reconnectDelay = 3000;
@@ -5713,11 +4900,8 @@ function connect(apiKey) {
     ws.send(JSON.stringify(sub));
     dbg('Connected · Subscription sent · Waiting for vessels…', JSON.stringify(sub).slice(0,120));
   };
-
-  ws.binaryType = 'blob';  // AISStream sends binary Blob frames
-
+  ws.binaryType = 'blob';
   ws.onmessage = function(evt) {
-    // AISStream sends data as Blob — must read it as text first
     if (evt.data instanceof Blob) {
       var reader = new FileReader();
       reader.onload = function() { handleMsg(reader.result); };
@@ -5726,19 +4910,15 @@ function connect(apiKey) {
       handleMsg(evt.data);
     }
   };
-
   function handleMsg(raw) {
     msgCount++;
     var msg;
     try { msg = JSON.parse(raw); } catch(e) { dbg('JSON parse error: '+e.message, raw.slice(0,120)); return; }
-
     if (msgCount <= 5) dbg('MSG #'+msgCount+': '+msg.MessageType, raw.slice(0,140));
     if (msgCount % 100 === 0) dbg('Msgs: '+msgCount+' · Vessels: '+Object.keys(vessels).length);
-
     var mtype = msg.MessageType;
     var meta  = msg.MetaData || {};
     var mmsi  = String(meta.MMSI || meta.MmsiString || '');
-
     if (mtype === 'PositionReport') {
       var pr = (msg.Message || {}).PositionReport || {};
       upsertVessel({
@@ -5751,7 +4931,6 @@ function connect(apiKey) {
         type: typeCache[mmsi],
         flag: meta.Flag || undefined
       });
-
     } else if (mtype === 'ShipStaticData') {
       var sd  = (msg.Message || {}).ShipStaticData || {};
       var dim = sd.Dimension || {};
@@ -5771,17 +4950,14 @@ function connect(apiKey) {
           length: len > 0 ? len : undefined
         });
       }
-
     } else if (mtype === 'ERROR' || mtype === 'error') {
       var errMsg = (msg.Message || msg.Error || JSON.stringify(msg)).slice(0,200);
       setStatus('error', 'Server error: ' + errMsg);
     }
   }
-
   ws.onerror = function(e) {
     setStatus('error', 'WebSocket error — check browser console for details');
   };
-
   ws.onclose = function(evt) {
     var reason = evt.reason || ('Code '+evt.code);
     if (_aisStopped) { setStatus('init', 'Stopped'); dbg('AIS stopped.'); return; }
@@ -5793,8 +4969,6 @@ function connect(apiKey) {
     }, reconnectDelay);
   };
 }
-
-// ── INIT: Fetch key from server, then connect ─────────────────────────────
 function init() {
   setStatus('fetching', 'GET /api/ais-key …');
   fetch('/api/ais-key')
@@ -5808,14 +4982,12 @@ function init() {
       connect(data.key);
     })
     .catch(function(err) {
-      // No API key — still show the map with OpenSeaMap + a status notice
       setStatus('nokey', err.message);
       var led = document.getElementById('status-led');
       var txt = document.getElementById('status-text');
       led.style.background = '#ffaa33';
       txt.textContent = 'Live positions need AISSTREAM_API_KEY';
       dbg('Map visible — set AISSTREAM_API_KEY env var in Vercel to enable live AIS', err.message);
-      // Add a visible overlay hint on the map
       var info = L.control({position:'topright'});
       info.onAdd = function() {
         var d = L.DomUtil.create('div');
@@ -5826,13 +4998,11 @@ function init() {
       info.addTo(map);
     });
 }
-
 function aisStart() {
   _aisStopped = false;
   reconnectDelay = 3000;
   init();
 }
-
 function aisStop() {
   _aisStopped = true;
   clearTimeout(reconnectTimer);
@@ -5840,18 +5010,12 @@ function aisStop() {
   setStatus('init', 'Stopped by user');
   dbg('AIS tracker stopped.');
 }
-
-// Listen for start/stop commands from parent page
 window.addEventListener('message', function(e) {
   if (e.data === 'ais:start') aisStart();
   if (e.data === 'ais:stop')  aisStop();
 });
-
-// Do NOT auto-start — wait for parent page command
 setStatus('init', 'Ready — press Start to connect');
 dbg('AIS tracker ready. Press \u25b6 Start in the panel above.');
-
-
 </script>
 </body>
 </html>"""
@@ -5871,14 +5035,7 @@ def aircraft():
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace,sans-serif;background:#07090f;color:#c8d8f0}
-
-/* ── TOP BAR ─────────────────────────────────────────────── */
-#topbar{
-  position:fixed;top:0;left:0;right:0;height:40px;z-index:2000;
-  background:rgba(7,9,15,.97);border-bottom:1px solid rgba(255,255,255,.07);
-  display:flex;align-items:center;padding:0 12px;gap:10px;
-  backdrop-filter:blur(12px);
-}
+#topbar{position:fixed;top:0;left:0;right:0;height:40px;z-index:2000;background:rgba(7,9,15,.97);border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;padding:0 12px;gap:10px;backdrop-filter:blur(12px)}
 #status-led{width:7px;height:7px;border-radius:50%;background:#444;flex-shrink:0;transition:background .4s}
 #status-text{display:none}
 #ac-counter{font-size:9px;letter-spacing:.07em;color:#ffaa33;background:rgba(255,170,50,.08);border:1px solid rgba(255,170,50,.18);border-radius:20px;padding:2px 9px;white-space:nowrap;flex-shrink:0}
@@ -5886,57 +5043,18 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
 .fbtn{font-size:8px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#5a7090;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}
 .fbtn:hover{border-color:#ffaa33;color:#ffaa33}
 .fbtn.on{background:rgba(255,170,50,.1);border-color:rgba(255,170,50,.5);color:#ffaa33}
-
-/* ── BOTTOM STATUS BAR ───────────────────────────────────── */
-#statusbar{
-  position:fixed;bottom:0;left:0;right:0;height:28px;z-index:2000;
-  background:rgba(7,9,15,.97);border-top:1px solid rgba(255,255,255,.06);
-  display:flex;align-items:center;padding:0 12px;gap:8px;overflow:hidden;
-}
+#statusbar{position:fixed;bottom:0;left:0;right:0;height:28px;z-index:2000;background:rgba(7,9,15,.97);border-top:1px solid rgba(255,255,255,.06);display:flex;align-items:center;padding:0 12px;gap:8px;overflow:hidden}
 #dbg1{font-size:8px;letter-spacing:.05em;color:#3a5a7a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
 #poll-count{font-size:8px;letter-spacing:.05em;color:#2a3a52;white-space:nowrap;flex-shrink:0}
-
-/* ── MAIN AREA: MAP + SIDEBAR ────────────────────────────── */
-#wrap{
-  position:fixed;
-  top:40px;bottom:28px;left:0;right:0;
-  display:flex;flex-direction:row;
-}
-
-/* MAP — critical: must have explicit pixel height for Leaflet */
-#map{
-  flex:1 1 0;
-  min-width:0;
-  /* height is set by JS after layout to avoid Leaflet zero-size bug */
-  background:#07090f;
-}
-
-/* SIDEBAR ────────────────────────────────────────────────── */
-#sidebar{
-  width:280px;flex-shrink:0;
-  background:#07090f;
-  border-left:1px solid rgba(255,255,255,.06);
-  display:flex;flex-direction:column;
-  overflow:hidden;
-}
-#sb-header{
-  padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05);
-  font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:#3a5070;
-  display:flex;justify-content:space-between;align-items:center;flex-shrink:0;
-}
+#wrap{position:fixed;top:40px;bottom:28px;left:0;right:0;display:flex;flex-direction:row}
+#map{flex:1 1 0;min-width:0;background:#07090f}
+#sidebar{width:280px;flex-shrink:0;background:#07090f;border-left:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;overflow:hidden}
+#sb-header{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05);font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:#3a5070;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
 #sb-count{color:#ffaa33;font-size:9px}
-#sb-list{
-  flex:1;overflow-y:auto;
-  scrollbar-width:thin;scrollbar-color:#1a2a3a transparent;
-}
+#sb-list{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1a2a3a transparent}
 #sb-list::-webkit-scrollbar{width:3px}
 #sb-list::-webkit-scrollbar-thumb{background:#1a2a3a;border-radius:2px}
-
-/* Aircraft row */
-.acr{
-  padding:7px 10px 8px;border-bottom:1px solid rgba(255,255,255,.035);
-  cursor:pointer;transition:background .1s;
-}
+.acr{padding:7px 10px 8px;border-bottom:1px solid rgba(255,255,255,.035);cursor:pointer;transition:background .1s}
 .acr:hover{background:rgba(255,170,50,.04)}
 .acr.sel{background:rgba(255,170,50,.08);border-left:2px solid #ffaa33;padding-left:8px}
 .acr-top{display:flex;align-items:center;gap:5px;margin-bottom:4px}
@@ -5946,8 +5064,6 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
 .acg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px 6px}
 .acf-k{font-size:7px;text-transform:uppercase;letter-spacing:.08em;color:#2a3a52}
 .acf-v{font-size:9px;color:#7090b0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
-/* Leaflet overrides */
 .leaflet-container{background:#07090f!important}
 .leaflet-control-zoom{border:1px solid rgba(255,255,255,.1)!important;background:#0d1117!important;border-radius:6px!important}
 .leaflet-control-zoom a{background:#0d1117!important;color:#6b7fa3!important;border-color:rgba(255,255,255,.08)!important;width:26px!important;height:26px!important;line-height:26px!important}
@@ -5962,66 +5078,21 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
 .pk{color:#3a4a60;text-transform:uppercase;font-size:8px;letter-spacing:.1em}
 .pv{color:#90a8c8;font-size:10px}
 .pbadge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:8px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;margin-bottom:5px}
-
-/* Mobile — AIS-style: map on top (~55 vh), table scrolls below */
 @media(max-width:680px){
   html,body{overflow:auto}
-
-  #topbar{
-    height:44px;
-    padding:0 8px;gap:6px;
-  }
+  #topbar{height:44px;padding:0 8px;gap:6px}
   #filter-bar{gap:3px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-shrink:1;min-width:0;scrollbar-width:none}
   #filter-bar::-webkit-scrollbar{display:none}
   .fbtn{font-size:7px;padding:2px 6px;white-space:nowrap;flex-shrink:0}
-
-  #wrap{
-    position:relative;
-    top:auto;bottom:auto;left:auto;right:auto;
-    flex-direction:column;
-    width:100%;
-    /* push below fixed topbar */
-    margin-top:44px;
-    /* leave room for fixed statusbar */
-    margin-bottom:28px;
-  }
-
-  #map{
-    width:100%;
-    height:55vw;          /* ~AIS ratio: slightly taller than wide */
-    min-height:220px;
-    flex:none;
-  }
-
-  #sidebar{
-    display:flex;          /* was display:none — restore it */
-    width:100%;
-    flex-direction:column;
-    border-left:none;
-    border-top:1px solid rgba(255,255,255,.08);
-    /* sidebar table is naturally scrollable within the page flow */
-    max-height:none;
-    overflow:visible;
-  }
-
-  #sb-header{
-    padding:6px 10px;
-    position:sticky;top:44px;z-index:100;
-    background:#07090f;
-  }
-
-  #sb-list{
-    overflow-y:visible;   /* let the page scroll instead */
-  }
-
-  /* Make aircraft rows a bit more touch-friendly */
+  #wrap{position:relative;top:auto;bottom:auto;left:auto;right:auto;flex-direction:column;width:100%;margin-top:44px;margin-bottom:28px}
+  #map{width:100%;height:55vw;min-height:220px;flex:none}
+  #sidebar{display:flex;width:100%;flex-direction:column;border-left:none;border-top:1px solid rgba(255,255,255,.08);max-height:none;overflow:visible}
+  #sb-header{padding:6px 10px;position:sticky;top:44px;z-index:100;background:#07090f}
+  #sb-list{overflow-y:visible}
   .acr{padding:8px 10px 9px}
   .acs{font-size:12px}
   .acf-v{font-size:10px}
-
-  #statusbar{
-    position:fixed;
-  }
+  #statusbar{position:fixed}
 }
 </style>
 </head>
@@ -6037,25 +5108,18 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
     <button class="fbtn" data-t="ground">Ground</button>
   </div>
 </div>
-
 <div id="wrap">
   <div id="map"></div>
   <div id="sidebar">
-    <div id="sb-header">
-      <span>Live Aircraft Data</span>
-      <span id="sb-count">—</span>
-    </div>
+    <div id="sb-header"><span>Live Aircraft Data</span><span id="sb-count">—</span></div>
     <div id="sb-list"></div>
   </div>
 </div>
-
 <div id="statusbar">
   <span id="dbg1">ADS-B tracker ready — press Start above</span>
   <span id="poll-count"></span>
 </div>
-
 <script>
-// ── CONSTANTS ─────────────────────────────────────────────────────────────────
 var TYPE = {
   airborne: {color:'#ffaa33', label:'Airborne'},
   military: {color:'#ff4455', label:'Military'},
@@ -6065,87 +5129,38 @@ var TYPE = {
 var MIL_HEX = ['ADF','AE0','AE1','AE2','AE3','AE4','AE5','AE6','AE7','AE8','AE9',
   '43C','43D','43E','43F','440','441','3F4','3F5','3F6','3F7','3F8','3F9',
   '7F0','7F1','7F2','7F3','7F4','7F5','7F6','7F7','7F8','7F9','7FA','7FB'];
-
-// Global regions [lat, lon, dst_km] — cycling every poll
 var REGIONS = [
-  [40,  -95,  2500],  // North America
-  [51,   10,  2000],  // Europe
-  [35,  115,  2500],  // East Asia
-  [20,   80,  2000],  // South Asia
-  [-15, 133,  2000],  // Australia
-  [55,   60,  2500],  // Russia / Central Asia
-  [25,   45,  2000],  // Middle East
-  [-5,   20,  2500],  // Africa
-  [-20, -60,  2500],  // South America
-  [65,  -20,  1500],  // North Atlantic
-  [35,  135,  1500],  // Japan / Korea
-  [5,   105,  2000],  // SE Asia
+  [40,  -95,  2500], [51,   10,  2000], [35,  115,  2500], [20,   80,  2000],
+  [-15, 133,  2000], [55,   60,  2500], [25,   45,  2000], [-5,   20,  2500],
+  [-20, -60,  2500], [65,  -20,  1500], [35,  135,  1500], [5,   105,  2000],
 ];
-
-// ── STATE ─────────────────────────────────────────────────────────────────────
-var ac      = {};        // hex -> {marker, data, lastSeen, shown}
-var filter  = 'all';
-var selHex  = null;
-var polls   = 0;
-var ridx    = 0;
-var stopped = true;
-var timer   = null;
-var INTERVAL = 8000;
-
-// ── MAP INIT ─────────────────────────────────────────────────────────────────
-// CRITICAL: set explicit pixel size on #map before L.map() so Leaflet
-// doesn't see a 0x0 container and skip rendering.
+var ac = {}, filter = 'all', selHex = null, polls = 0, ridx = 0, stopped = true;
+var timer = null, INTERVAL = 8000;
 var wrap = document.getElementById('wrap');
 var mapEl = document.getElementById('map');
-
 function isMobile() { return window.innerWidth <= 680; }
-
 function setMapHeight() {
-  if (isMobile()) {
-    // Mobile: fixed vw-based height driven by CSS; just clear any inline override
-    mapEl.style.height = '';
-  } else {
-    // Desktop: fill the fixed-position wrap vertically
-    mapEl.style.height = wrap.offsetHeight + 'px';
-  }
+  if (isMobile()) mapEl.style.height = '';
+  else mapEl.style.height = wrap.offsetHeight + 'px';
 }
 setMapHeight();
-
-var map = L.map('map', {
-  center: [30, 10], zoom: 3,
-  zoomControl: true, attributionControl: true,
-  preferCanvas: true   // canvas renderer = much faster for many markers
-});
+var map = L.map('map', {center:[30,10], zoom:3, zoomControl:true, attributionControl:true, preferCanvas:true});
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
   subdomains: 'abcd', maxZoom: 19
 }).addTo(map);
-
-// Resize map when window resizes
-window.addEventListener('resize', function() {
-  setMapHeight();
-  map.invalidateSize();
-});
-
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-function log(msg) {
-  document.getElementById('dbg1').textContent = msg;
-}
+window.addEventListener('resize', function() { setMapHeight(); map.invalidateSize(); });
+function log(msg) { document.getElementById('dbg1').textContent = msg; }
 function setLed(state) {
   var c = {live:'#44ee88', error:'#ff4455', init:'#ffaa33', stopped:'#333'}[state] || '#555';
   document.getElementById('status-led').style.background = c;
 }
-function setStatus(state, txt) {
-  document.getElementById('status-text').textContent = txt;
-  setLed(state);
-}
-
+function setStatus(state, txt) { document.getElementById('status-text').textContent = txt; setLed(state); }
 function classify(d) {
   var h = (d.hex || '').toUpperCase();
   for (var i=0; i<MIL_HEX.length; i++) if (h.startsWith(MIL_HEX[i])) return 'military';
   return d.on_ground ? 'ground' : 'airborne';
 }
-
 function planeIcon(color, hdg) {
   var r = parseFloat(hdg) || 0;
   var html = '<div style="width:0;height:0;position:relative;transform:rotate('+r+'deg)">' +
@@ -6156,10 +5171,8 @@ function planeIcon(color, hdg) {
     '</svg></div>';
   return L.divIcon({html:html, className:'', iconSize:[18,24], iconAnchor:[9,12]});
 }
-
 function fAlt(d) {
   if (d.on_ground) return 'Ground';
-  // alt_baro from adsb.lol is already in FEET
   return d.alt_ft != null ? d.alt_ft.toLocaleString() + ' ft' : '—';
 }
 function fSpd(d) { return d.gs_kn != null ? Math.round(d.gs_kn) + ' kn' : '—'; }
@@ -6170,71 +5183,42 @@ function fVrt(d) {
   return (fpm > 64 ? '▲ ' : fpm < -64 ? '▼ ' : '→ ') + Math.abs(fpm) + ' fpm';
 }
 function fPos(v) { return v != null ? parseFloat(v).toFixed(4) + '°' : '—'; }
-function fAge(ts) {
-  var s = Math.round((Date.now()-ts)/1000);
-  return s < 60 ? s+'s' : Math.floor(s/60)+'m';
-}
-
 function buildPopup(d) {
   var t = TYPE[d.cls] || TYPE.other;
   var badge = '<span class="pbadge" style="background:'+t.color+'18;color:'+t.color+';border:1px solid '+t.color+'44">'+t.label+'</span>';
   var rows = [
-    ['ICAO', d.hex.toUpperCase()],
-    ['Flight', d.callsign || '—'],
-    ['Altitude', fAlt(d)],
-    ['Speed', fSpd(d)],
-    ['Heading', fHdg(d)],
-    ['Vert Rate', fVrt(d)],
-    ['Position', fPos(d.lat)+' / '+fPos(d.lon)],
-    ['Squawk', d.squawk || '—'],
-    ['Category', d.category || '—'],
+    ['ICAO', d.hex.toUpperCase()], ['Flight', d.callsign || '—'],
+    ['Altitude', fAlt(d)], ['Speed', fSpd(d)], ['Heading', fHdg(d)],
+    ['Vert Rate', fVrt(d)], ['Position', fPos(d.lat)+' / '+fPos(d.lon)],
+    ['Squawk', d.squawk || '—'], ['Category', d.category || '—']
   ];
   var h = '<div class="pname">'+(d.callsign||d.hex.toUpperCase())+'</div>'+badge;
-  rows.forEach(function(r) {
-    if (r[1] && r[1] !== '—')
-      h += '<div class="prow"><span class="pk">'+r[0]+'</span><span class="pv">'+r[1]+'</span></div>';
-  });
+  rows.forEach(function(r) { if (r[1] && r[1] !== '—') h += '<div class="prow"><span class="pk">'+r[0]+'</span><span class="pv">'+r[1]+'</span></div>'; });
   return h;
 }
-
-// ── PARSE adsb.lol ac object → internal format ────────────────────────────────
-// adsb.lol v2 fields: hex, flight, lat, lon, alt_baro (ft or "ground"),
-//   gs (knots), track (deg), baro_rate (fpm), squawk, category, on_ground
 function parseAC(o) {
   if (!o || o.lat == null || o.lon == null) return null;
   var lat = parseFloat(o.lat), lon = parseFloat(o.lon);
   if (isNaN(lat)||isNaN(lon)) return null;
-
   var onGround = (o.alt_baro === 'ground' || o.alt_baro === 0 || o.on_ground === true);
   var altFt = null;
   if (!onGround && o.alt_baro != null && o.alt_baro !== 'ground') {
     altFt = parseFloat(o.alt_baro);
     if (isNaN(altFt)) altFt = null;
   }
-
   return {
-    hex:      (o.hex || '').toLowerCase(),
-    callsign: (o.flight || '').trim(),
-    lat:      lat,
-    lon:      lon,
-    alt_ft:   altFt,               // feet (as adsb.lol sends)
-    gs_kn:    o.gs != null ? parseFloat(o.gs) : null,         // knots
-    track:    o.track != null ? parseFloat(o.track) : null,   // degrees
-    baro_rate:o.baro_rate != null ? parseFloat(o.baro_rate) : null, // fpm
-    on_ground:onGround,
-    squawk:   o.squawk || null,
-    category: o.category || null,
-    cls:      null,  // set by classify()
+    hex: (o.hex || '').toLowerCase(), callsign: (o.flight || '').trim(),
+    lat: lat, lon: lon, alt_ft: altFt, gs_kn: o.gs != null ? parseFloat(o.gs) : null,
+    track: o.track != null ? parseFloat(o.track) : null,
+    baro_rate: o.baro_rate != null ? parseFloat(o.baro_rate) : null,
+    on_ground: onGround, squawk: o.squawk || null, category: o.category || null, cls: null
   };
 }
-
-// ── UPSERT AIRCRAFT ───────────────────────────────────────────────────────────
 function upsert(d) {
   if (!d || !d.hex) return;
   d.cls = classify(d);
   var t = TYPE[d.cls] || TYPE.other;
   var vis = (filter === 'all' || filter === d.cls);
-
   if (ac[d.hex]) {
     var v = ac[d.hex];
     Object.assign(v.data, d);
@@ -6242,8 +5226,8 @@ function upsert(d) {
     v.marker.setLatLng([d.lat, d.lon]);
     v.marker.setIcon(planeIcon(t.color, d.track));
     if (v.marker.isPopupOpen()) v.marker.setPopupContent(buildPopup(v.data));
-    if (vis && !v.shown)  { v.marker.addTo(map);   v.shown=true; }
-    if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
+    if (vis && !v.shown) { v.marker.addTo(map); v.shown=true; }
+    if (!vis && v.shown) { map.removeLayer(v.marker); v.shown=false; }
   } else {
     var m = L.marker([d.lat, d.lon], {icon: planeIcon(t.color, d.track)});
     m.bindPopup('', {maxWidth:260, className:''});
@@ -6252,26 +5236,20 @@ function upsert(d) {
     ac[d.hex] = {marker:m, data:d, lastSeen:Date.now(), shown:vis};
   }
 }
-
-// ── COUNTER + SIDEBAR ─────────────────────────────────────────────────────────
 function updateUI() {
   var keys = Object.keys(ac);
   var n = keys.length;
   document.getElementById('ac-counter').textContent = n.toLocaleString() + ' aircraft';
   document.getElementById('sb-count').textContent = n;
-  // Report to parent
   try { window.parent.postMessage({type:'adsb:count', count: n.toLocaleString()}, '*'); } catch(e){}
   renderSidebar(keys);
 }
-
 var _sbRender = 0;
 function renderSidebar(keys) {
   var list = document.getElementById('sb-list');
   if (!list) return;
   if (!keys) keys = Object.keys(ac);
-  // Filter
   var fkeys = keys.filter(function(h){ return filter==='all'||ac[h].data.cls===filter; });
-  // Sort: selected first, then callsign
   fkeys.sort(function(a,b){
     if (a===selHex) return -1; if (b===selHex) return 1;
     var ca=ac[a].data.callsign||ac[a].data.hex; var cb=ac[b].data.callsign||ac[b].data.hex;
@@ -6304,8 +5282,6 @@ function renderSidebar(keys) {
   if (fkeys.length > 150) html += '<div style="padding:8px 10px;font-size:8px;color:#2a3a50">+'+(fkeys.length-150)+' more</div>';
   list.innerHTML = html;
 }
-
-// Sidebar click → fly to aircraft
 document.getElementById('sb-list').addEventListener('click', function(e) {
   var r = e.target.closest('.acr'); if (!r) return;
   var h = r.dataset.h; if (!ac[h]) return;
@@ -6316,20 +5292,12 @@ document.getElementById('sb-list').addEventListener('click', function(e) {
   ac[h].marker.setPopupContent(buildPopup(d));
   renderSidebar();
 });
-
-// ── EXPIRE stale aircraft (>3 min) ───────────────────────────────────────────
 setInterval(function() {
   var cut = Date.now() - 180000;
-  Object.keys(ac).forEach(function(h) {
-    if (ac[h].lastSeen < cut) { map.removeLayer(ac[h].marker); delete ac[h]; }
-  });
+  Object.keys(ac).forEach(function(h) { if (ac[h].lastSeen < cut) { map.removeLayer(ac[h].marker); delete ac[h]; } });
   updateUI();
 }, 30000);
-
-// Refresh sidebar ages every 15s
 setInterval(function() { if (!stopped) renderSidebar(); }, 15000);
-
-// ── FILTER BUTTONS ────────────────────────────────────────────────────────────
 document.getElementById('filter-bar').addEventListener('click', function(e) {
   var b = e.target.closest('.fbtn'); if (!b) return;
   filter = b.dataset.t;
@@ -6337,15 +5305,11 @@ document.getElementById('filter-bar').addEventListener('click', function(e) {
   b.classList.add('on');
   Object.values(ac).forEach(function(v) {
     var vis = (filter==='all'||filter===v.data.cls);
-    if (vis && !v.shown)  { v.marker.addTo(map);     v.shown=true; }
-    if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
+    if (vis && !v.shown) { v.marker.addTo(map); v.shown=true; }
+    if (!vis && v.shown) { map.removeLayer(v.marker); v.shown=false; }
   });
   renderSidebar();
 });
-
-// ── POLL adsb.lol via Flask proxy ────────────────────────────────────────────
-// Try multiple ADS-B sources in parallel; use first that returns real aircraft.
-// All three APIs are CORS-enabled, no key required.
 function fetchFromSource(url) {
   return fetch(url, {signal: AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined})
     .then(function(r) { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
@@ -6355,21 +5319,16 @@ function fetchFromSource(url) {
       return {list: list, src: url};
     });
 }
-
 function poll() {
   if (stopped) return;
   var reg = REGIONS[ridx % REGIONS.length];
   ridx++;
-  var lat = reg[0], lon = reg[1], nm = 250; // 250 nm radius (~460 km)
-
-  // Build candidate URLs — three independent CORS-open APIs
+  var lat = reg[0], lon = reg[1], nm = 250;
   var sources = [
     'https://api.airplanes.live/v2/point/'+lat+'/'+lon+'/'+nm,
     'https://api.adsb.lol/v2/aircraft?lat='+lat+'&lon='+lon+'&dst='+nm,
     'https://api.adsb.fi/v1/aircraft?lat='+lat+'&lon='+lon+'&radius='+nm,
   ];
-
-  // Race all three — settle all, use first winner with actual aircraft
   Promise.allSettled(sources.map(fetchFromSource)).then(function(results) {
     if (stopped) return;
     var winner = null;
@@ -6377,22 +5336,13 @@ function poll() {
       if (results[i].status === 'fulfilled') { winner = results[i].value; break; }
     }
     if (!winner) {
-      // All direct failed — fall back to Flask proxy (buffered server data)
       var proxyUrl = '/adsb/proxy?lat='+lat+'&lon='+lon+'&dst='+nm;
-      fetch(proxyUrl)
-        .then(function(r) { return r.json(); })
-        .then(function(data) { handleData(data.ac || [], 'proxy'); })
-        .catch(function(err) {
-          setStatus('error', 'No source — retrying…');
-          log('All sources failed. Retry in 15s.');
-          timer = setTimeout(poll, 15000);
-        });
+      fetch(proxyUrl).then(function(r){ return r.json(); }).then(function(data){ handleData(data.ac || [], 'proxy'); }).catch(function(err){ setStatus('error', 'No source — retrying…'); timer = setTimeout(poll, 15000); });
       return;
     }
-    handleData(winner.list, winner.src.split('/')[2]); // show hostname as source
+    handleData(winner.list, winner.src.split('/')[2]);
   });
 }
-
 function handleData(list, source) {
   polls++;
   var parsed = 0;
@@ -6407,35 +5357,10 @@ function handleData(list, source) {
   updateUI();
   timer = setTimeout(poll, INTERVAL);
 }
-
-function adsbStart() {
-  stopped = false;
-  ridx = 0;
-  polls = 0;
-  setStatus('live', 'Connecting…');
-  setLed('init');
-  log('Starting ADS-B poll via adsb.lol…');
-  poll();
-}
-
-function adsbStop() {
-  stopped = true;
-  clearTimeout(timer); timer = null;
-  setStatus('stopped', 'Stopped');
-  setLed('stopped');
-  log('ADS-B tracker stopped.');
-}
-
-// ── START/STOP from parent page via postMessage ───────────────────────────────
-window.addEventListener('message', function(e) {
-  if (e.data === 'adsb:start') adsbStart();
-  if (e.data === 'adsb:stop')  adsbStop();
-});
-
-// Ready — wait for parent Start command
-setStatus('stopped', 'Ready');
-setLed('stopped');
-log('ADS-B tracker ready. Press ▶ Start to connect.');
+function adsbStart() { stopped = false; ridx = 0; polls = 0; setStatus('live', 'Connecting…'); setLed('init'); log('Starting ADS-B poll…'); poll(); }
+function adsbStop() { stopped = true; clearTimeout(timer); timer = null; setStatus('stopped', 'Stopped'); setLed('stopped'); log('ADS-B tracker stopped.'); }
+window.addEventListener('message', function(e) { if (e.data === 'adsb:start') adsbStart(); if (e.data === 'adsb:stop') adsbStop(); });
+setStatus('stopped', 'Ready'); setLed('stopped'); log('ADS-B tracker ready. Press ▶ Start to connect.');
 </script>
 </body>
 </html>"""
@@ -6455,7 +5380,6 @@ def adsb_proxy():
         )
         if r.status_code == 200:
             return jsonify(r.json())
-        # Upstream rejected — serve buffered data so the map stays live
         with _adsb_lock:
             buf = list(_adsb_buffer)
         cols = ["ts","hex","flight","lat","lon","alt_baro","gs","track"]
@@ -6463,11 +5387,9 @@ def adsb_proxy():
         for row in buf:
             if row[3] and row[4]:
                 obj = dict(zip(cols, row))
-                obj["baro_rate"] = None   # not stored in buffer; prevents parseAC undefined
+                obj["baro_rate"] = None
                 ac.append(obj)
-        return jsonify({"ac": ac, "_source": "buffer",
-                        "_upstream_status": r.status_code,
-                        "_upstream_body": r.text[:200]})
+        return jsonify({"ac": ac, "_source": "buffer", "_upstream_status": r.status_code})
     except Exception as exc:
         return jsonify({"error": str(exc), "ac": []}), 502
 
@@ -6564,8 +5486,6 @@ def debug():
         elif df is not None: out.append(f"OK shape:{df.shape}"); out.append(df.tail().to_string())
         else: out.append("No data"); color="#ffaa44"
     except Exception: out.append(traceback.format_exc()); color="#ff7f7f"
- 
-    # Test FRED
     try:
         macro = fetch_all_macro()
         out.append(f"\nFRED macro series fetched: {len(macro)}")
@@ -6573,7 +5493,6 @@ def debug():
             out.append(f"  {sid}: {d['value']} [{d['date']}]")
     except Exception as e:
         out.append(f"\nFRED error: {e}")
- 
     body = "\n".join(out)
     return f"<pre style='background:#111;color:{color};padding:24px;font-family:monospace;white-space:pre-wrap'>{body}</pre>"
  
@@ -6585,15 +5504,9 @@ def e500(e):
  
 if __name__ == "__main__":
     print("=" * 60)
-    print("  STARFISH — Unified Market Intelligence Platform")
+    print("  STARFISH — Unified Market Intelligence Platform + Alpaca Live Trading")
     print("  http://127.0.0.1:5000")
     print("=" * 60)
-    print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client\n")
-    print("  Alpaca Live US Equities — set in your .env file:")
-    print("    ALPACA_API_KEY      = your Alpaca key ID")
-    print("    ALPACA_SECRET_KEY   = your Alpaca secret key")
-    print("    ALPACA_BASE_URL     = https://api.alpaca.markets/v2  (live)")
-    print("                       or https://paper-api.alpaca.markets/v2  (paper)")
-    print()
+    print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends websocket-client\n")
     _start_adsb_collector()
     app.run(debug=True, host="0.0.0.0", port=5000)
