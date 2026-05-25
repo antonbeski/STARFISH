@@ -1010,7 +1010,9 @@ def fetch_google_trends(keywords, timeframe="today 3-m"):
         return _TRENDS_CACHE[cache_key]["data"]
     try:
         from pytrends.request import TrendReq
-        pt = TrendReq(hl="en-US", tz=0, timeout=(5, 15), retries=1, backoff_factor=0.5)
+        # timeout=(3,7): 3s connect + 7s read = 10s max, safe for Vercel 10s limit
+        # retries=0: no retry on 429 — avoids doubling wait and burning function time
+        pt = TrendReq(hl="en-US", tz=0, timeout=(3, 7), retries=0, backoff_factor=0)
         pt.build_payload(keywords[:5], cat=0, timeframe=timeframe, geo="", gprop="")
         df = pt.interest_over_time()
         if df is not None and not df.empty:
@@ -1019,18 +1021,21 @@ def fetch_google_trends(keywords, timeframe="today 3-m"):
                 if kw in df.columns:
                     series = df[kw].dropna()
                     if not series.empty:
+                        # "today 3-m" returns weekly points; tail(4) = last 4 weeks = 28 days
                         result[kw] = {
                             "current": int(series.iloc[-1]),
-                            "avg_30d": round(float(series.tail(4).mean()), 1),
+                            "avg_28d": round(float(series.tail(4).mean()), 1),
                             "peak":    int(series.max()),
                             "trend":   "rising" if series.iloc[-1] > series.iloc[-5] else "falling"
                                        if len(series) > 5 else "stable",
                             "history": [(str(d.date()), int(v)) for d, v in series.tail(12).items()],
                         }
             _TRENDS_CACHE[cache_key] = {"data": result, "ts": now}
+            print(f"[Trends] fetched {len(result)} keywords: {list(result.keys())}")
             return result
-    except Exception:
-        pass
+        print("[Trends] empty dataframe returned by pytrends")
+    except Exception as exc:
+        print(f"[Trends] fetch failed: {exc}")
     return {}
  
  
@@ -2497,7 +2502,7 @@ def build_prompt(payload):
         trends_lines = ["## SEARCH INTEREST (Google Trends)"]
         for kw, td in trends.items():
             trends_lines.append(
-                f"- '{kw}': {td.get('current')}/100  |  30d avg: {td.get('avg_30d')}  |  {td.get('trend','N/A').upper()}"
+                f"- '{kw}': {td.get('current')}/100  |  28d avg: {td.get('avg_28d')}  |  {td.get('trend','N/A').upper()}"
             )
         trends_lines.append("")
 
@@ -5100,7 +5105,8 @@ def api_ai_analysis():
         try:
             kws = get_ticker_trend_keywords(ticker, name)
             trends_data = fetch_google_trends(kws, timeframe="today 3-m")
-        except: pass
+        except Exception as exc:
+            print(f"[Trends/_fetch_trends] {exc}")
  
     def _fetch_fundamentals():
         nonlocal fundamentals
