@@ -79,12 +79,15 @@ _alpaca_rt_lock   = threading.Lock()
 _ALPACA_WS_URL    = "wss://stream.data.alpaca.markets/v2/iex"
 
 def _alp_ws_on_open(ws):
-    if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+    key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
+    secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
+    if not key or not secret:
+        print("[Alpaca WS] No credentials — skipping auth. Set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
         return
     ws.send(json.dumps({
         "action": "auth",
-        "key":    _ALPACA_API_KEY,
-        "secret": _ALPACA_SECRET_KEY,
+        "key":    key,
+        "secret": secret,
     }))
 
 def _alp_ws_on_message(ws, msg):
@@ -113,6 +116,8 @@ def _alp_ws_on_message(ws, msg):
                     "trades":  _ALPACA_SYMBOLS,
                     "quotes":  _ALPACA_SYMBOLS,
                 }))
+            elif t == "success" and e.get("msg") == "connected":
+                print("[Alpaca WS] Connected — waiting for auth confirmation")
 
 def _alp_ws_on_error(ws, err):
     print(f"[Alpaca WS] error: {err}")
@@ -122,7 +127,10 @@ def _alp_ws_on_close(ws, *args):
 
 def _alpaca_ws_runner():
     while True:
-        if not _ALPACA_API_KEY or not _ALPACA_SECRET_KEY:
+        key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
+        secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
+        if not key or not secret:
+            print("[Alpaca WS] Waiting for ALPACA_API_KEY / ALPACA_SECRET_KEY env vars…")
             time.sleep(30)
             continue
         try:
@@ -145,8 +153,8 @@ _alpaca_ws_thread.start()
 def _alp_get(url, timeout=8):
     try:
         headers = {
-            "APCA-API-KEY-ID":     os.environ.get("ALPACA_API_KEY", _ALPACA_API_KEY),
-            "APCA-API-SECRET-KEY": os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY),
+            "APCA-API-KEY-ID":     os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip(),
+            "APCA-API-SECRET-KEY": os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip(),
             "accept":              "application/json",
         }
         r = requests.get(url, headers=headers, timeout=timeout)
@@ -275,11 +283,11 @@ def api_alpaca_stocks():
 
 @app.route("/api/alpaca-account")
 def api_alpaca_account():
-    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY)
-    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY)
-    base_url   = os.environ.get("ALPACA_BASE_URL",   _ALPACA_BASE_URL)
+    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
+    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
+    base_url   = os.environ.get("ALPACA_BASE_URL",   _ALPACA_BASE_URL).strip()
     if not api_key or not secret_key:
-        return jsonify({"error": "Alpaca credentials not configured."})
+        return jsonify({"error": "Alpaca credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your .env file."})
     headers = {
         "APCA-API-KEY-ID":     api_key,
         "APCA-API-SECRET-KEY": secret_key,
@@ -300,7 +308,7 @@ def api_alpaca_account():
                 "trading_blocked": d.get("trading_blocked"),
                 "account_number":  d.get("account_number"),
             })
-        return jsonify({"error": f"HTTP {r.status_code}"})
+        return jsonify({"error": f"HTTP {r.status_code}: {r.text[:200]}"})
     except Exception as exc:
         return jsonify({"error": str(exc)})
 
