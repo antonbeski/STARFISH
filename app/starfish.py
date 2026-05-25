@@ -164,19 +164,19 @@ def _alp_get(url, timeout=8):
         return None
 
 def _alp_quotes(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/quotes/latest?symbols={','.join(symbols)}&feed=iex")
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/quotes/latest?symbols={','.join(symbols)}&feed=iex", timeout=5)
     return r.json().get("quotes", {}) if r and r.status_code == 200 else {}
 
 def _alp_trades(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/trades/latest?symbols={','.join(symbols)}&feed=iex")
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/trades/latest?symbols={','.join(symbols)}&feed=iex", timeout=5)
     return r.json().get("trades", {}) if r and r.status_code == 200 else {}
 
 def _alp_bars(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars/latest?symbols={','.join(symbols)}&feed=iex")
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars/latest?symbols={','.join(symbols)}&feed=iex", timeout=5)
     return r.json().get("bars", {}) if r and r.status_code == 200 else {}
 
 def _alp_prev_close(symbols):
-    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars?symbols={','.join(symbols)}&timeframe=1Day&limit=2&feed=iex&adjustment=raw")
+    r = _alp_get(f"{_ALPACA_DATA_URL}/stocks/bars?symbols={','.join(symbols)}&timeframe=1Day&limit=2&feed=iex&adjustment=raw", timeout=5)
     if not r or r.status_code != 200:
         return {}
     result = {}
@@ -188,12 +188,42 @@ def _alp_prev_close(symbols):
     return result
 
 def _alpaca_fetch_all():
-    """Merge WebSocket realtime + REST snapshot into a unified stock list."""
+    """Merge WebSocket realtime + REST snapshot into a unified stock list.
+    All four REST calls run concurrently — total wall-clock ~= slowest single call (5s max)."""
     symbols = _ALPACA_SYMBOLS
-    bars    = _alp_bars(symbols)
-    prevs   = _alp_prev_close(symbols)
-    quotes  = _alp_quotes(symbols)
-    trades  = _alp_trades(symbols)
+
+    # Fire all REST calls in parallel
+    bars_r   = [{}]
+    prevs_r  = [{}]
+    quotes_r = [{}]
+    trades_r = [{}]
+
+    def _do_bars():
+        try: bars_r[0]   = _alp_bars(symbols)
+        except Exception as e: print(f"[Alpaca] bars error: {e}")
+    def _do_prevs():
+        try: prevs_r[0]  = _alp_prev_close(symbols)
+        except Exception as e: print(f"[Alpaca] prev_close error: {e}")
+    def _do_quotes():
+        try: quotes_r[0] = _alp_quotes(symbols)
+        except Exception as e: print(f"[Alpaca] quotes error: {e}")
+    def _do_trades():
+        try: trades_r[0] = _alp_trades(symbols)
+        except Exception as e: print(f"[Alpaca] trades error: {e}")
+
+    threads = [
+        threading.Thread(target=_do_bars,   daemon=True),
+        threading.Thread(target=_do_prevs,  daemon=True),
+        threading.Thread(target=_do_quotes, daemon=True),
+        threading.Thread(target=_do_trades, daemon=True),
+    ]
+    for t in threads: t.start()
+    for t in threads: t.join(timeout=6)  # hard cap: never block Flask > 6s total
+
+    bars   = bars_r[0]
+    prevs  = prevs_r[0]
+    quotes = quotes_r[0]
+    trades = trades_r[0]
 
     with _alpaca_rt_lock:
         rt_snap = dict(_alpaca_rt)
@@ -261,25 +291,70 @@ def _alpaca_fetch_all():
     return result
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+def _alpaca_warm_cache():
+    """Background thread: pre-warm Alpaca cache at startup so the first page load is instant."""
+    time.sleep(2)  # let Flask fully start first
+    key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
+    secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
+    if not key or not secret:
+        print("[Alpaca] Cache warm-up skipped — no credentials set.")
+        return
+    try:
+        print("[Alpaca] Pre-warming market data cache…")
+        _alpaca_cache["stocks"]      = _alpaca_fetch_all()
+        _alpaca_cache_time["stocks"] = time.time()
+        print(f"[Alpaca] Cache ready — {len(_alpaca_cache['stocks'])} symbols loaded.")
+    except Exception as e:
+        print(f"[Alpaca] Cache warm-up error: {e}")
+
+threading.Thread(target=_alpaca_warm_cache, daemon=True, name="alpaca-cache-warm").start()
+
+
 @app.route("/api/alpaca-stocks")
 def api_alpaca_stocks():
-    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY)
-    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY)
+    api_key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
+    secret_key = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
     if not api_key or not secret_key:
         return jsonify({"error": "Alpaca credentials not configured. Set ALPACA_API_KEY and ALPACA_SECRET_KEY in your .env file.", "stocks": []})
     now = time.time()
-    if "stocks" not in _alpaca_cache or (now - _alpaca_cache_time.get("stocks", 0)) > _ALPACA_CACHE_TTL:
+    stale = "stocks" not in _alpaca_cache or (now - _alpaca_cache_time.get("stocks", 0)) > _ALPACA_CACHE_TTL
+    if stale:
         try:
-            _alpaca_cache["stocks"]     = _alpaca_fetch_all()
+            _alpaca_cache["stocks"]      = _alpaca_fetch_all()
             _alpaca_cache_time["stocks"] = now
         except Exception as exc:
             if "stocks" not in _alpaca_cache:
-                return jsonify({"error": str(exc), "stocks": []}), 500
+                return jsonify({"error": f"Alpaca data fetch failed: {exc}", "stocks": []}), 500
+            # Serve stale cache rather than returning an error
     from datetime import timezone
     return jsonify({
         "stocks":  _alpaca_cache.get("stocks", []),
         "updated": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+        "cached":  not stale,
     })
+
+@app.route("/api/alpaca-ping")
+def api_alpaca_ping():
+    """Quick connectivity test — checks credentials + account endpoint only (fast)."""
+    key    = os.environ.get("ALPACA_API_KEY",    _ALPACA_API_KEY).strip()
+    secret = os.environ.get("ALPACA_SECRET_KEY", _ALPACA_SECRET_KEY).strip()
+    base   = os.environ.get("ALPACA_BASE_URL",   _ALPACA_BASE_URL).strip()
+    if not key or not secret:
+        return jsonify({"ok": False, "error": "Missing ALPACA_API_KEY or ALPACA_SECRET_KEY env vars."})
+    try:
+        r = requests.get(f"{base}/account",
+                         headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret,
+                                  "accept": "application/json"},
+                         timeout=5)
+        return jsonify({
+            "ok":     r.status_code == 200,
+            "status": r.status_code,
+            "body":   r.json() if r.status_code == 200 else r.text[:300],
+            "base_url": base,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "base_url": base})
+
 
 @app.route("/api/alpaca-account")
 def api_alpaca_account():
@@ -3677,7 +3752,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <!-- Stocks table -->
     <div class="ueq-table-wrap">
       <div id="ueq-stocks-wrap">
-        <div class="ueq-loader"><div class="ueq-spinner"></div>Loading live market data…</div>
+        <div class="ueq-loader"><div class="ueq-spinner"></div>Loading live market data… <span style="font-size:.6rem;margin-left:8px;color:#aaa">(first load ~5s)</span></div>
       </div>
     </div>
   </div>
@@ -3739,15 +3814,17 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   }}
 
   function fetchUeqStocks(){{
-    fetch('/api/alpaca-stocks')
-      .then(function(r){{return r.json();}})
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function(){{ ctrl.abort(); }}, 10000) : null;
+    fetch('/api/alpaca-stocks', ctrl ? {{signal: ctrl.signal}} : {{}})
+      .then(function(r){{ clearTimeout(timer); return r.json(); }})
       .then(function(d){{
         var pill = document.getElementById('ueq-status-pill');
         var upd  = document.getElementById('ueq-updated');
-        if(d.error&&!d.stocks.length){{
+        if(d.error && (!d.stocks || !d.stocks.length)){{
           document.getElementById('ueq-stocks-wrap').innerHTML=
             '<div class="ueq-cred-warn">&#9888; '+d.error+'</div>';
-          if(pill) pill.innerHTML='&#x25CF; No credentials';
+          if(pill) pill.innerHTML='&#x25CF; Error';
           return;
         }}
         document.getElementById('ueq-stocks-wrap').innerHTML = buildTable(d.stocks||[]);
@@ -3755,6 +3832,13 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
         if(upd)  upd.textContent = d.updated ? 'Updated '+d.updated : '';
       }})
       .catch(function(e){{
+        clearTimeout(timer);
+        var wrap = document.getElementById('ueq-stocks-wrap');
+        var pill = document.getElementById('ueq-status-pill');
+        if(wrap && wrap.innerHTML.indexOf('ueq-spinner') !== -1){{
+          wrap.innerHTML='<div class="ueq-cred-warn">&#9888; Could not connect to Alpaca. Check server logs and credentials.</div>';
+        }}
+        if(pill) pill.innerHTML='&#x25CF; Error';
         console.warn('[Alpaca stocks]',e);
       }});
   }}
