@@ -1,6 +1,6 @@
 """
 STARFISH — Market Dynamics
-Stocks · AI Analysis · Sectors · Live News · Alpaca Live Trading
+Stocks · AI Analysis · Sectors · Live News · US Equities
 """
 
 import os
@@ -2961,8 +2961,16 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     /* Alpaca status bar */
     .alpaca-status{{display:flex;align-items:center;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid #e5e5e5}}
     .alpaca-led{{width:8px;height:8px;border-radius:50%;background:#44cc44;flex-shrink:0;animation:pulse 2s ease-in-out infinite}}
+    .alpaca-led.closed{{background:#f5a623;animation:none}}
     @keyframes pulse{{0%,100%{{opacity:1;transform:scale(1)}}50%{{opacity:.4;transform:scale(.8)}}}}
     .alpaca-status-text{{font-size:.6rem;color:#888;font-family:'DM Mono',monospace}}
+    .market-pill{{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;
+                  font-size:.52rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+                  padding:3px 9px;border-radius:20px;white-space:nowrap;flex-shrink:0}}
+    .market-pill.open{{background:#e8f5e9;color:#2e7d32;border:1px solid #2e7d32}}
+    .market-pill.closed{{background:#fff8e1;color:#e65100;border:1px solid #e65100}}
+    .market-pill.pre{{background:#e3f2fd;color:#1565c0;border:1px solid #1565c0}}
+    .market-pill-dot{{width:5px;height:5px;border-radius:50%;flex-shrink:0}}
  
     /* ── TICKER STRIP ── */
     .ticker-strip{{position:relative;z-index:10;height:32px;overflow:hidden;display:flex;
@@ -2979,6 +2987,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
              color:rgba(255,255,255,.55);padding:0 1.5rem;white-space:nowrap;flex-shrink:0}}
     .t-item strong{{color:rgba(255,255,255,.9);font-weight:500}}
     .t-sep{{color:rgba(255,255,255,.3)}}
+    .t-up{{color:#26a69a !important}}
+    .t-down{{color:#ef5350 !important}}
     @keyframes ticker-run{{from{{transform:translate3d(0,0,0)}}to{{transform:translate3d(-50%,0,0)}}}}
  
     /* ── LAYOUT ── */
@@ -3537,12 +3547,12 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     {logo_img}
     <div class="logo-text-group">
       <span class="logo-word">STARFISH</span>
-      <span class="logo-tagline">Market Dynamics + Alpaca Live</span>
+      <span class="logo-tagline">Market Dynamics</span>
     </div>
   </div>
   <nav class="header-nav">
     <a class="nav-link" href="#stocks">Stocks</a>
-    <a class="nav-link" href="#alpaca">Live Trading</a>
+    <a class="nav-link" href="#alpaca">US Equities</a>
     <a class="nav-link" href="#sectors">Sectors</a>
     <a class="nav-link" href="#live-news">Live News</a>
     <a class="nav-link" href="#vessels">Data</a>
@@ -3551,32 +3561,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
  
 <!-- ── TICKER STRIP ── -->
 <div class="ticker-strip">
-  <span class="ticker-badge">Markets</span>
-  <div class="ticker-track">
-    <span class="t-item"><strong>XLC</strong> Comm Services <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLY</strong> Consumer Disc <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLP</strong> Consumer Staples <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLE</strong> Energy <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLF</strong> Financials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLV</strong> Health Care <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLI</strong> Industrials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLK</strong> Info Technology <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLB</strong> Materials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLRE</strong> Real Estate <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLU</strong> Utilities <span class="t-sep">&middot;</span></span>
-    <span class="t-item">FRED Macro &middot; Google Trends &middot; AIS Shipping &middot; Fundamentals &middot; 10 Indicators <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLC</strong> Comm Services <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLY</strong> Consumer Disc <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLP</strong> Consumer Staples <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLE</strong> Energy <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLF</strong> Financials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLV</strong> Health Care <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLI</strong> Industrials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLK</strong> Info Technology <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLB</strong> Materials <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLRE</strong> Real Estate <span class="t-sep">&middot;</span></span>
-    <span class="t-item"><strong>XLU</strong> Utilities <span class="t-sep">&middot;</span></span>
-    <span class="t-item">FRED Macro &middot; Google Trends &middot; AIS Shipping &middot; Fundamentals &middot; 10 Indicators <span class="t-sep">&middot;</span></span>
+  <span class="ticker-badge">Live</span>
+  <div class="ticker-track" id="ticker-track">
+    <span class="t-item" style="color:rgba(255,255,255,.4)">Loading live prices…</span>
   </div>
 </div>
  
@@ -3590,14 +3577,18 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 ═══════════════════════════════════════════ -->
 <div class="section-divider" id="alpaca">
   <div class="section-divider-line"></div>
-  <div class="section-label"><span class="dot" style="background:#000"></span>Alpaca Live Trading</div>
+  <div class="section-label"><span class="dot" style="background:#000"></span>US Equities</div>
   <div class="section-divider-line"></div>
 </div>
 
 <div class="alpaca-panel">
   <div class="alpaca-header">
-    <span class="alpaca-title">ALPACA PAPER TRADING · LIVE MARKET DATA</span>
-    <span class="alpaca-badge">WebSocket Real-Time</span>
+    <span class="alpaca-title">US EQUITIES · LIVE MARKET DATA</span>
+    <span id="market-status-pill" class="market-pill closed">
+      <span class="market-pill-dot" id="market-pill-dot" style="background:#e65100"></span>
+      <span id="market-pill-text">Checking…</span>
+    </span>
+    <span class="alpaca-badge">Real-Time</span>
   </div>
   
   
@@ -4307,6 +4298,65 @@ var alpacaAllStocks = [];
 var alpacaFilter = 'ALL';
 var alpacaPrevPrices = {{}};
 
+// ── US MARKET HOURS (NYSE/NASDAQ) ────────────────────────────────────────────
+function getMarketStatus() {{
+  // All times in US/Eastern
+  var now = new Date();
+  var etStr = now.toLocaleString('en-US', {{timeZone:'America/New_York'}});
+  var et = new Date(etStr);
+  var day = et.getDay(); // 0=Sun,6=Sat
+  var h = et.getHours();
+  var m = et.getMinutes();
+  var mins = h * 60 + m;
+
+  if (day === 0 || day === 6) return {{state:'closed', label:'Market Closed', next:'Opens Monday 9:30 AM ET'}};
+
+  // Pre-market: 4:00–9:30
+  if (mins >= 240 && mins < 570)  return {{state:'pre',    label:'Pre-Market',    next:'Opens ' + fmtCountdown(et, 570)}};
+  // Regular: 9:30–16:00
+  if (mins >= 570 && mins < 960)  return {{state:'open',   label:'Market Open',   next:'Closes ' + fmtCountdown(et, 960)}};
+  // After-hours: 16:00–20:00
+  if (mins >= 960 && mins < 1200) return {{state:'pre',    label:'After-Hours',   next:'Closes ' + fmtCountdown(et, 1200)}};
+  // Closed
+  var nextOpen = day === 5 ? 'Monday' : 'Tomorrow';
+  return {{state:'closed', label:'Market Closed', next:'Opens ' + nextOpen + ' 9:30 AM ET'}};
+}}
+
+function fmtCountdown(et, targetMins) {{
+  var cur = et.getHours() * 60 + et.getMinutes();
+  var diff = targetMins - cur;
+  if (diff <= 0) return '';
+  var hh = Math.floor(diff / 60);
+  var mm = diff % 60;
+  return 'in ' + (hh ? hh + 'h ' : '') + mm + 'm';
+}}
+
+function updateMarketStatusPill() {{
+  var s = getMarketStatus();
+  var pill = document.getElementById('market-status-pill');
+  var dot  = document.getElementById('market-pill-dot');
+  var txt  = document.getElementById('market-pill-text');
+  var led  = document.querySelector('.alpaca-led');
+  if (!pill) return;
+
+  // Reset classes
+  pill.classList.remove('open','closed','pre');
+  pill.classList.add(s.state === 'open' ? 'open' : s.state === 'pre' ? 'pre' : 'closed');
+
+  var dotColor = s.state === 'open' ? '#2e7d32' : s.state === 'pre' ? '#1565c0' : '#e65100';
+  dot.style.background = dotColor;
+  txt.textContent = s.label + (s.next ? '  ·  ' + s.next : '');
+
+  // Sync the LED in the status bar
+  if (led) {{
+    led.classList.toggle('closed', s.state !== 'open');
+  }}
+}}
+
+// Run immediately and refresh every minute
+updateMarketStatusPill();
+setInterval(updateMarketStatusPill, 60000);
+
 function setAlpacaFilter(f) {{
   alpacaFilter = f;
   document.querySelectorAll('.alpaca-filter-btn').forEach(btn => {{
@@ -4398,12 +4448,37 @@ async function fetchAlpacaStocks() {{
     }}
     alpacaAllStocks = data.stocks || [];
     renderAlpacaGrid();
+    updateTickerStrip(alpacaAllStocks);
     document.getElementById('alpaca-last-update').textContent = data.updated;
     document.getElementById('alpaca-status-text').textContent = 'WebSocket live · ' + alpacaAllStocks.length + ' symbols';
   }} catch(e) {{
     console.error('Alpaca fetch error:', e);
     document.getElementById('alpaca-status-text').textContent = 'Connection error — retrying';
   }}
+}}
+
+function updateTickerStrip(stocks) {{
+  if (!stocks || !stocks.length) return;
+  var track = document.getElementById('ticker-track');
+  if (!track) return;
+  // Build one set of items, then duplicate for seamless loop
+  function buildItems(list) {{
+    return list.map(function(s) {{
+      var sign = s.change_pct >= 0 ? '+' : '';
+      var dir = s.change_pct > 0 ? 'up' : (s.change_pct < 0 ? 'down' : '');
+      var price = s.price ? s.price.toFixed(2) : '—';
+      var chg = s.change_pct ? sign + s.change_pct.toFixed(2) + '%' : '0.00%';
+      return '<span class="t-item"><strong>' + s.symbol + '</strong> $' + price +
+             ' <span class="t-' + dir + '">' + chg + '</span>' +
+             ' <span class="t-sep">&middot;</span></span>';
+    }}).join('');
+  }}
+  var html = buildItems(stocks) + buildItems(stocks);
+  track.innerHTML = html;
+  // Reset animation so new content scrolls from start
+  track.style.animation = 'none';
+  track.offsetHeight; // reflow
+  track.style.animation = '';
 }}
 
 
@@ -6493,7 +6568,7 @@ def e500(e):
  
 if __name__ == "__main__":
     print("=" * 60)
-    print("  STARFISH — Unified Market Intelligence Platform + Alpaca Live Trading")
+    print("  STARFISH — Market Dynamics")
     print("  http://127.0.0.1:5000")
     print("=" * 60)
     print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client\n")
