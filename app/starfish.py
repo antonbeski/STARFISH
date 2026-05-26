@@ -2924,10 +2924,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .alpaca-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px}}
     .alpaca-title{{font-size:.7rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#000}}
     .alpaca-badge{{font-family:'DM Mono',monospace;font-size:.55rem;color:#555;background:#f0f0f0;border:1px solid #000;border-radius:4px;padding:4px 10px}}
-    .alpaca-stats{{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e5e5}}
-    .alpaca-stat{{background:#fff;border:1px solid #000;border-radius:var(--rs);padding:12px 18px;flex:1;min-width:100px}}
-    .alpaca-stat-label{{font-size:.55rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888;margin-bottom:6px}}
-    .alpaca-stat-value{{font-family:'DM Mono',monospace;font-size:1.1rem;font-weight:700;color:#000}}
     .alpaca-filter{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}}
     .alpaca-filter-btn{{background:transparent;border:1px solid #000;border-radius:20px;padding:4px 14px;font-size:.68rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;transition:all .15s}}
     .alpaca-filter-btn:hover,.alpaca-filter-btn.active{{background:#000;color:#fff}}
@@ -3331,8 +3327,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       .sector-grid{{grid-template-columns:repeat(3,1fr)}}
       .sat-grid{{grid-template-columns:repeat(2,1fr)}}
       .alpaca-grid{{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}}
-      .alpaca-stats{{flex-direction:column;gap:8px}}
-      .alpaca-stat{{min-width:auto}}
     }}
 
     /* ── MOBILE ── */
@@ -3606,13 +3600,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span class="alpaca-badge">WebSocket Real-Time</span>
   </div>
   
-  <div class="alpaca-stats" id="alpaca-stats">
-    <div class="alpaca-stat"><div class="alpaca-stat-label">Portfolio Value</div><div class="alpaca-stat-value" id="a-pv">—</div></div>
-    <div class="alpaca-stat"><div class="alpaca-stat-label">Cash</div><div class="alpaca-stat-value" id="a-cash">—</div></div>
-    <div class="alpaca-stat"><div class="alpaca-stat-label">Buying Power</div><div class="alpaca-stat-value" id="a-bp">—</div></div>
-    <div class="alpaca-stat"><div class="alpaca-stat-label">Equity</div><div class="alpaca-stat-value" id="a-eq">—</div></div>
-    <div class="alpaca-stat"><div class="alpaca-stat-label">Status</div><div class="alpaca-stat-value" id="a-st">—</div></div>
-  </div>
   
   <div class="alpaca-filter">
     <button class="alpaca-filter-btn active" onclick="setAlpacaFilter('ALL')">ALL</button>
@@ -4419,19 +4406,6 @@ async function fetchAlpacaStocks() {{
   }}
 }}
 
-async function fetchAlpacaAccount() {{
-  try {{
-    const r = await fetch('/api/alpaca-account');
-    const d = await r.json();
-    if (!d.error) {{
-      document.getElementById('a-pv').textContent = d.portfolio_value ? '$' + Number(d.portfolio_value).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
-      document.getElementById('a-cash').textContent = d.cash ? '$' + Number(d.cash).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
-      document.getElementById('a-bp').textContent = d.buying_power ? '$' + Number(d.buying_power).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
-      document.getElementById('a-eq').textContent = d.equity ? '$' + Number(d.equity).toLocaleString(undefined, {{minimumFractionDigits:2}}) : '—';
-      document.getElementById('a-st').textContent = (d.status || 'ACTIVE').toUpperCase();
-    }}
-  }} catch(e) {{ console.error(e); }}
-}}
 
 // ── Existing Starfish functions ─────────────────────────────────────────────
 function setTicker(s){{document.getElementById('ticker').value=s;document.getElementById('main-form').submit();}}
@@ -5029,9 +5003,7 @@ function _satLog(msg, type) {{
 
 // Initialize Alpaca feeds
 fetchAlpacaStocks();
-fetchAlpacaAccount();
 setInterval(fetchAlpacaStocks, 15000);
-setInterval(fetchAlpacaAccount, 60000);
 </script>
 </body>
 </html>"""
