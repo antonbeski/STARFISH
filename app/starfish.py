@@ -4212,12 +4212,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       _sendAdsbMsg('adsb:stop');
     }}
   }}
-
-// Initialize Alpaca feeds
-fetchAlpacaStocks();
-fetchAlpacaAccount();
-setInterval(fetchAlpacaStocks, 15000);
-setInterval(fetchAlpacaAccount, 60000);
   </script>
 </div>
 
@@ -5033,8 +5027,11 @@ function _satLog(msg, type) {{
   area.scrollTop = area.scrollHeight;
 }}
 
-</script>
-
+// Initialize Alpaca feeds
+fetchAlpacaStocks();
+fetchAlpacaAccount();
+setInterval(fetchAlpacaStocks, 15000);
+setInterval(fetchAlpacaAccount, 60000);
 </script>
 </body>
 </html>"""
