@@ -3551,8 +3551,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     </div>
   </div>
   <nav class="header-nav">
-    <a class="nav-link" href="#stocks">Stocks</a>
-    <a class="nav-link" href="#alpaca">US Equities</a>
+    <a class="nav-link" href="#equities">Equities</a>
     <a class="nav-link" href="#sectors">Sectors</a>
     <a class="nav-link" href="#live-news">Live News</a>
     <a class="nav-link" href="#vessels">Data</a>
@@ -3570,14 +3569,11 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 <main>
  
 <!-- ══════════════════════════════════════════
-     SECTION 1: STOCKS
+     EQUITIES — US Live Prices + Stock Charts
 ═══════════════════════════════════════════ -->
-<!-- ══════════════════════════════════════════
-     ALPACA LIVE TRADING PANEL (NEW)
-═══════════════════════════════════════════ -->
-<div class="section-divider" id="alpaca">
+<div class="section-divider" id="equities">
   <div class="section-divider-line"></div>
-  <div class="section-label"><span class="dot" style="background:#000"></span>US Equities</div>
+  <div class="section-label"><span class="dot" style="background:#26a69a"></span>Equities</div>
   <div class="section-divider-line"></div>
 </div>
 
@@ -3590,8 +3586,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     </span>
     <span class="alpaca-badge">Real-Time</span>
   </div>
-  
-  
+
   <div class="alpaca-filter">
     <button class="alpaca-filter-btn active" onclick="setAlpacaFilter('ALL')">ALL</button>
     <button class="alpaca-filter-btn" onclick="setAlpacaFilter('Technology')">TECH</button>
@@ -3602,7 +3597,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <button class="alpaca-filter-btn" onclick="setAlpacaFilter('ETF')">ETF</button>
     <div class="alpaca-sort">
       <span class="alpaca-sort-label">SORT</span>
-      <select id="alpaca-sort" class="alpaca-sort-select" onchange="renderAlpacaGrid()">
+      <select id="alpaca-sort" class="alpaca-sort-select" onchange="document.getElementById('alpaca-grid').innerHTML='';renderAlpacaGrid()">
         <option value="default">DEFAULT</option>
         <option value="price-desc">PRICE ↓</option>
         <option value="price-asc">PRICE ↑</option>
@@ -3612,28 +3607,22 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       </select>
     </div>
   </div>
-  
+
   <div id="alpaca-grid" class="alpaca-grid">
-    <div style="text-align:center;padding:40px;color:#888">Loading live market data from Alpaca…</div>
+    <div style="text-align:center;padding:40px;color:#888">Loading live market data…</div>
   </div>
-  
+
   <div class="alpaca-status">
     <div class="alpaca-led"></div>
     <span class="alpaca-status-text" id="alpaca-status-text">WebSocket connected · Real-time trades & quotes</span>
     <span id="alpaca-last-update" style="font-size:.55rem;color:#aaa;margin-left:auto"></span>
   </div>
-</div>
 
-<!-- ══════════════════════════════════════════
-     STOCKS SECTION (existing Starfish)
-═══════════════════════════════════════════ -->
-<div class="section-divider" id="stocks">
-  <div class="section-divider-line"></div>
-  <div class="section-label"><span class="dot" style="background:#26a69a"></span>Stocks &amp; Charts</div>
-  <div class="section-divider-line"></div>
-</div>
- 
-<div class="glass panel">
+  <!-- ── Stock Chart Sub-section ── -->
+  <div style="margin-top:28px;padding-top:22px;border-top:1px solid #e5e5e5">
+    <div style="font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#888;margin-bottom:16px">Stock Chart &amp; Analysis</div>
+
+<div class="glass panel" style="border:none;padding:0;background:transparent;margin-bottom:0">
   <div class="panel-label">Search</div>
   <form method="POST" action="/" id="main-form">
     <input type="hidden" name="indicators" id="inds-h" value="{','.join(active_indicators)}"/>
@@ -3658,8 +3647,10 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div class="chips">{chips}</div>
   <div class="ind-row"><span class="ind-label">Indicators</span>{ichips}</div>
 </div>
- 
-<div class="glass chart-card">{content}</div>
+
+<div class="glass chart-card" style="margin-top:12px">{content}</div>
+  </div>
+</div>
 
 <!-- ══════════════════════════════════════════
      GBM MONTE CARLO SIMULATION
@@ -4371,67 +4362,113 @@ function setAlpacaFilter(f) {{
     if (match) btn.classList.add('active');
     else btn.classList.remove('active');
   }});
+  // Clear so renderAlpacaGrid performs a full DOM build for the new filter
+  document.getElementById('alpaca-grid').innerHTML = '';
   renderAlpacaGrid();
 }}
 
 function renderAlpacaGrid() {{
   let stocks = [...alpacaAllStocks];
   if (alpacaFilter !== 'ALL') stocks = stocks.filter(s => s.sector === alpacaFilter);
-  
+
   const sortVal = document.getElementById('alpaca-sort').value;
   if (sortVal === 'price-desc') stocks.sort((a,b) => b.price - a.price);
   else if (sortVal === 'price-asc') stocks.sort((a,b) => a.price - b.price);
   else if (sortVal === 'chg-desc') stocks.sort((a,b) => b.change_pct - a.change_pct);
   else if (sortVal === 'chg-asc') stocks.sort((a,b) => a.change_pct - b.change_pct);
   else if (sortVal === 'vol-desc') stocks.sort((a,b) => (b.volume || 0) - (a.volume || 0));
-  
+
   const grid = document.getElementById('alpaca-grid');
+
   if (!stocks.length) {{
     grid.innerHTML = '<div style="text-align:center;padding:40px;color:#888">No stocks match filter</div>';
     return;
   }}
-  
-  grid.innerHTML = stocks.map(s => {{
+
+  // ── First render: build all cards from scratch (no flicker risk on init) ──
+  const existing = grid.querySelector('.alpaca-card');
+  if (!existing) {{
+    grid.innerHTML = stocks.map(s => {{
+      const dir = s.change_pct > 0 ? 'up' : (s.change_pct < 0 ? 'down' : '');
+      const sign = s.change_pct >= 0 ? '+' : '';
+      const changeClass = s.change_pct > 0 ? 'up-t' : (s.change_pct < 0 ? 'down-t' : 'flat-t');
+      return `<div class="alpaca-card ${{dir}}" id="acard-${{s.symbol}}">
+        <div class="alpaca-card-sym">${{s.symbol}}</div>
+        <div class="alpaca-card-name">${{s.name}}</div>
+        <div class="alpaca-price-row">
+          <div class="alpaca-price" id="ap-${{s.symbol}}">$${{s.price ? s.price.toFixed(2) : '—'}}</div>
+          <div class="alpaca-change ${{changeClass}}" id="ac-${{s.symbol}}">${{sign}}${{s.change_pct ? s.change_pct.toFixed(2) : '0.00'}}%</div>
+        </div>
+        <div class="alpaca-bidask">
+          <div class="alpaca-ba alpaca-bid">
+            <div class="alpaca-ba-label">BID</div>
+            <div class="alpaca-ba-price" id="abid-${{s.symbol}}">$${{s.bid ? s.bid.toFixed(2) : '—'}}</div>
+            <div class="alpaca-ba-size" id="abidsz-${{s.symbol}}">${{s.bid_size ? s.bid_size.toLocaleString() : ''}}</div>
+          </div>
+          <div class="alpaca-ba alpaca-ask">
+            <div class="alpaca-ba-label">ASK</div>
+            <div class="alpaca-ba-price" id="aask-${{s.symbol}}">$${{s.ask ? s.ask.toFixed(2) : '—'}}</div>
+            <div class="alpaca-ba-size" id="aasksz-${{s.symbol}}">${{s.ask_size ? s.ask_size.toLocaleString() : ''}}</div>
+          </div>
+        </div>
+        <div class="alpaca-footer">
+          <div class="alpaca-vol" id="avol-${{s.symbol}}">VOL ${{s.volume ? s.volume.toLocaleString() : '—'}}</div>
+          <div class="alpaca-dtype ${{s.data_type}}" id="adt-${{s.symbol}}">${{s.data_type}}</div>
+        </div>
+      </div>`;
+    }}).join('');
+    stocks.forEach(s => {{ alpacaPrevPrices[s.symbol] = s.price; }});
+    return;
+  }}
+
+  // ── Subsequent renders: patch only changed values in-place, zero layout shift ──
+  function setText(id, val) {{
+    const el = document.getElementById(id);
+    if (el && el.textContent !== val) el.textContent = val;
+  }}
+  function setAttr(id, attr, val) {{
+    const el = document.getElementById(id);
+    if (el && el.getAttribute(attr) !== val) el.setAttribute(attr, val);
+  }}
+
+  stocks.forEach(s => {{
+    const card = document.getElementById('acard-' + s.symbol);
+    if (!card) return; // card not yet in DOM (filter change) — skip
+
     const dir = s.change_pct > 0 ? 'up' : (s.change_pct < 0 ? 'down' : '');
     const sign = s.change_pct >= 0 ? '+' : '';
     const changeClass = s.change_pct > 0 ? 'up-t' : (s.change_pct < 0 ? 'down-t' : 'flat-t');
-    const changeColor = s.change_pct > 0 ? '#26a69a' : (s.change_pct < 0 ? '#ef5350' : '#888');
-    
-    return `<div class="alpaca-card ${{dir}}" id="acard-${{s.symbol}}">
-      <div class="alpaca-card-sym">${{s.symbol}}</div>
-      <div class="alpaca-card-name">${{s.name}}</div>
-      <div class="alpaca-price-row">
-        <div class="alpaca-price">$${{s.price ? s.price.toFixed(2) : '—'}}</div>
-        <div class="alpaca-change ${{changeClass}}">${{sign}}${{s.change_pct ? s.change_pct.toFixed(2) : '0.00'}}%</div>
-      </div>
-      <div class="alpaca-bidask">
-        <div class="alpaca-ba alpaca-bid">
-          <div class="alpaca-ba-label">BID</div>
-          <div class="alpaca-ba-price">$${{s.bid ? s.bid.toFixed(2) : '—'}}</div>
-          <div class="alpaca-ba-size">${{s.bid_size ? s.bid_size.toLocaleString() : ''}}</div>
-        </div>
-        <div class="alpaca-ba alpaca-ask">
-          <div class="alpaca-ba-label">ASK</div>
-          <div class="alpaca-ba-price">$${{s.ask ? s.ask.toFixed(2) : '—'}}</div>
-          <div class="alpaca-ba-size">${{s.ask_size ? s.ask_size.toLocaleString() : ''}}</div>
-        </div>
-      </div>
-      <div class="alpaca-footer">
-        <div class="alpaca-vol">VOL ${{s.volume ? s.volume.toLocaleString() : '—'}}</div>
-        <div class="alpaca-dtype ${{s.data_type}}">${{s.data_type}}</div>
-      </div>
-    </div>`;
-  }}).join('');
-  
-  // Flash animation for price changes
-  stocks.forEach(s => {{
+
+    // Card direction class
+    const wantClass = 'alpaca-card' + (dir ? ' ' + dir : '');
+    if (card.className !== wantClass) card.className = wantClass;
+
+    // Text patches — only writes if value actually changed
+    setText('ap-' + s.symbol,     '$' + (s.price     ? s.price.toFixed(2)     : '—'));
+    setText('ac-' + s.symbol,     sign + (s.change_pct ? s.change_pct.toFixed(2) : '0.00') + '%');
+    setText('abid-' + s.symbol,   '$' + (s.bid       ? s.bid.toFixed(2)       : '—'));
+    setText('abidsz-' + s.symbol, s.bid_size ? s.bid_size.toLocaleString() : '');
+    setText('aask-' + s.symbol,   '$' + (s.ask       ? s.ask.toFixed(2)       : '—'));
+    setText('aasksz-' + s.symbol, s.ask_size ? s.ask_size.toLocaleString() : '');
+    setText('avol-' + s.symbol,   'VOL ' + (s.volume ? s.volume.toLocaleString() : '—'));
+
+    // Change class on the pct element
+    const chgEl = document.getElementById('ac-' + s.symbol);
+    if (chgEl && chgEl.className !== 'alpaca-change ' + changeClass)
+      chgEl.className = 'alpaca-change ' + changeClass;
+
+    // Data-type badge
+    const dtEl = document.getElementById('adt-' + s.symbol);
+    if (dtEl) {{
+      if (dtEl.textContent !== s.data_type) dtEl.textContent = s.data_type;
+      if (dtEl.className !== 'alpaca-dtype ' + s.data_type) dtEl.className = 'alpaca-dtype ' + s.data_type;
+    }}
+
+    // Flash on price change — no layout impact
     if (alpacaPrevPrices[s.symbol] !== undefined && alpacaPrevPrices[s.symbol] !== s.price) {{
-      const el = document.getElementById('acard-' + s.symbol);
-      if (el) {{
-        const cls = s.price > alpacaPrevPrices[s.symbol] ? 'flash-up' : 'flash-down';
-        el.classList.add(cls);
-        setTimeout(() => el.classList.remove(cls), 800);
-      }}
+      const cls = s.price > alpacaPrevPrices[s.symbol] ? 'flash-up' : 'flash-down';
+      card.classList.add(cls);
+      setTimeout(() => card.classList.remove(cls), 800);
     }}
     alpacaPrevPrices[s.symbol] = s.price;
   }});
