@@ -1210,14 +1210,14 @@ def fetch_baltic_dry():
 NEWS_CHANNELS = [
     {"id": "bloomberg",   "handle": "Bloomberg",          "channel_id": "UCIALMKvObZNtJ6AmdCLP7Lg", "label": "Bloomberg",       "lang": "EN", "region": "Global"},
     {"id": "cnbc",        "handle": "CNBC",               "channel_id": "UCvJJ_dzjViJCoLf5uKUTwoA", "label": "CNBC",            "lang": "EN", "region": "US"},
-    {"id": "yahoofi",     "handle": "yahoofi",            "channel_id": "UCEAZeUIeJs6e3FKtpAOlEyQ", "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
+    {"id": "yahoofi",     "handle": "yahoofi",            "channel_id": "UCEAZeUIeJs0IjQiqTCdVSIg", "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
     {"id": "reuters",     "handle": "Reuters",            "channel_id": "UChqUTb7kYRX8-EiaN3XFrSQ", "label": "Reuters",         "lang": "EN", "region": "Global"},
     {"id": "aljazeera",   "handle": "aljazeeraenglish",   "channel_id": "UCNye-wNBqNL5ZzHSJj3l8Bg", "label": "Al Jazeera",      "lang": "EN", "region": "Global"},
     {"id": "skynews",     "handle": "SkyNews",            "channel_id": "UCoMdktPbSTixAyNGwb-UYkQ", "label": "Sky News",        "lang": "EN", "region": "UK"},
     {"id": "dwnews",      "handle": "DWNews",             "channel_id": "UCknLrEdhRCp1aegoMqRaCZg", "label": "DW News",         "lang": "EN", "region": "EU"},
-    {"id": "wion",        "handle": "WION",               "channel_id": "UCKwbFmKU25186bDSize6JtA", "label": "WION",            "lang": "EN", "region": "India"},
-    {"id": "cnbctv18",    "handle": "cnbctv18",           "channel_id": "UCvqS_WyAHYXmkOLr_YCcVAA", "label": "CNBC TV18",       "lang": "EN", "region": "India"},
-    {"id": "foxbusiness", "handle": "FoxBusiness",        "channel_id": "UCF9IOB2TExg3QIBupFtBDxg", "label": "Fox Business",    "lang": "EN", "region": "US"},
+    {"id": "wion",        "handle": "WION",               "channel_id": "UC_gUM8rL-Lrg6O3adPW9K1g", "label": "WION",            "lang": "EN", "region": "India"},
+    {"id": "cnbctv18",    "handle": "cnbctv18",           "channel_id": "UCmRbHAgG2k2vDUvb3xsEunQ", "label": "CNBC TV18",       "lang": "EN", "region": "India"},
+    {"id": "foxbusiness", "handle": "FoxBusiness",        "channel_id": "UCCXoCcu9Rp7NPbTzIvogpZg", "label": "Fox Business",    "lang": "EN", "region": "US"},
 ]
 
 # Map handle -> channel_id for quick lookup
