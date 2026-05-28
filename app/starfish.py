@@ -1208,17 +1208,20 @@ def fetch_baltic_dry():
 # YOUTUBE LIVE NEWS
 # ══════════════════════════════════════════════════════════════════════════════
 NEWS_CHANNELS = [
-    {"id": "bloomberg",   "handle": "Bloomberg",          "label": "Bloomberg",       "lang": "EN", "region": "Global"},
-    {"id": "cnbc",        "handle": "CNBC",               "label": "CNBC",            "lang": "EN", "region": "US"},
-    {"id": "yahoofi",     "handle": "yahoofi",            "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
-    {"id": "reuters",     "handle": "Reuters",            "label": "Reuters",         "lang": "EN", "region": "Global"},
-    {"id": "aljazeera",   "handle": "aljazeeraenglish",   "label": "Al Jazeera",      "lang": "EN", "region": "Global"},
-    {"id": "skynews",     "handle": "SkyNews",            "label": "Sky News",        "lang": "EN", "region": "UK"},
-    {"id": "dwnews",      "handle": "DWNews",             "label": "DW News",         "lang": "EN", "region": "EU"},
-    {"id": "wion",        "handle": "WION",               "label": "WION",            "lang": "EN", "region": "India"},
-    {"id": "cnbctv18",    "handle": "cnbctv18",           "label": "CNBC TV18",       "lang": "EN", "region": "India"},
-    {"id": "foxbusiness", "handle": "FoxBusiness",        "label": "Fox Business",    "lang": "EN", "region": "US"},
+    {"id": "bloomberg",   "handle": "Bloomberg",          "channel_id": "UCIALMKvObZNtJ6AmdCLP7Lg", "label": "Bloomberg",       "lang": "EN", "region": "Global"},
+    {"id": "cnbc",        "handle": "CNBC",               "channel_id": "UCvJJ_dzjViJCoLf5uKUTwoA", "label": "CNBC",            "lang": "EN", "region": "US"},
+    {"id": "yahoofi",     "handle": "yahoofi",            "channel_id": "UCEAZeUIeJs6e3FKtpAOlEyQ", "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
+    {"id": "reuters",     "handle": "Reuters",            "channel_id": "UChqUTb7kYRX8-EiaN3XFrSQ", "label": "Reuters",         "lang": "EN", "region": "Global"},
+    {"id": "aljazeera",   "handle": "aljazeeraenglish",   "channel_id": "UCNye-wNBqNL5ZzHSJj3l8Bg", "label": "Al Jazeera",      "lang": "EN", "region": "Global"},
+    {"id": "skynews",     "handle": "SkyNews",            "channel_id": "UCoMdktPbSTixAyNGwb-UYkQ", "label": "Sky News",        "lang": "EN", "region": "UK"},
+    {"id": "dwnews",      "handle": "DWNews",             "channel_id": "UCknLrEdhRCp1aegoMqRaCZg", "label": "DW News",         "lang": "EN", "region": "EU"},
+    {"id": "wion",        "handle": "WION",               "channel_id": "UCKwbFmKU25186bDSize6JtA", "label": "WION",            "lang": "EN", "region": "India"},
+    {"id": "cnbctv18",    "handle": "cnbctv18",           "channel_id": "UCvqS_WyAHYXmkOLr_YCcVAA", "label": "CNBC TV18",       "lang": "EN", "region": "India"},
+    {"id": "foxbusiness", "handle": "FoxBusiness",        "channel_id": "UCF9IOB2TExg3QIBupFtBDxg", "label": "Fox Business",    "lang": "EN", "region": "US"},
 ]
+
+# Map handle -> channel_id for quick lookup
+_HANDLE_TO_CHANNEL_ID = {ch["handle"]: ch["channel_id"] for ch in NEWS_CHANNELS}
 _YT_HDR = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
@@ -1227,20 +1230,82 @@ _YT_HDR = {
  
  
 def fetch_live_video_id(handle):
-    def _get(u): return requests.get(u, headers=_YT_HDR, timeout=12, allow_redirects=True)
+    """
+    Returns (video_id, is_live).
+    Strategy:
+      1. Try /channel/{channel_id}/live via channel ID (most reliable for official channels).
+      2. Fall back to /@{handle}/live via handle.
+      3. If no live stream found, get latest video from the channel RSS feed.
+      4. Last resort: scrape /@{handle}/videos page.
+    """
+    def _get(u):
+        return requests.get(u, headers=_YT_HDR, timeout=12, allow_redirects=True)
+
+    channel_id = _HANDLE_TO_CHANNEL_ID.get(handle)
     vid, live = None, False
-    try:
-        r = _get(f"https://www.youtube.com/@{handle}/live"); text = r.text
-        m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', r.url) or re.search(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', text)
-        if m and ('"isLive":true' in text or '"liveBroadcastContent":"live"' in text):
-            vid, live = m.group(1), True
-    except Exception: pass
+
+    # ── Step 1: live check via channel ID URL ────────────────────────────────
+    if channel_id:
+        try:
+            r = _get(f"https://www.youtube.com/channel/{channel_id}/live")
+            text = r.text
+            # Check for live broadcast signals
+            is_live_page = ('"isLive":true' in text or
+                            '"liveBroadcastContent":"live"' in text or
+                            '"broadcastType":"LIVE"' in text)
+            # Extract video ID from redirected URL first, then page source
+            m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', r.url)
+            if not m:
+                # Look for canonical video ID in page — avoid playlist/channel IDs
+                m = re.search(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', text)
+            if m and is_live_page:
+                vid, live = m.group(1), True
+        except Exception:
+            pass
+
+    # ── Step 2: live check via @handle/live (fallback) ───────────────────────
     if not live:
         try:
-            r2 = _get(f"https://www.youtube.com/@{handle}/videos")
-            ids = list(dict.fromkeys(re.findall(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', r2.text)))
-            if ids: vid, live = ids[0], False
-        except Exception: pass
+            r = _get(f"https://www.youtube.com/@{handle}/live")
+            text = r.text
+            is_live_page = ('"isLive":true' in text or
+                            '"liveBroadcastContent":"live"' in text or
+                            '"broadcastType":"LIVE"' in text)
+            m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', r.url)
+            if not m:
+                m = re.search(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', text)
+            if m and is_live_page:
+                vid, live = m.group(1), True
+        except Exception:
+            pass
+
+    # ── Step 3: no live stream — get latest video from RSS feed ─────────────
+    if not live:
+        rss_vid = None
+        # Try channel RSS (most reliable, no JS needed)
+        if channel_id:
+            try:
+                rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+                r = _get(rss_url)
+                m = re.search(r'<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>', r.text)
+                if m:
+                    rss_vid = m.group(1)
+            except Exception:
+                pass
+        # Fall back to scraping /videos page
+        if not rss_vid:
+            try:
+                r2 = _get(f"https://www.youtube.com/@{handle}/videos")
+                ids = list(dict.fromkeys(
+                    re.findall(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', r2.text)
+                ))
+                if ids:
+                    rss_vid = ids[0]
+            except Exception:
+                pass
+        if rss_vid:
+            vid, live = rss_vid, False
+
     return vid, live
  
  
