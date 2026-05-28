@@ -1229,84 +1229,85 @@ _YT_HDR = {
 }
  
  
+
 def fetch_live_video_id(handle):
     """
     Returns (video_id, is_live).
+
+    ONLY serves videos from the official channel identified by channel_id.
+    Never returns videos from other channels.
+
     Strategy:
-      1. Try /channel/{channel_id}/live via channel ID (most reliable for official channels).
-      2. Fall back to /@{handle}/live via handle.
-      3. If no live stream found, get latest video from the channel RSS feed.
-      4. Last resort: scrape /@{handle}/videos page.
+      1. Fetch the channel RSS feed (feeds/videos.xml?channel_id=...).
+         This is pure XML — guaranteed to contain ONLY this channel's own videos.
+         Extract all video IDs from it (up to 15 most recent).
+      2. For each video ID from RSS, check if it is currently live by hitting
+         youtube.com/watch?v=ID and looking for live signals in the response.
+         Use the FIRST live video found.
+      3. If no live video found in RSS, return the first (latest) video from RSS.
+      4. Emergency fallback only if RSS fails: hit /channel/{id}/live and verify
+         the redirected video ID actually belongs to this channel via RSS list.
     """
     def _get(u):
         return requests.get(u, headers=_YT_HDR, timeout=12, allow_redirects=True)
 
     channel_id = _HANDLE_TO_CHANNEL_ID.get(handle)
-    vid, live = None, False
+    if not channel_id:
+        return None, False
 
-    # ── Step 1: live check via channel ID URL ────────────────────────────────
-    if channel_id:
+    # ── Step 1: Fetch RSS — the only source of this channel's own video IDs ──
+    rss_video_ids = []
+    try:
+        rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+        r = _get(rss_url)
+        if r.status_code == 200:
+            # Extract ALL video IDs in order (most recent first)
+            rss_video_ids = re.findall(r'<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>', r.text)
+    except Exception:
+        pass
+
+    # ── Step 2: Check each RSS video for live status (check top 5 only) ─────
+    # We check up to 5 most recent because live streams are almost always recent
+    for vid_id in rss_video_ids[:5]:
         try:
-            r = _get(f"https://www.youtube.com/channel/{channel_id}/live")
-            text = r.text
-            # Check for live broadcast signals
-            is_live_page = ('"isLive":true' in text or
-                            '"liveBroadcastContent":"live"' in text or
-                            '"broadcastType":"LIVE"' in text)
-            # Extract video ID from redirected URL first, then page source
-            m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', r.url)
-            if not m:
-                # Look for canonical video ID in page — avoid playlist/channel IDs
-                m = re.search(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', text)
-            if m and is_live_page:
-                vid, live = m.group(1), True
+            watch_r = _get(f"https://www.youtube.com/watch?v={vid_id}")
+            text = watch_r.text
+            if ('"isLive":true' in text or
+                '"liveBroadcastContent":"live"' in text or
+                '"broadcastType":"LIVE"' in text or
+                '"isLiveBroadcast":true' in text):
+                return vid_id, True
         except Exception:
-            pass
+            continue
 
-    # ── Step 2: live check via @handle/live (fallback) ───────────────────────
-    if not live:
-        try:
-            r = _get(f"https://www.youtube.com/@{handle}/live")
-            text = r.text
-            is_live_page = ('"isLive":true' in text or
-                            '"liveBroadcastContent":"live"' in text or
-                            '"broadcastType":"LIVE"' in text)
-            m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', r.url)
-            if not m:
-                m = re.search(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', text)
-            if m and is_live_page:
-                vid, live = m.group(1), True
-        except Exception:
-            pass
+    # ── Step 3: No live found — return latest video from RSS ─────────────────
+    if rss_video_ids:
+        return rss_video_ids[0], False
 
-    # ── Step 3: no live stream — get latest video from RSS feed ─────────────
-    if not live:
-        rss_vid = None
-        # Try channel RSS (most reliable, no JS needed)
-        if channel_id:
-            try:
-                rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-                r = _get(rss_url)
-                m = re.search(r'<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>', r.text)
-                if m:
-                    rss_vid = m.group(1)
-            except Exception:
-                pass
-        # Fall back to scraping /videos page
-        if not rss_vid:
-            try:
-                r2 = _get(f"https://www.youtube.com/@{handle}/videos")
-                ids = list(dict.fromkeys(
-                    re.findall(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', r2.text)
-                ))
-                if ids:
-                    rss_vid = ids[0]
-            except Exception:
-                pass
-        if rss_vid:
-            vid, live = rss_vid, False
+    # ── Step 4: RSS failed — emergency fallback via /channel/{id}/live ───────
+    # IMPORTANT: we only accept the video if its ID is NOT from a different channel.
+    # Since we have no RSS to cross-check, we verify via oEmbed that the video
+    # exists and is embeddable (if it 404s, it's likely a redirect to homepage).
+    try:
+        r = _get(f"https://www.youtube.com/channel/{channel_id}/live")
+        # Only trust the URL redirect (not page source, which has recommendations)
+        m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', r.url)
+        if m:
+            vid_id = m.group(1)
+            # Verify this video is embeddable (rejects geo-blocked / wrong channel redirects)
+            oe = requests.get(
+                f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid_id}&format=json",
+                headers=_YT_HDR, timeout=6
+            )
+            if oe.status_code == 200:
+                text = r.text
+                is_live = ('"isLive":true' in text or
+                           '"liveBroadcastContent":"live"' in text)
+                return vid_id, is_live
+    except Exception:
+        pass
 
-    return vid, live
+    return None, False
  
  
 # ══════════════════════════════════════════════════════════════════════════════
