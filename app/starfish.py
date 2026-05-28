@@ -696,6 +696,144 @@ def alpaca_fetch_all_data():
 
     return result
 
+
+def get_alpaca_live_price(ticker):
+    """
+    Return the best available real-time price for a US-listed ticker.
+
+    Priority order:
+      1. Alpaca WebSocket (sub-second trade feed)  — data_type = "LIVE"
+      2. Alpaca REST /stocks/trades/latest          — data_type = "TRADE"
+      3. Alpaca REST /stocks/quotes/latest          — data_type = "QUOTE"
+      4. Alpaca REST /stocks/bars/latest            — data_type = "BAR"
+      5. yfinance fast_info                         — data_type = "YFIN"
+      6. None  (non-US ticker or all sources failed)
+
+    Returns a dict or None:
+      {
+        "price": float,
+        "bid": float | None,
+        "ask": float | None,
+        "bid_size": int | None,
+        "ask_size": int | None,
+        "spread": float | None,
+        "volume": int | None,
+        "open": float | None,
+        "high": float | None,
+        "low": float | None,
+        "data_type": str,
+        "timestamp": str,
+        "source": str,
+      }
+    """
+    # Only US tickers are available on Alpaca / IEX feed
+    sym = ticker.upper()
+    if "." in sym:          # e.g. TCS.NS, RELIANCE.BO — skip
+        return None
+
+    # ── 1. WebSocket cache (sub-second freshness) ───────────────────────────
+    with alpaca_rt_lock:
+        rt = dict(alpaca_rt_data.get(sym, {}))
+
+    if rt.get("price"):
+        bid  = rt.get("bid")
+        ask  = rt.get("ask")
+        return {
+            "price":    rt["price"],
+            "bid":      bid,
+            "ask":      ask,
+            "bid_size": rt.get("bid_size"),
+            "ask_size": rt.get("ask_size"),
+            "spread":   round(ask - bid, 4) if (ask and bid) else None,
+            "volume":   rt.get("volume"),
+            "open":     None, "high": None, "low": None,
+            "data_type": "LIVE",
+            "timestamp": rt.get("ts", ""),
+            "source":   "Alpaca WebSocket",
+        }
+
+    # ── 2–4. Alpaca REST (requires API key) ─────────────────────────────────
+    if ALPACA_API_KEY:
+        try:
+            # Fetch all three endpoints in parallel for speed
+            def _get_trade():
+                r = alpaca_get(f"{ALPACA_DATA_URL}/stocks/trades/latest"
+                               f"?symbols={sym}&feed=iex")
+                return r.json().get("trades", {}).get(sym) if r and r.status_code == 200 else None
+
+            def _get_quote():
+                r = alpaca_get(f"{ALPACA_DATA_URL}/stocks/quotes/latest"
+                               f"?symbols={sym}&feed=iex")
+                return r.json().get("quotes", {}).get(sym) if r and r.status_code == 200 else None
+
+            def _get_bar():
+                r = alpaca_get(f"{ALPACA_DATA_URL}/stocks/bars/latest"
+                               f"?symbols={sym}&feed=iex")
+                return r.json().get("bars", {}).get(sym) if r and r.status_code == 200 else None
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+                ft, fq, fb = (ex.submit(_get_trade),
+                              ex.submit(_get_quote),
+                              ex.submit(_get_bar))
+                trade = ft.result(timeout=6)
+                quote = fq.result(timeout=6)
+                bar   = fb.result(timeout=6)
+
+            price    = (trade or {}).get("p") or (quote or {}).get("ap") or (bar or {}).get("c")
+            bid      = (quote or {}).get("bp")
+            ask      = (quote or {}).get("ap")
+            b_size   = (quote or {}).get("bs")
+            a_size   = (quote or {}).get("as")
+            volume   = (trade or {}).get("s") or (bar or {}).get("v")
+            ts       = ((trade or {}).get("t") or (quote or {}).get("t")
+                        or (bar or {}).get("t") or "")
+
+            if price:
+                dtype = ("TRADE" if (trade or {}).get("p")
+                         else "QUOTE" if ask
+                         else "BAR")
+                return {
+                    "price":    float(price),
+                    "bid":      float(bid)    if bid    else None,
+                    "ask":      float(ask)    if ask    else None,
+                    "bid_size": int(b_size)   if b_size else None,
+                    "ask_size": int(a_size)   if a_size else None,
+                    "spread":   round(float(ask) - float(bid), 4) if (ask and bid) else None,
+                    "volume":   int(volume)   if volume else None,
+                    "open":     float((bar or {}).get("o", 0)) or None,
+                    "high":     float((bar or {}).get("h", 0)) or None,
+                    "low":      float((bar or {}).get("l", 0)) or None,
+                    "data_type": dtype,
+                    "timestamp": ts,
+                    "source":   f"Alpaca REST ({dtype})",
+                }
+        except Exception as _e:
+            pass  # fall through to yfinance
+
+    # ── 5. yfinance fast_info (15-min delayed for non-IEX) ──────────────────
+    try:
+        import yfinance as yf
+        fi = yf.Ticker(sym).fast_info
+        price = getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+        if price:
+            return {
+                "price":    float(price),
+                "bid":      None, "ask": None,
+                "bid_size": None, "ask_size": None, "spread": None,
+                "volume":   getattr(fi, "three_month_average_volume", None),
+                "open":     getattr(fi, "open", None),
+                "high":     getattr(fi, "day_high", None),
+                "low":      getattr(fi, "day_low", None),
+                "data_type": "YFIN",
+                "timestamp": "",
+                "source":   "yfinance fast_info",
+            }
+    except Exception:
+        pass
+
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # COPERNICUS / SENTINEL HUB — LIVE SATELLITE IMAGERY
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2092,7 +2230,7 @@ def _sf(v, d=4):
     except: return None
  
  
-def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None):
+def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None, live_price_data=None):
     # ── DATA HYGIENE: drop NaN rows, deduplicate index, enforce numeric types ──
     df = df[~df.index.duplicated(keep="last")].sort_index()
     for col in ["Open", "High", "Low", "Close"]:
@@ -2113,6 +2251,27 @@ def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_dat
     cur  = _sf(c.iloc[-1])
     prev = _sf(c.iloc[-2])
     currency = "INR" if ticker.upper().endswith((".NS", ".BO")) else "USD"
+
+    # ── LIVE PRICE OVERRIDE (Alpaca / yfinance fast_info) ──────────────────
+    # Replace the yfinance historical close with the freshest available price
+    # so the AI always sees the current market price, not a stale EOD bar.
+    _live = live_price_data or {}
+    live_price   = _live.get("price")
+    live_bid     = _live.get("bid")
+    live_ask     = _live.get("ask")
+    live_spread  = _live.get("spread")
+    live_vol     = _live.get("volume")
+    live_dtype   = _live.get("data_type", "HIST")
+    live_source  = _live.get("source", "yfinance history")
+    live_ts      = _live.get("timestamp", "")
+    live_bid_sz  = _live.get("bid_size")
+    live_ask_sz  = _live.get("ask_size")
+
+    if live_price and abs(live_price - (cur or 0)) / max(cur or 1, 1) < 0.40:
+        # Only use live price if it's within 40% of the last historical close
+        # (guards against ticker mismatches or stale WebSocket entries)
+        cur = _sf(live_price)
+    # ── END LIVE PRICE OVERRIDE ─────────────────────────────────────────────
 
     hi52 = _sf(c.tail(252).max())
     lo52 = _sf(c.tail(252).min())
@@ -2372,6 +2531,18 @@ def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_dat
         "trends": trends_data or {},
         "fundamentals": fundamentals or {},
         "shipping": shipping_ctx or {},
+        "live": {
+            "price":    live_price,
+            "bid":      live_bid,
+            "ask":      live_ask,
+            "spread":   live_spread,
+            "bid_size": live_bid_sz,
+            "ask_size": live_ask_sz,
+            "volume":   live_vol,
+            "data_type": live_dtype,
+            "source":   live_source,
+            "timestamp": live_ts,
+        },
     }
  
  
@@ -2392,6 +2563,7 @@ def build_prompt(payload):
     shipping = p.get("shipping", {})
     pats     = p.get("patterns", [])
     conf     = p.get("confluence", {})
+    live     = p.get("live", {})
 
     f  = lambda v, d=2: f"{v:.{d}f}" if v is not None else "N/A"
     fp = lambda v: (f"+{v:.2f}" if v > 0 else f"{v:.2f}") if v is not None else "N/A"
@@ -2412,6 +2584,44 @@ def build_prompt(payload):
         "NOTE: Where data is N/A, do not fabricate values. Acknowledge the gap and weight surviving signals accordingly.",
         "",
     ]
+
+    # ── REAL-TIME LIVE PRICE (Alpaca / yfinance fast_info) ──────────────────
+    live_lines = []
+    if live and live.get("price"):
+        lp      = live["price"]
+        l_bid   = live.get("bid")
+        l_ask   = live.get("ask")
+        l_sp    = live.get("spread")
+        l_bsz   = live.get("bid_size")
+        l_asz   = live.get("ask_size")
+        l_vol   = live.get("volume")
+        l_dtype = live.get("data_type", "?")
+        l_src   = live.get("source", "")
+        l_ts    = live.get("timestamp", "")
+        hist_close = _sf(p["price"].get("prev")) if p.get("price") else None
+        drift = ""
+        if hist_close and hist_close != 0:
+            drift_pct = (lp - hist_close) / hist_close * 100
+            drift = f"  |  vs last hist close: {'+' if drift_pct >= 0 else ''}{drift_pct:.2f}%"
+        live_lines = [
+            "## REAL-TIME LIVE PRICE  ← USE THIS AS THE DEFINITIVE CURRENT PRICE",
+            f"- Price: {p['currency']} {f(lp)}  [{l_dtype}]{drift}",
+            f"- Source: {l_src}" + (f"  |  Timestamp: {l_ts}" if l_ts else ""),
+        ]
+        if l_bid or l_ask:
+            live_lines += [
+                f"- Bid: {f(l_bid)}" + (f"  (size: {l_bsz})" if l_bsz else "") +
+                f"   Ask: {f(l_ask)}" + (f"  (size: {l_asz})" if l_asz else "") +
+                (f"   Spread: {f(l_sp)}" if l_sp is not None else ""),
+            ]
+        if l_vol:
+            live_lines.append(f"- Intraday volume so far: {int(l_vol):,}")
+        live_lines += [
+            "NOTE: The real-time price above supersedes the 'current' price in the PRICE SNAPSHOT below.",
+            "Use this price for entry/stop/target calculations, not the historical close.",
+            "",
+        ]
+    # ── END REAL-TIME LIVE PRICE ─────────────────────────────────────────────
 
     # ── FUNDAMENTALS ──
     fund_lines = []
@@ -2504,7 +2714,7 @@ def build_prompt(payload):
         "data sources agree — or flag the contradiction if they conflict.",
         "",
         "[INPUT DATA]",
-    ] + data_quality_lines + [
+    ] + data_quality_lines + live_lines + [
         "## PRICE SNAPSHOT",
         f"- Current: {p['currency']} {f(px['current'])}  |  Prev Close: {p['currency']} {f(px['prev'])}",
         f"- Change: {fp(px['change'])} ({fp(px['change_pct'])}%)",
@@ -5202,12 +5412,23 @@ def api_ai_analysis():
  
     name = _get_name(ticker)
  
-    # ── Fetch all alternative data concurrently ──
+    # ── Fetch all alternative data concurrently ──────────────────────────────
+    # live_price_data is fetched first (fastest, WebSocket cache hit is O(1))
+    # so it's always ready before the slower macro/fundamentals calls finish.
     macro_data    = {}
     trends_data   = {}
     fundamentals  = {}
     shipping_ctx  = {}
- 
+    live_price_data = None   # populated below
+
+    # Real-time price: Alpaca WebSocket → Alpaca REST → yfinance fast_info
+    # Run synchronously — the WebSocket cache is an in-memory dict lookup so
+    # it returns in microseconds; REST fallback is ~100ms; yfin ~200ms.
+    try:
+        live_price_data = get_alpaca_live_price(ticker)
+    except Exception:
+        live_price_data = None
+
     def _fetch_macro():
         nonlocal macro_data
         try: macro_data = fetch_all_macro()
@@ -5237,6 +5458,10 @@ def api_ai_analysis():
  
     # Track which data sources succeeded
     data_sources = []
+    if live_price_data:
+        dtype_label = live_price_data.get("data_type", "?")
+        src_label   = live_price_data.get("source", "Live")
+        data_sources.append(f"Real-Time Price ({src_label} · {dtype_label})")
     if macro_data:    data_sources.append(f"FRED Macro ({len(macro_data)} series)")
     if trends_data:   data_sources.append(f"Google Trends ({len(trends_data)} keywords)")
     if fundamentals:  data_sources.append("Yahoo Fundamentals")
@@ -5248,6 +5473,7 @@ def api_ai_analysis():
                                           macro_data=macro_data,
                                           trends_data=trends_data,
                                           fundamentals=fundamentals,
+                                          live_price_data=live_price_data,
                                           shipping_ctx=shipping_ctx)
         prompt   = build_prompt(payload)
     except Exception as e:
