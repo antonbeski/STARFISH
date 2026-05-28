@@ -1022,11 +1022,6 @@ FRED_SERIES = {
     "MORTGAGE30US": "30Y Mortgage Rate (%)",
 }
  
-# Visa SMI series IDs on FRED
-VISA_SMI_SERIES = {
-    "VSMC": "Visa SMI — Consumer Spending",
-}
- 
  
 def fetch_fred_series(series_id, limit=3):
     """Fetch latest observations for a FRED series using the official FRED REST API."""
@@ -1192,13 +1187,6 @@ def fetch_shipping_context():
     except Exception:
         pass
  
-    if not result["notes"]:
-        result["notes"] = [
-            "Global shipping data from public AIS aggregators.",
-            "Key chokepoints: Suez Canal, Panama Canal, Strait of Malacca monitored.",
-            "Shipping indices (Baltic Dry, Crude Tanker) available via FRED.",
-        ]
- 
     _AIS_CACHE[cache_key] = result
     _AIS_CACHE["_ts"] = now
     return result
@@ -1220,9 +1208,9 @@ def fetch_baltic_dry():
 # YOUTUBE LIVE NEWS
 # ══════════════════════════════════════════════════════════════════════════════
 NEWS_CHANNELS = [
-    {"id": "cnbctv18",  "handle": "cnbctv18",  "label": "CNBC TV18",       "lang": "EN", "region": "India",  "video_id": "1_Ih0JYmkjI"},
-    {"id": "bloomberg", "handle": "Bloomberg", "label": "Bloomberg Global", "lang": "EN", "region": "Global", "video_id": "iEpJwprxDdk"},
-    {"id": "yahoofi",   "handle": "yahoofi",   "label": "Yahoo Finance",   "lang": "EN", "region": "Global", "video_id": "KQp-e_XQnDE"},
+    {"id": "cnbctv18",  "handle": "cnbctv18",  "label": "CNBC TV18",       "lang": "EN", "region": "India"},
+    {"id": "bloomberg", "handle": "Bloomberg", "label": "Bloomberg Global", "lang": "EN", "region": "Global"},
+    {"id": "yahoofi",   "handle": "yahoofi",   "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
 ]
 _YT_HDR = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
@@ -1232,9 +1220,6 @@ _YT_HDR = {
  
  
 def fetch_live_video_id(handle):
-    for ch in NEWS_CHANNELS:
-        if ch["handle"] == handle and ch.get("video_id"):
-            return ch["video_id"], True
     def _get(u): return requests.get(u, headers=_YT_HDR, timeout=12, allow_redirects=True)
     vid, live = None, False
     try:
@@ -3794,7 +3779,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       <span class="market-pill-dot" id="market-pill-dot" style="background:#e65100"></span>
       <span id="market-pill-text">Checking…</span>
     </span>
-    <span class="alpaca-badge">Real-Time</span>
+    <span class="alpaca-badge" id="alpaca-data-badge">Connecting…</span>
   </div>
 
   <div class="alpaca-filter">
@@ -3824,7 +3809,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 
   <div class="alpaca-status">
     <div class="alpaca-led"></div>
-    <span class="alpaca-status-text" id="alpaca-status-text">WebSocket connected · Real-time trades & quotes</span>
+    <span class="alpaca-status-text" id="alpaca-status-text">Connecting…</span>
     <span id="alpaca-last-update" style="font-size:.55rem;color:#aaa;margin-left:auto"></span>
   </div>
 
@@ -4691,6 +4676,7 @@ async function fetchAlpacaStocks() {{
     if (data.error) {{
       console.error('Alpaca error:', data.error);
       document.getElementById('alpaca-status-text').textContent = 'Error: ' + data.error;
+      document.getElementById('alpaca-data-badge').textContent = 'Unavailable';
       return;
     }}
     alpacaAllStocks = data.stocks || [];
@@ -4698,9 +4684,16 @@ async function fetchAlpacaStocks() {{
     updateTickerStrip(alpacaAllStocks);
     document.getElementById('alpaca-last-update').textContent = data.updated;
     document.getElementById('alpaca-status-text').textContent = 'WebSocket live · ' + alpacaAllStocks.length + ' symbols';
+    // Update the header badge to reflect the actual dominant data type
+    var typeCounts = {{}};
+    alpacaAllStocks.forEach(function(s) {{ typeCounts[s.data_type] = (typeCounts[s.data_type] || 0) + 1; }});
+    var dominantType = Object.keys(typeCounts).sort(function(a,b){{ return typeCounts[b]-typeCounts[a]; }})[0] || '—';
+    var badgeLabels = {{LIVE:'Live Feed', TRADE:'Trade Data', QUOTE:'Quote Data', BAR:'Bar Data (Delayed)', YFIN:'Delayed (yfinance)'}};
+    document.getElementById('alpaca-data-badge').textContent = badgeLabels[dominantType] || dominantType;
   }} catch(e) {{
     console.error('Alpaca fetch error:', e);
     document.getElementById('alpaca-status-text').textContent = 'Connection error — retrying';
+    document.getElementById('alpaca-data-badge').textContent = 'Offline';
   }}
 }}
 
