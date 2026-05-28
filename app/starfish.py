@@ -1,6 +1,6 @@
 """
 STARFISH — Market Dynamics
-Stocks · AI Analysis · Sectors · Live News · US Equities
+Stocks · AI Analysis · Sectors · News · US Equities
 """
 
 import os
@@ -1208,9 +1208,16 @@ def fetch_baltic_dry():
 # YOUTUBE LIVE NEWS
 # ══════════════════════════════════════════════════════════════════════════════
 NEWS_CHANNELS = [
-    {"id": "cnbctv18",  "handle": "cnbctv18",  "label": "CNBC TV18",       "lang": "EN", "region": "India"},
-    {"id": "bloomberg", "handle": "Bloomberg", "label": "Bloomberg Global", "lang": "EN", "region": "Global"},
-    {"id": "yahoofi",   "handle": "yahoofi",   "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
+    {"id": "bloomberg",   "handle": "Bloomberg",          "label": "Bloomberg",       "lang": "EN", "region": "Global"},
+    {"id": "cnbc",        "handle": "CNBC",               "label": "CNBC",            "lang": "EN", "region": "US"},
+    {"id": "yahoofi",     "handle": "yahoofi",            "label": "Yahoo Finance",   "lang": "EN", "region": "Global"},
+    {"id": "reuters",     "handle": "Reuters",            "label": "Reuters",         "lang": "EN", "region": "Global"},
+    {"id": "aljazeera",   "handle": "aljazeeraenglish",   "label": "Al Jazeera",      "lang": "EN", "region": "Global"},
+    {"id": "skynews",     "handle": "SkyNews",            "label": "Sky News",        "lang": "EN", "region": "UK"},
+    {"id": "dwnews",      "handle": "DWNews",             "label": "DW News",         "lang": "EN", "region": "EU"},
+    {"id": "wion",        "handle": "WION",               "label": "WION",            "lang": "EN", "region": "India"},
+    {"id": "cnbctv18",    "handle": "cnbctv18",           "label": "CNBC TV18",       "lang": "EN", "region": "India"},
+    {"id": "foxbusiness", "handle": "FoxBusiness",        "label": "Fox Business",    "lang": "EN", "region": "US"},
 ]
 _YT_HDR = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
@@ -3384,10 +3391,8 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .sector-state-title{{font-size:.95rem;font-weight:600;color:#555}}
     .sector-state-sub{{font-size:.78rem;color:#888;max-width:340px;line-height:1.6}}
  
-    /* ── LIVE NEWS ── */
+    /* ── NEWS ── */
     .news-panel{{padding:26px 30px;margin-bottom:18px}}
-    .news-live-dot{{display:inline-block;width:6px;height:6px;border-radius:50%;background:#ff4444;
-                    margin-right:6px;animation:lp 1.4s ease-in-out infinite;vertical-align:middle}}
     @keyframes lp{{0%,100%{{opacity:1;transform:scale(1)}}50%{{opacity:.3;transform:scale(.6)}}}}
     .news-tabs{{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}}
     .news-tab{{background:transparent;border:1px solid #000;border-radius:20px;padding:6px 18px;
@@ -3748,7 +3753,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <nav class="header-nav">
     <a class="nav-link" href="#equities">Equities</a>
     <a class="nav-link" href="#sectors">Sectors</a>
-    <a class="nav-link" href="#live-news">Live News</a>
+    <a class="nav-link" href="#news">News</a>
     <a class="nav-link" href="#vessels">Data</a>
   </nav>
 </header>
@@ -4252,19 +4257,19 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
  
 <!-- ══════════════════════════════════════════
-     SECTION 3: LIVE NEWS
+     SECTION 3: NEWS
 ═══════════════════════════════════════════ -->
-<div class="section-divider" id="live-news">
+<div class="section-divider" id="news">
   <div class="section-divider-line"></div>
-  <div class="section-label"><span class="dot" style="background:#ff4444"></span>Live Financial News</div>
+  <div class="section-label"><span class="dot" style="background:#000"></span>News</div>
   <div class="section-divider-line"></div>
 </div>
  
 <div class="glass news-panel">
-  <div class="panel-label"><span class="news-live-dot"></span>Live Streams</div>
+  <div class="panel-label">Financial News</div>
   <div class="news-tabs" id="ntabs">{ntabs}</div>
   <div class="news-iframe-wrap">
-    <div id="nload" class="news-loading"><div class="news-spinner"></div><span>Loading stream&hellip;</span></div>
+    <div id="nload" class="news-loading"><div class="news-spinner"></div><span>Loading&hellip;</span></div>
     <iframe id="nframe" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="display:none"></iframe>
   </div>
   <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -5008,7 +5013,7 @@ function nSetErr(m){{nframe.style.display='none';nload.innerHTML='<span>'+m+'</s
  
 function loadCh(h){{
   if(curHandle===h)return;
-  curHandle=h; nSetLoad('Loading stream\u2026'); nframe.src='about:blank';
+  curHandle=h; nSetLoad('Loading\u2026'); nframe.src='about:blank';
   fetch('/api/live-id?handle='+encodeURIComponent(h))
     .then(r=>{{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}})
     .then(d=>{{
