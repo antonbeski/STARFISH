@@ -45,6 +45,13 @@ ALPACA_HEADERS = {
     "accept":              "application/json",
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ODDSPIPE — Kalshi + Polymarket prediction-market data
+# ══════════════════════════════════════════════════════════════════════════════
+ODDSPIPE_API_KEY  = os.environ.get("ODDSPIPE_API_KEY", "")
+ODDSPIPE_BASE_URL = "https://api.oddspipe.com/v1"
+ODDSPIPE_HEADERS  = {"X-API-Key": ODDSPIPE_API_KEY, "Accept": "application/json"}
+
 # Alpaca Watchlist
 ALPACA_WATCHLIST = [
     {"symbol": "AAPL",  "name": "Apple Inc.",        "sector": "Technology"},
@@ -3717,6 +3724,9 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       #pred-table col:nth-child(4){{width:44px!important}}
       #pred-table col:nth-child(5){{width:0!important;display:none}}
       #pred-table td:nth-child(5),#pred-table th:nth-child(5){{display:none}}
+      #pred-table col:nth-child(6){{width:44px!important}}
+      #pred-candle-chart{{height:220px!important}}
+      #pred-candle-wrap{{border-radius:8px!important}}
 
       /* Sector news output */
       .sector-res-header{{flex-direction:column;align-items:flex-start;gap:6px;padding-bottom:10px;margin-bottom:12px}}
@@ -4274,6 +4284,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
         <col style="width:54px">
         <col style="width:56px">
         <col style="width:70px">
+        <col style="width:56px">
       </colgroup>
       <thead>
         <tr style="border-bottom:2px solid #000">
@@ -4282,12 +4293,31 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
           <th style="text-align:right;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Prob</th>
           <th style="text-align:left;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Side</th>
           <th style="text-align:right;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Volume</th>
+          <th style="text-align:center;padding:8px 8px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#888">Chart</th>
         </tr>
       </thead>
       <tbody id="pred-tbody"></tbody>
     </table>
   </div>
   <div id="pred-empty" style="display:none;text-align:center;padding:40px 20px;color:#888;font-size:.85rem">No matching markets found.</div>
+
+  <!-- Price-chart modal — Polymarket dark style -->
+  <div id="pred-candle-wrap" style="display:none;margin-top:16px;background:#1a1b1e;border-radius:12px;overflow:hidden;font-family:DM Sans,sans-serif">
+    <!-- header row -->
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:18px 20px 10px">
+      <div style="flex:1;min-width:0">
+        <div id="pred-candle-title" style="font-size:1rem;font-weight:700;color:#fff;line-height:1.35;margin-bottom:4px;white-space:normal;word-break:break-word"></div>
+        <div id="pred-candle-meta" style="font-size:.72rem;color:#6b7280;display:flex;gap:14px;flex-wrap:wrap"></div>
+      </div>
+      <button onclick="closePredCandle()" style="flex-shrink:0;margin-left:12px;background:#2a2b2f;border:none;border-radius:6px;padding:5px 12px;font-size:.7rem;font-weight:600;cursor:pointer;color:#9ca3af">✕</button>
+    </div>
+    <!-- legend row -->
+    <div id="pred-candle-legend" style="display:flex;flex-wrap:wrap;gap:14px;padding:0 20px 12px;font-size:.75rem"></div>
+    <!-- status -->
+    <div id="pred-candle-status" style="font-size:.68rem;color:#4b5563;padding:0 20px 4px;min-height:16px"></div>
+    <!-- chart -->
+    <div id="pred-candle-chart" style="width:100%;height:300px"></div>
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════
@@ -4892,7 +4922,7 @@ async function searchPredMarkets(){{
   var btn=document.getElementById('pred-btn');
   var status=document.getElementById('pred-status');
   btn.disabled=true; btn.textContent='Searching\u2026';
-  status.textContent='Fetching Manifold & PredScope\u2026';
+  status.textContent='Fetching Manifold, PredScope, Kalshi & Polymarket\u2026';
   document.getElementById('pred-chart-wrap').style.display='none';
   document.getElementById('pred-table-wrap').style.display='none';
   document.getElementById('pred-empty').style.display='none';
@@ -4922,7 +4952,12 @@ function renderPredChart(results){{
     return t;
   }});
   var probs=top.map(function(r){{return r.probability;}});
-  var colors=top.map(function(r){{return r.platform==='Manifold'?'#000000':'#555555';}});
+  var colors=top.map(function(r){{
+    if(r.platform==='Manifold')  return '#000000';
+    if(r.platform==='Kalshi')    return '#0057ff';
+    if(r.platform==='Polymarket')return '#00b3a4';
+    return '#555555';
+  }});
 
   var trace={{
     type:'bar', orientation:'h',
@@ -4956,15 +4991,157 @@ function renderPredTable(results){{
     var vol=r.volume!=null?'$'+Number(r.volume).toLocaleString(undefined,{{maximumFractionDigits:0}}):'—';
     var link=r.url?'<a href="'+r.url+'" target="_blank" class="news-card-read" style="display:inline;border:none;padding:0;background:none;font-size:.8rem;font-weight:500;text-transform:none;letter-spacing:0;white-space:normal;word-break:break-word">'+esc(r.title)+'</a>':'<span style="white-space:normal;word-break:break-word">'+esc(r.title)+'</span>';
     var platformBadge='<span class="news-card-src" style="white-space:nowrap">'+esc(r.platform)+'</span>';
+    var canShow=(r.platform==='Kalshi'||r.platform==='Polymarket')&&r.market_id;
+    var chartBtn=canShow
+      ?'<button onclick="showPredCandle(\''+r.market_id.replace(/'/g,"\\'")+'\'\''+',\''+r.platform.toLowerCase()+'\',\''+r.title.replace(/'/g,"\\'").replace(/\n/g,' ').slice(0,60)+'\')" style="background:#000;color:#fff;border:none;border-radius:4px;padding:3px 9px;font-size:.68rem;font-weight:600;cursor:pointer;white-space:nowrap">&#9654; Chart</button>'
+      :'<span style="color:#ccc;font-size:.68rem">—</span>';
     return '<tr style="border-bottom:1px solid #e5e5e5'+(i%2===0?';background:#f8f7f4':';background:#fff')+'">'+
       '<td style="padding:7px 8px;width:90px;vertical-align:top">'+platformBadge+'</td>'+
       '<td style="padding:7px 8px;color:#000;font-size:.8rem;line-height:1.4;vertical-align:top">'+link+'</td>'+
       '<td style="padding:7px 8px;text-align:right;font-family:monospace;font-size:.8rem;white-space:nowrap;width:54px;vertical-align:top">'+pct+'</td>'+
       '<td style="padding:7px 8px;color:#555;font-size:.78rem;width:56px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:top">'+esc(r.outcome_label)+'</td>'+
       '<td style="padding:7px 8px;text-align:right;font-family:monospace;font-size:.76rem;color:#888;white-space:nowrap;width:70px;vertical-align:top">'+vol+'</td>'+
+      '<td style="padding:7px 8px;text-align:center;width:56px;vertical-align:top">'+chartBtn+'</td>'+
     '</tr>';
   }}).join('');
   document.getElementById('pred-table-wrap').style.display='block';
+}}
+
+// Polymarket-style dark area chart palette
+var _PRED_PALETTE=['#60a5fa','#fbbf24','#f97316','#a78bfa','#34d399','#f472b6','#38bdf8','#fb923c'];
+
+async function showPredCandle(marketId, platform, title){{
+  var wrap=document.getElementById('pred-candle-wrap');
+  var statusEl=document.getElementById('pred-candle-status');
+  var titleEl=document.getElementById('pred-candle-title');
+  var metaEl=document.getElementById('pred-candle-meta');
+  var legendEl=document.getElementById('pred-candle-legend');
+  titleEl.textContent=title;
+  metaEl.innerHTML='';
+  legendEl.innerHTML='';
+  statusEl.textContent='Loading price history\u2026';
+  wrap.style.display='block';
+  wrap.scrollIntoView({{behavior:'smooth',block:'nearest'}});
+  try{{
+    var r=await fetch('/api/pred-candles?market_id='+encodeURIComponent(marketId)+'&platform='+encodeURIComponent(platform));
+    var data=await r.json();
+    if(data.error){{statusEl.textContent='Error: '+data.error;return;}}
+    var candles=data.candles||[];
+    if(!candles.length){{statusEl.textContent='No historical data available.';return;}}
+    statusEl.textContent='';
+
+    // OddsPipe candles may have multiple outcomes (multi-outcome markets)
+    // outcomes key or fall back to single YES series
+    var outcomes=data.outcomes||null;
+    var traces=[];
+    var isMobile=window.innerWidth<600;
+
+    if(outcomes&&outcomes.length>0){{
+      // multi-outcome: each outcome has its own candle series
+      outcomes.forEach(function(oc,idx){{
+        var color=_PRED_PALETTE[idx%_PRED_PALETTE.length];
+        var ocCandles=oc.candles||candles;
+        var ts=ocCandles.map(function(c){{return c.timestamp||c.t||c.time||'';}});
+        var closes=ocCandles.map(function(c){{return+(c.close||c.c||c.yes_price||0);}});
+        traces.push(_predAreaTrace(ts,closes,oc.title||oc.name||'Outcome '+(idx+1),color));
+        _predLegendItem(legendEl,color,oc.title||oc.name||'Outcome '+(idx+1),closes[closes.length-1]);
+      }});
+    }}else{{
+      // single YES line
+      var color=platform==='kalshi'?'#60a5fa':'#34d399';
+      var ts=candles.map(function(c){{return c.timestamp||c.t||c.time||'';}});
+      var closes=candles.map(function(c){{return+(c.close||c.c||c.yes_price||0);}});
+      traces.push(_predAreaTrace(ts,closes,'YES',color));
+      _predLegendItem(legendEl,color,'YES',closes[closes.length-1]);
+      // add NO line if we can derive it
+      var nos=closes.map(function(v){{return Math.max(0,100-v);}});
+      traces.push(_predAreaTrace(ts,nos,'NO','#9ca3af'));
+      _predLegendItem(legendEl,'#9ca3af','NO',nos[nos.length-1]);
+    }}
+
+    // meta row: platform badge + candle count
+    metaEl.innerHTML=
+      '<span style="background:#2a2b2f;border-radius:4px;padding:2px 8px;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;font-size:.62rem">'+esc(platform)+'</span>'+
+      '<span style="color:#4b5563">'+candles.length+' hourly candles · 30 days</span>';
+
+    var layout={{
+      paper_bgcolor:'#1a1b1e',
+      plot_bgcolor:'#1a1b1e',
+      font:{{color:'#9ca3af',size:isMobile?9:11,family:'DM Sans,sans-serif'}},
+      margin:{{l:0,r:52,t:8,b:32}},
+      xaxis:{{
+        showgrid:false,
+        zeroline:false,
+        showline:false,
+        tickcolor:'#374151',
+        color:'#6b7280',
+        tickfont:{{size:isMobile?8:10}},
+        nticks:isMobile?5:8,
+        tickangle:0,
+        type:'category',
+      }},
+      yaxis:{{
+        side:'right',
+        range:[0,100],
+        showgrid:true,
+        gridcolor:'#2d2f36',
+        griddash:'dot',
+        gridwidth:1,
+        zeroline:false,
+        showline:false,
+        tickcolor:'transparent',
+        color:'#6b7280',
+        tickfont:{{size:isMobile?8:10}},
+        ticksuffix:'%',
+        dtick:20,
+      }},
+      showlegend:false,
+      hovermode:'x unified',
+      hoverlabel:{{
+        bgcolor:'#1f2937',
+        bordercolor:'#374151',
+        font:{{color:'#f9fafb',size:11,family:'DM Sans,sans-serif'}},
+      }},
+    }};
+    Plotly.newPlot('pred-candle-chart',traces,layout,{{
+      responsive:true,
+      displayModeBar:false,
+      staticPlot:false,
+    }});
+  }}catch(e){{
+    statusEl.textContent='Network error: '+String(e);
+  }}
+}}
+
+function _predAreaTrace(ts,vals,name,color){{
+  return {{
+    type:'scatter',
+    mode:'lines',
+    x:ts,
+    y:vals,
+    name:name,
+    line:{{color:color,width:2,shape:'spline',smoothing:.6}},
+    fill:'tozeroy',
+    fillcolor:color+'22',
+    hovertemplate:name+': %{{y:.1f}}%<extra></extra>',
+    hoveron:'points+fills',
+  }};
+}}
+
+function _predLegendItem(el,color,label,lastVal){{
+  var pct=lastVal!=null?' '+lastVal.toFixed(1)+'%':'';
+  var item=document.createElement('div');
+  item.style.cssText='display:flex;align-items:center;gap:5px;color:#e5e7eb;font-weight:600';
+  item.innerHTML=
+    '<span style="width:9px;height:9px;border-radius:50%;background:'+color+';flex-shrink:0;display:inline-block"></span>'+
+    '<span>'+esc(label)+'</span>'+
+    '<span style="color:'+color+';font-weight:700">'+esc(pct)+'</span>';
+  el.appendChild(item);
+}}
+
+function closePredCandle(){{
+  document.getElementById('pred-candle-wrap').style.display='none';
+  Plotly.purge('pred-candle-chart');
 }}
 
 // ── Sector news ───────────────────────────────────────────────────────────────
@@ -5675,6 +5852,47 @@ def api_prediction_markets():
     except Exception as exc:
         print(f"[PredMarkets] PredScope error: {exc}")
 
+    # ── OddsPipe — Kalshi + Polymarket ───────────────────────────────────────
+    if ODDSPIPE_API_KEY:
+        try:
+            r3 = requests.get(
+                f"{ODDSPIPE_BASE_URL}/markets",
+                params={"search": q, "limit": 30, "status": "open"},
+                headers=ODDSPIPE_HEADERS,
+                timeout=12,
+            )
+            r3.raise_for_status()
+            data3 = r3.json()
+            ql = q.lower()
+            for m in (data3.get("markets") or []):
+                title = m.get("title") or m.get("question") or ""
+                if ql not in title.lower():
+                    continue
+                platform_raw = (m.get("platform") or "").lower()
+                if "kalshi" in platform_raw:
+                    platform_label = "Kalshi"
+                elif "polymarket" in platform_raw:
+                    platform_label = "Polymarket"
+                else:
+                    platform_label = platform_raw.capitalize() or "OddsPipe"
+                yes_price = m.get("yes_price")
+                if yes_price is None:
+                    continue
+                # OddsPipe prices are in cents (0-100); convert to probability pct
+                prob = float(yes_price)
+                results.append({
+                    "platform":      platform_label,
+                    "title":         title,
+                    "market_id":     m.get("id") or m.get("slug", ""),
+                    "url":           m.get("url") or "",
+                    "probability":   round(prob, 2),
+                    "outcome_label": "YES",
+                    "volume":        m.get("volume") or m.get("liquidity"),
+                })
+            sources += 1
+        except Exception as exc:
+            print(f"[PredMarkets] OddsPipe error: {exc}")
+
     # ── Rank: exact title match first, then by distance from 50% ─────────────
     def _rank(r):
         exact = 1 if q.lower() in r["title"].lower() else 0
@@ -5685,6 +5903,35 @@ def api_prediction_markets():
     results.sort(key=_rank, reverse=True)
 
     return jsonify({"results": results, "sources": sources, "query": q})
+
+
+@app.route("/api/pred-candles")
+def api_pred_candles():
+    """Fetch 30-day hourly OHLCV candles for a Kalshi/Polymarket market via OddsPipe."""
+    market_id = (request.args.get("market_id") or "").strip()
+    platform  = (request.args.get("platform")  or "").strip().lower()
+    if not market_id:
+        return jsonify({"error": "market_id required"}), 400
+    if not ODDSPIPE_API_KEY:
+        return jsonify({"error": "OddsPipe API key not configured"}), 503
+    if platform not in ("kalshi", "polymarket"):
+        platform = "polymarket"
+    try:
+        r = requests.get(
+            f"{ODDSPIPE_BASE_URL}/candles/{market_id}",
+            params={"platform": platform, "interval": "1h", "days": 30},
+            headers=ODDSPIPE_HEADERS,
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        candles  = data.get("candles")  or []
+        outcomes = data.get("outcomes") or []
+        return jsonify({"candles": candles, "outcomes": outcomes,
+                        "market_id": market_id, "platform": platform})
+    except Exception as exc:
+        print(f"[PredCandles] error: {exc}")
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/rate-limits")
