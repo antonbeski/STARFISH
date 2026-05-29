@@ -627,8 +627,52 @@ def alpaca_get_prev_close(symbols):
     return {}
 
 
+def _yfinance_fallback_watchlist():
+    """Fetch watchlist data from yfinance when Alpaca API key is unavailable."""
+    result = []
+    symbols = [s["symbol"] for s in ALPACA_WATCHLIST]
+    try:
+        import yfinance as yf
+        tickers = yf.Tickers(" ".join(symbols))
+        for stock in ALPACA_WATCHLIST:
+            sym = stock["symbol"]
+            try:
+                fi = tickers.tickers[sym].fast_info
+                price = getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+                if not price:
+                    continue
+                prev_close = getattr(fi, "previous_close", None) or price
+                change = round(float(price) - float(prev_close), 4) if prev_close else 0
+                change_pct = round((change / float(prev_close)) * 100, 4) if prev_close else 0
+                result.append({
+                    "symbol":     sym,
+                    "name":       stock["name"],
+                    "sector":     stock["sector"],
+                    "price":      float(price),
+                    "ask":        getattr(fi, "ask", 0) or 0,
+                    "bid":        getattr(fi, "bid", 0) or 0,
+                    "ask_size":   0,
+                    "bid_size":   0,
+                    "spread":     0,
+                    "change":     change,
+                    "change_pct": change_pct,
+                    "volume":     getattr(fi, "three_month_average_volume", None) or 0,
+                    "open":       getattr(fi, "open", None) or 0,
+                    "high":       getattr(fi, "day_high", None) or 0,
+                    "low":        getattr(fi, "day_low", None) or 0,
+                    "close":      float(price),
+                    "data_type":  "YFIN",
+                    "timestamp":  "",
+                })
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[yfinance fallback] error: {e}")
+    return result
+
+
 def alpaca_fetch_all_data():
-    """Fetch all stock data from Alpaca (REST + WebSocket)"""
+    """Fetch all stock data from Alpaca (REST + WebSocket), with yfinance fallback."""
     symbols = [s["symbol"] for s in ALPACA_WATCHLIST]
     bars    = alpaca_get_bars(symbols)
     prevs   = alpaca_get_prev_close(symbols)
@@ -700,6 +744,10 @@ def alpaca_fetch_all_data():
             "data_type":  dtype,
             "timestamp":  rt.get("ts") or t.get("t") or q.get("t") or b.get("t") or "",
         })
+
+    # If Alpaca returned no data (no API key or market closed), fall back to yfinance
+    if not result:
+        result = _yfinance_fallback_watchlist()
 
     return result
 
@@ -1082,7 +1130,7 @@ def fetch_all_macro():
         futs = {ex.submit(_fetch, sid, lbl): sid for sid, lbl in FRED_SERIES.items()}
         for f in concurrent.futures.as_completed(futs):
             try: f.result()
-            except: pass
+            except Exception: pass
     return results
  
  
@@ -1808,7 +1856,7 @@ def parse_relative_time(text):
     text = text.strip()
     if re.match(r"\d{4}-\d{2}-\d{2}", text):
         try: return datetime.strptime(text[:10], "%Y-%m-%d").strftime("%b %d, %Y")
-        except: return text
+        except Exception: return text
     return text[:60]
  
  
@@ -1816,22 +1864,42 @@ def _rss_scrape(url, source, sector_id, client):
     results = []
     try:
         r = client.get(url, timeout=8)
-        soup = BeautifulSoup(r.text, "xml")
+        # Try xml parser first, fall back to html.parser if lxml-xml not available
+        try:
+            soup = BeautifulSoup(r.text, "lxml-xml")
+        except Exception:
+            try:
+                soup = BeautifulSoup(r.text, "xml")
+            except Exception:
+                soup = BeautifulSoup(r.text, "html.parser")
         keywords = [k.lower() for k in SECTORS[sector_id]["keywords"]]
-        for item in soup.find_all("item"):
-            title = item.find("title"); link = item.find("link"); pub_date = item.find("pubDate")
-            if not title or not link: continue
+        items = soup.find_all("item")
+        if not items:
+            # some feeds use <entry> (Atom)
+            items = soup.find_all("entry")
+        for item in items:
+            title = item.find("title")
+            link  = item.find("link")
+            pub_date = item.find("pubDate") or item.find("published") or item.find("updated")
+            if not title or not link:
+                continue
             title_text = title.get_text(strip=True)
-            if not any(kw in title_text.lower() for kw in keywords): continue
-            href = link.get_text(strip=True)
+            if not any(kw in title_text.lower() for kw in keywords):
+                continue
+            # <link> can be a tag with text or an href attribute (Atom)
+            href = link.get("href") or link.get_text(strip=True)
             pub = pub_date.get_text(strip=True) if pub_date else ""
             try:
                 dt = datetime.strptime(pub[:25], "%a, %d %b %Y %H:%M:%S")
                 pub = dt.strftime("%b %d, %Y %H:%M")
-            except: pub = pub[:30]
-            results.append({"title": title_text, "url": href, "source": source, "published": pub, "sector": sector_id})
-            if len(results) >= 8: break
-    except: pass
+            except Exception:
+                pub = pub[:30]
+            results.append({"title": title_text, "url": href, "source": source,
+                             "published": pub, "sector": sector_id})
+            if len(results) >= 8:
+                break
+    except Exception:
+        pass
     return results
  
  
@@ -1859,7 +1927,7 @@ def scrape_reuters(sector_id, client):
             pub = time_tag.get("datetime", "") if time_tag else ""
             if title and len(title) > 20:
                 results.append({"title": title, "url": href, "source": "Reuters", "published": parse_relative_time(pub), "sector": sector_id})
-    except: pass
+    except Exception: pass
     return results
  
  
@@ -1879,7 +1947,7 @@ def scrape_seeking_alpha(sector_id, client):
             pub = time_tag.get("datetime", "") if time_tag else ""
             if title and len(title) > 20:
                 results.append({"title": title, "url": href, "source": "Seeking Alpha", "published": parse_relative_time(pub), "sector": sector_id})
-    except: pass
+    except Exception: pass
     return results
  
  
@@ -1891,7 +1959,7 @@ def fetch_all_news(sector_id):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             for future in concurrent.futures.as_completed({executor.submit(fn, sector_id, client): fn for fn in scrapers}):
                 try: all_results.extend(future.result())
-                except: pass
+                except Exception: pass
     seen = set(); unique = []
     for item in all_results:
         key = re.sub(r"[^a-z0-9]", "", item["title"].lower())[:60]
@@ -2292,7 +2360,7 @@ def calc_support_resistance(c, window=20):
 # ══════════════════════════════════════════════════════════════════════════════
 def _sf(v, d=4):
     try: x = float(v); return None if np.isnan(x) else round(x, d)
-    except: return None
+    except Exception: return None
  
  
 def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None, live_price_data=None):
@@ -5701,24 +5769,24 @@ def api_ai_analysis():
     def _fetch_macro():
         nonlocal macro_data
         try: macro_data = fetch_all_macro()
-        except: pass
+        except Exception: pass
  
     def _fetch_trends():
         nonlocal trends_data
         try:
             kws = get_ticker_trend_keywords(ticker, name)
             trends_data = fetch_google_trends(kws, timeframe="today 3-m")
-        except: pass
+        except Exception: pass
  
     def _fetch_fundamentals():
         nonlocal fundamentals
         try: fundamentals = _get_fundamentals(ticker)
-        except: pass
+        except Exception: pass
  
     def _fetch_shipping():
         nonlocal shipping_ctx
         try: shipping_ctx = fetch_shipping_context()
-        except: pass
+        except Exception: pass
  
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
         futs = [ex.submit(_fetch_macro), ex.submit(_fetch_trends),
@@ -5820,45 +5888,55 @@ def api_prediction_markets():
 
     # ── PredScope (Polymarket-based) ──────────────────────────────────────────
     try:
-        r2 = requests.get(
+        # Try alternate PredScope endpoints
+        ps_data = None
+        for ps_url in [
             "https://predscope.com/api/markets.json",
-            timeout=10,
-            headers={"User-Agent": "Starfish/1.0"},
-        )
-        r2.raise_for_status()
-        ql = q.lower()
-        for m in (r2.json() or []):
-            title = m.get("title") or m.get("question") or ""
-            if ql not in title.lower():
-                continue
-            outcomes = m.get("outcomes") or []
-            if not outcomes:
-                continue
-            # Pick "Yes" outcome or highest probability outcome
-            best = None
-            for o in outcomes:
-                ol = (o.get("title") or o.get("name") or "").lower()
-                op = o.get("probability")
-                if op is None:
-                    continue
-                if "yes" in ol:
-                    best = o
+            "https://api.predscope.com/markets",
+        ]:
+            try:
+                r2 = requests.get(ps_url, timeout=10,
+                                  headers={"User-Agent": "Starfish/1.0"})
+                if r2.status_code == 200:
+                    ps_data = r2.json()
                     break
-            if best is None:
-                best = max(outcomes, key=lambda o: o.get("probability", 0) if o.get("probability") is not None else 0)
-            prob = best.get("probability")
-            if prob is None:
+            except Exception:
                 continue
-            results.append({
-                "platform":      "PredScope",
-                "title":         title,
-                "market_id":     m.get("slug") or m.get("id", ""),
-                "url":           f"https://predscope.com/market/{m.get('slug','')}" if m.get("slug") else "",
-                "probability":   round(float(prob) * 100, 2),
-                "outcome_label": best.get("title") or best.get("name") or "YES",
-                "volume":        m.get("volume") or m.get("liquidity"),
-            })
-        sources += 1
+        if ps_data is not None:
+            ql = q.lower()
+            market_list = ps_data if isinstance(ps_data, list) else ps_data.get("markets", ps_data.get("data", []))
+            for m in (market_list or []):
+                title = m.get("title") or m.get("question") or ""
+                if ql not in title.lower():
+                    continue
+                outcomes = m.get("outcomes") or []
+                if not outcomes:
+                    continue
+                # Pick "Yes" outcome or highest probability outcome
+                best = None
+                for o in outcomes:
+                    ol = (o.get("title") or o.get("name") or "").lower()
+                    op = o.get("probability")
+                    if op is None:
+                        continue
+                    if "yes" in ol:
+                        best = o
+                        break
+                if best is None:
+                    best = max(outcomes, key=lambda o: o.get("probability", 0) if o.get("probability") is not None else 0)
+                prob = best.get("probability")
+                if prob is None:
+                    continue
+                results.append({
+                    "platform":      "PredScope",
+                    "title":         title,
+                    "market_id":     m.get("slug") or m.get("id", ""),
+                    "url":           f"https://predscope.com/market/{m.get('slug','')}" if m.get("slug") else "",
+                    "probability":   round(float(prob) * 100, 2),
+                    "outcome_label": best.get("title") or best.get("name") or "YES",
+                    "volume":        m.get("volume") or m.get("liquidity"),
+                })
+            sources += 1
     except Exception as exc:
         print(f"[PredMarkets] PredScope error: {exc}")
 
