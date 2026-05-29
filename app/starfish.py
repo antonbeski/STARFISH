@@ -5077,20 +5077,38 @@ var nframe=document.getElementById('nframe'),nload=document.getElementById('nloa
 function nSetLoad(m){{nframe.style.display='none';nload.innerHTML='<div class="news-spinner"></div><span>'+m+'</span>';nload.style.display='flex';nbadge.style.display='none';}}
 function nSetErr(m){{nframe.style.display='none';nload.innerHTML='<span>'+m+'</span>';nload.style.display='flex';nbadge.className='nsb error';nbadge.textContent='Unavailable';nbadge.style.display='inline-flex';}}
  
+function nUseFallback(h,channelId){{
+  /* Always-available fallback: embed the channel live stream directly.
+     The live_stream embed redirects to the active live or channel page —
+     either way the iframe always renders something and never errors. */
+  if(h!==curHandle)return;
+  var src=channelId
+    ?'https://www.youtube.com/embed/live_stream?channel='+channelId+'&autoplay=0&rel=0&modestbranding=1'
+    :'https://www.youtube.com/embed/live_stream?channel='+encodeURIComponent(h)+'&autoplay=0&rel=0&modestbranding=1';
+  nframe.src=src;
+  nframe.style.display='block';nload.style.display='none';
+  nbadge.style.display='inline-flex';
+  nbadge.className='nsb latest';nbadge.textContent='Live';
+}}
+ 
 function loadCh(h){{
   if(curHandle===h)return;
   curHandle=h; nSetLoad('Loading\u2026'); nframe.src='about:blank';
   fetch('/api/live-id?handle='+encodeURIComponent(h))
-    .then(r=>{{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}})
+    .then(r=>{{return r.json();}})
     .then(d=>{{
       if(h!==curHandle)return;
-      if(d.error||!d.video_id){{nSetErr('Stream unavailable.');return;}}
-      nframe.src='https://www.youtube.com/embed/'+d.video_id+'?autoplay=0&rel=0&modestbranding=1';
-      nframe.style.display='block';nload.style.display='none';
-      nbadge.style.display='inline-flex';
-      nbadge.className=d.is_live?'nsb live':'nsb latest';
-      nbadge.textContent=d.is_live?'LIVE':'Latest Video';
-    }}).catch(()=>{{if(h!==curHandle)return;nSetErr('Could not load stream.');}});
+      if(d.video_id){{
+        nframe.src='https://www.youtube.com/embed/'+d.video_id+'?autoplay=0&rel=0&modestbranding=1';
+        nframe.style.display='block';nload.style.display='none';
+        nbadge.style.display='inline-flex';
+        nbadge.className=d.is_live?'nsb live':'nsb latest';
+        nbadge.textContent=d.is_live?'LIVE':'Latest Video';
+      }}else{{
+        /* video_id null — server returned channel_id sentinel, use embed fallback */
+        nUseFallback(h,d.channel_id||null);
+      }}
+    }}).catch(()=>{{nUseFallback(h,null);}});
 }}
  
 document.getElementById('ntabs').addEventListener('click',function(e){{
@@ -5682,8 +5700,29 @@ def api_live_id():
     handle = request.args.get("handle","").strip()
     if not handle: return jsonify({"error": "missing handle"}), 400
     vid, live = fetch_live_video_id(handle)
-    if vid: return jsonify({"video_id": vid, "is_live": live})
-    return jsonify({"error": "not found"}), 404
+    if vid:
+        return jsonify({"video_id": vid, "is_live": live})
+    # ── Last-resort fallback: fetch RSS directly one more time with a fresh
+    #    session, bypassing all caching / timeout assumptions in the main fn.
+    #    If that still yields nothing, return the bare channel_id as a sentinel
+    #    so the JS can embed /channel/{id}/live — which always loads something.
+    channel_id = _HANDLE_TO_CHANNEL_ID.get(handle)
+    if channel_id:
+        try:
+            import xml.etree.ElementTree as _ET
+            _r = requests.get(
+                f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}",
+                headers=_YT_HDR, timeout=15, allow_redirects=True
+            )
+            if _r.status_code == 200:
+                _ids = re.findall(r'<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>', _r.text)
+                if _ids:
+                    return jsonify({"video_id": _ids[0], "is_live": False})
+        except Exception:
+            pass
+        # Absolute last resort: signal JS to use /channel/{id}/live embed
+        return jsonify({"video_id": None, "is_live": False, "channel_id": channel_id})
+    return jsonify({"video_id": None, "is_live": False, "channel_id": None})
  
  
 @app.route("/api/news")
