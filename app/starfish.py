@@ -4992,8 +4992,11 @@ function renderPredTable(results){{
     var link=r.url?'<a href="'+r.url+'" target="_blank" class="news-card-read" style="display:inline;border:none;padding:0;background:none;font-size:.8rem;font-weight:500;text-transform:none;letter-spacing:0;white-space:normal;word-break:break-word">'+esc(r.title)+'</a>':'<span style="white-space:normal;word-break:break-word">'+esc(r.title)+'</span>';
     var platformBadge='<span class="news-card-src" style="white-space:nowrap">'+esc(r.platform)+'</span>';
     var canShow=(r.platform==='Kalshi'||r.platform==='Polymarket')&&r.market_id;
+    var safeId=String(r.market_id||'').replace(/"/g,'&quot;');
+    var safePlat=String(r.platform||'').toLowerCase().replace(/"/g,'&quot;');
+    var safeTitle=String(r.title||'').replace(/\n/g,' ').slice(0,80).replace(/"/g,'&quot;');
     var chartBtn=canShow
-      ?'<button onclick="showPredCandle(\''+r.market_id.replace(/'/g,"\\'")+'\'\''+',\''+r.platform.toLowerCase()+'\',\''+r.title.replace(/'/g,"\\'").replace(/\n/g,' ').slice(0,60)+'\')" style="background:#000;color:#fff;border:none;border-radius:4px;padding:3px 9px;font-size:.68rem;font-weight:600;cursor:pointer;white-space:nowrap">&#9654; Chart</button>'
+      ?'<button class="pred-chart-btn" data-mid="'+safeId+'" data-plat="'+safePlat+'" data-title="'+safeTitle+'" style="background:#000;color:#fff;border:none;border-radius:4px;padding:3px 9px;font-size:.68rem;font-weight:600;cursor:pointer;white-space:nowrap">&#9654; Chart</button>'
       :'<span style="color:#ccc;font-size:.68rem">—</span>';
     return '<tr style="border-bottom:1px solid #e5e5e5'+(i%2===0?';background:#f8f7f4':';background:#fff')+'">'+
       '<td style="padding:7px 8px;width:90px;vertical-align:top">'+platformBadge+'</td>'+
@@ -5006,6 +5009,13 @@ function renderPredTable(results){{
   }}).join('');
   document.getElementById('pred-table-wrap').style.display='block';
 }}
+
+// Delegated listener — handles all ▶ Chart buttons without inline onclick
+document.addEventListener('click',function(e){{
+  var btn=e.target.closest('.pred-chart-btn');
+  if(!btn)return;
+  showPredCandle(btn.dataset.mid,btn.dataset.plat,btn.dataset.title);
+}});
 
 // Polymarket-style dark area chart palette
 var _PRED_PALETTE=['#60a5fa','#fbbf24','#f97316','#a78bfa','#34d399','#f472b6','#38bdf8','#fb923c'];
