@@ -5690,73 +5690,69 @@ def api_prediction_markets():
     except Exception as exc:
         print(f"[PredMarkets] PredScope error: {exc}")
 
-    # ── Oddspipe → Polymarket ─────────────────────────────────────────────────
+    # ── Oddspipe → Polymarket + Kalshi ───────────────────────────────────────
+    # Single call for both sources. The API does NOT support server-side keyword
+    # search (no 'q' param), so we fetch all finance/stocks markets and filter
+    # client-side.  Field paths (from pd.json_normalize in the reference notebook):
+    #   source.platform                  -> m["source"]["platform"]
+    #   source.latest_price.yes_price    -> m["source"]["latest_price"]["yes_price"]
+    #   source.latest_price.volume_usd   -> m["source"]["latest_price"]["volume_usd"]
     if ODDSPIPE_API_KEY:
         try:
             r3 = requests.get(
                 "https://oddspipe.com/v1/markets",
                 headers=ODDSPIPE_HEADERS,
-                params={"categories": "stocks,finance", "sources": "polymarket", "q": q},
-                timeout=12,
+                params={"categories": "stocks,finance", "sources": "polymarket,kalshi"},
+                timeout=15,
             )
             r3.raise_for_status()
-            items = r3.json().get("items", [])
+            raw3 = r3.json()
+            items = raw3.get("items", [])
+            # Debug: log structure on first run so we can verify field paths
+            print(f"[PredMarkets] Oddspipe items={len(items)} top-level keys={list(raw3.keys())}")
+            if items:
+                first = items[0]
+                print(f"[PredMarkets] Oddspipe item[0] keys={list(first.keys())}")
+                src0 = first.get("source") or {}
+                if isinstance(src0, dict):
+                    print(f"[PredMarkets] Oddspipe item[0].source keys={list(src0.keys())}")
+                    lp0 = src0.get("latest_price") or {}
+                    if isinstance(lp0, dict):
+                        print(f"[PredMarkets] Oddspipe item[0].source.latest_price keys={list(lp0.keys())}")
+            _PLAT = {"polymarket": "Polymarket", "kalshi": "Kalshi"}
             ql = q.lower()
+            oddspipe_added = 0
             for m in items:
-                title = (m.get("title") or m.get("question") or "")
+                title = (m.get("title") or m.get("question") or "").strip()
                 if ql and ql not in title.lower():
                     continue
                 src   = m.get("source") or {}
+                # Platform label
+                raw_plat = (src.get("platform") or "").lower().strip()
+                platform = _PLAT.get(raw_plat, raw_plat.capitalize() or "Oddspipe")
                 price = src.get("latest_price") or {}
                 yes_p = price.get("yes_price")
                 if yes_p is None:
                     continue
+                # yes_price is a fraction 0-1 in the API
+                prob_val = float(yes_p)
+                prob_pct = round(prob_val * 100, 2) if prob_val <= 1.0 else round(prob_val, 2)
                 results.append({
-                    "platform":      "Polymarket",
+                    "platform":      platform,
                     "title":         title,
                     "market_id":     m.get("id") or m.get("slug", ""),
                     "url":           m.get("url") or src.get("url") or "",
-                    "probability":   round(float(yes_p) * 100, 2),
+                    "probability":   prob_pct,
                     "outcome_label": "YES",
                     "volume":        price.get("volume_usd") or m.get("volume"),
                 })
+                oddspipe_added += 1
+            print(f"[PredMarkets] Oddspipe matched {oddspipe_added} results for query='{q}'")
             sources += 1
         except Exception as exc:
-            print(f"[PredMarkets] Oddspipe/Polymarket error: {exc}")
-
-    # ── Oddspipe → Kalshi ─────────────────────────────────────────────────────
-    if ODDSPIPE_API_KEY:
-        try:
-            r4 = requests.get(
-                "https://oddspipe.com/v1/markets",
-                headers=ODDSPIPE_HEADERS,
-                params={"categories": "stocks,finance", "sources": "kalshi", "q": q},
-                timeout=12,
-            )
-            r4.raise_for_status()
-            items = r4.json().get("items", [])
-            ql = q.lower()
-            for m in items:
-                title = (m.get("title") or m.get("question") or "")
-                if ql and ql not in title.lower():
-                    continue
-                src   = m.get("source") or {}
-                price = src.get("latest_price") or {}
-                yes_p = price.get("yes_price")
-                if yes_p is None:
-                    continue
-                results.append({
-                    "platform":      "Kalshi",
-                    "title":         title,
-                    "market_id":     m.get("id") or m.get("slug", ""),
-                    "url":           m.get("url") or src.get("url") or "",
-                    "probability":   round(float(yes_p) * 100, 2),
-                    "outcome_label": "YES",
-                    "volume":        price.get("volume_usd") or m.get("volume"),
-                })
-            sources += 1
-        except Exception as exc:
-            print(f"[PredMarkets] Oddspipe/Kalshi error: {exc}")
+            import traceback as _tb
+            print(f"[PredMarkets] Oddspipe error: {exc}")
+            print(_tb.format_exc())
 
     # ── Rank: exact title match first, then by distance from 50% ─────────────
     def _rank(r):
@@ -5768,6 +5764,33 @@ def api_prediction_markets():
     results.sort(key=_rank, reverse=True)
 
     return jsonify({"results": results, "sources": sources, "query": q})
+
+
+@app.route("/api/oddspipe-debug")
+def api_oddspipe_debug():
+    """Raw Oddspipe response dump — visit /api/oddspipe-debug to inspect field structure."""
+    if not ODDSPIPE_API_KEY:
+        return jsonify({"error": "ODDSPIPE_API_KEY not set"}), 400
+    try:
+        r = requests.get(
+            "https://oddspipe.com/v1/markets",
+            headers=ODDSPIPE_HEADERS,
+            params={"categories": "stocks,finance", "sources": "polymarket,kalshi"},
+            timeout=15,
+        )
+        raw = r.json()
+        items = raw.get("items", [])
+        # Return first 3 items with full structure so we can verify field paths
+        sample = items[:3]
+        return jsonify({
+            "status_code":  r.status_code,
+            "top_level_keys": list(raw.keys()),
+            "total_items":  len(items),
+            "sample_items": sample,
+        })
+    except Exception as exc:
+        import traceback as _tb
+        return jsonify({"error": str(exc), "traceback": _tb.format_exc()}), 500
 
 
 @app.route("/api/rate-limits")
