@@ -959,6 +959,16 @@ _LOGO_DATA_URI = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/4QCKRXhpZgA
 # OPENROUTER AI CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 OPEN_ROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY", "")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ODDSPIPE CONFIG — Polymarket & Kalshi prediction market data
+# ══════════════════════════════════════════════════════════════════════════════
+ODDSPIPE_API_KEY = os.environ.get("ODDSPIPE_API_KEY", "")
+ODDSPIPE_HEADERS = {
+    "X-API-Key":     ODDSPIPE_API_KEY,
+    "Authorization": f"Bearer {ODDSPIPE_API_KEY}",
+    "Content-Type":  "application/json",
+}
  
 AI_MODELS = [
     {"id": "deepseek/deepseek-r1",              "key": "deepseek", "label": "DeepSeek R1",   "desc": "Chain-of-thought reasoning", "color": "#000"},
@@ -4892,7 +4902,7 @@ async function searchPredMarkets(){{
   var btn=document.getElementById('pred-btn');
   var status=document.getElementById('pred-status');
   btn.disabled=true; btn.textContent='Searching\u2026';
-  status.textContent='Fetching Manifold & PredScope\u2026';
+  status.textContent='Fetching Manifold, PredScope, Polymarket & Kalshi\u2026';
   document.getElementById('pred-chart-wrap').style.display='none';
   document.getElementById('pred-table-wrap').style.display='none';
   document.getElementById('pred-empty').style.display='none';
@@ -4922,7 +4932,12 @@ function renderPredChart(results){{
     return t;
   }});
   var probs=top.map(function(r){{return r.probability;}});
-  var colors=top.map(function(r){{return r.platform==='Manifold'?'#000000':'#555555';}});
+  var colors=top.map(function(r){{
+    if(r.platform==='Manifold')   return '#000000';
+    if(r.platform==='Polymarket') return '#0050ff';
+    if(r.platform==='Kalshi')     return '#008060';
+    return '#555555';  // PredScope + fallback
+  }});
 
   var trace={{
     type:'bar', orientation:'h',
@@ -5674,6 +5689,74 @@ def api_prediction_markets():
         sources += 1
     except Exception as exc:
         print(f"[PredMarkets] PredScope error: {exc}")
+
+    # ── Oddspipe → Polymarket ─────────────────────────────────────────────────
+    if ODDSPIPE_API_KEY:
+        try:
+            r3 = requests.get(
+                "https://oddspipe.com/v1/markets",
+                headers=ODDSPIPE_HEADERS,
+                params={"categories": "stocks,finance", "sources": "polymarket", "q": q},
+                timeout=12,
+            )
+            r3.raise_for_status()
+            items = r3.json().get("items", [])
+            ql = q.lower()
+            for m in items:
+                title = (m.get("title") or m.get("question") or "")
+                if ql and ql not in title.lower():
+                    continue
+                src   = m.get("source") or {}
+                price = src.get("latest_price") or {}
+                yes_p = price.get("yes_price")
+                if yes_p is None:
+                    continue
+                results.append({
+                    "platform":      "Polymarket",
+                    "title":         title,
+                    "market_id":     m.get("id") or m.get("slug", ""),
+                    "url":           m.get("url") or src.get("url") or "",
+                    "probability":   round(float(yes_p) * 100, 2),
+                    "outcome_label": "YES",
+                    "volume":        price.get("volume_usd") or m.get("volume"),
+                })
+            sources += 1
+        except Exception as exc:
+            print(f"[PredMarkets] Oddspipe/Polymarket error: {exc}")
+
+    # ── Oddspipe → Kalshi ─────────────────────────────────────────────────────
+    if ODDSPIPE_API_KEY:
+        try:
+            r4 = requests.get(
+                "https://oddspipe.com/v1/markets",
+                headers=ODDSPIPE_HEADERS,
+                params={"categories": "stocks,finance", "sources": "kalshi", "q": q},
+                timeout=12,
+            )
+            r4.raise_for_status()
+            items = r4.json().get("items", [])
+            ql = q.lower()
+            for m in items:
+                title = (m.get("title") or m.get("question") or "")
+                if ql and ql not in title.lower():
+                    continue
+                src   = m.get("source") or {}
+                price = src.get("latest_price") or {}
+                yes_p = price.get("yes_price")
+                if yes_p is None:
+                    continue
+                results.append({
+                    "platform":      "Kalshi",
+                    "title":         title,
+                    "market_id":     m.get("id") or m.get("slug", ""),
+                    "url":           m.get("url") or src.get("url") or "",
+                    "probability":   round(float(yes_p) * 100, 2),
+                    "outcome_label": "YES",
+                    "volume":        price.get("volume_usd") or m.get("volume"),
+                })
+            sources += 1
+        except Exception as exc:
+            print(f"[PredMarkets] Oddspipe/Kalshi error: {exc}")
 
     # ── Rank: exact title match first, then by distance from 50% ─────────────
     def _rank(r):
