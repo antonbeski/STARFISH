@@ -959,16 +959,6 @@ _LOGO_DATA_URI = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/4QCKRXhpZgA
 # OPENROUTER AI CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 OPEN_ROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY", "")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ODDSPIPE CONFIG — Polymarket & Kalshi prediction market data
-# ══════════════════════════════════════════════════════════════════════════════
-ODDSPIPE_API_KEY = os.environ.get("ODDSPIPE_API_KEY", "")
-ODDSPIPE_HEADERS = {
-    "X-API-Key":     ODDSPIPE_API_KEY,
-    "Authorization": f"Bearer {ODDSPIPE_API_KEY}",
-    "Content-Type":  "application/json",
-}
  
 AI_MODELS = [
     {"id": "deepseek/deepseek-r1",              "key": "deepseek", "label": "DeepSeek R1",   "desc": "Chain-of-thought reasoning", "color": "#000"},
@@ -4558,7 +4548,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 var TICKER  = {json.dumps(ticker)};
 var PERIOD  = {json.dumps(period)};
 var MODELS  = {models_js};
-var ODDSPIPE_KEY = {json.dumps(ODDSPIPE_API_KEY)};
 var sectorArticles = [];
  
 // ── ALPACA LIVE TRADING JAVASCRIPT ──────────────────────────────────────────
@@ -4895,128 +4884,30 @@ function renderAIResult(data){{
     '</div>'+
     '<div class="ai-secs">'+secHtml+'</div>';
 }}
-
+ 
 // ── Prediction Markets ────────────────────────────────────────────────────────
-
-function _parseOddspipeItem(m, ql) {{
-  var title = (m.title || m.question || m.name || m.label || '').trim();
-  if (!title) return null;
-  if (ql && title.toLowerCase().indexOf(ql) === -1) return null;
-  var src = m.source || m.sources || {{}};
-  if (Array.isArray(src)) src = src[0] || {{}};
-  var rawPlat = (m.platform || m.source_name || m.exchange ||
-                 src.platform || src.name || src.source || '').toLowerCase().trim();
-  var platMap = {{polymarket:'Polymarket', kalshi:'Kalshi'}};
-  var platform = platMap[rawPlat] || (rawPlat ? rawPlat.charAt(0).toUpperCase()+rawPlat.slice(1) : 'Oddspipe');
-  var price = (src && (src.latest_price || src.price || src.pricing)) ||
-              m.latest_price || m.price || m.pricing || {{}};
-  var yesP = null;
-  if (price && typeof price === 'object') {{
-    yesP = (price.yes_price !== undefined ? price.yes_price :
-            price.yes       !== undefined ? price.yes       :
-            price.probability!== undefined? price.probability:
-            price.prob      !== undefined ? price.prob      :
-            price.price     !== undefined ? price.price     : null);
-  }}
-  if (yesP === null) {{
-    yesP = (m.yes_price !== undefined ? m.yes_price :
-            m.probability!==undefined ? m.probability:
-            m.prob      !== undefined ? m.prob       :
-            m.price     !== undefined ? m.price      : null);
-  }}
-  if (yesP === null) {{
-    console.warn('[Oddspipe] no yes_price:', title.slice(0,50), Object.keys(m));
-    return null;
-  }}
-  var probVal = parseFloat(yesP);
-  var probPct = probVal <= 1.0 ? +(probVal*100).toFixed(2) : +probVal.toFixed(2);
-  var vol = null;
-  if (price && typeof price==='object') vol = price.volume_usd || price.volume || null;
-  if (!vol) vol = m.volume_usd || m.volume || m.liquidity || null;
-  return {{
-    platform: platform, title: title,
-    market_id: m.id || m.slug || '',
-    url: m.url || (src && src.url) || '',
-    probability: probPct, outcome_label: 'YES', volume: vol,
-  }};
-}}
-
-async function _fetchOddspipe(q) {{
-  if (!ODDSPIPE_KEY) return [];
-  var ql = q.toLowerCase();
-  var paramSets = [
-    'sources=polymarket%2Ckalshi&categories=stocks%2Cfinance',
-    'sources=polymarket%2Ckalshi',
-    'sources=polymarket',
-    'sources=kalshi',
-    '',
-  ];
-  for (var pi=0; pi<paramSets.length; pi++) {{
-    var url = 'https://oddspipe.com/v1/markets' + (paramSets[pi] ? '?'+paramSets[pi] : '');
-    try {{
-      var resp = await fetch(url, {{
-        headers: {{
-          'X-API-Key': ODDSPIPE_KEY,
-          'Authorization': 'Bearer ' + ODDSPIPE_KEY,
-          'Content-Type': 'application/json',
-        }},
-      }});
-      if (!resp.ok) {{ console.warn('[Oddspipe] HTTP', resp.status, paramSets[pi]); continue; }}
-      var raw = await resp.json();
-      var items = Array.isArray(raw) ? raw :
-                  (raw.items || raw.data || raw.markets || raw.results || []);
-      console.log('[Oddspipe] params="'+paramSets[pi]+'" items='+items.length,
-        'top_keys=', Array.isArray(raw)?'list':Object.keys(raw).join(','));
-      if (items.length > 0) {{
-        var src0=items[0].source||{{}};
-        console.log('[Oddspipe] item[0] keys:', Object.keys(items[0]).join(','));
-        if (src0 && typeof src0==='object') {{
-          console.log('[Oddspipe] .source keys:', Object.keys(src0).join(','));
-          var lp0=src0.latest_price||src0.price||{{}};
-          if (lp0 && typeof lp0==='object') console.log('[Oddspipe] .source.price keys:', Object.keys(lp0).join(','));
-        }}
-        var out=[];
-        for (var i=0;i<items.length;i++) {{ var p=_parseOddspipeItem(items[i],ql); if(p) out.push(p); }}
-        console.log('[Oddspipe] matched', out.length, 'for "'+q+'"');
-        return out;
-      }}
-    }} catch(e) {{ console.error('[Oddspipe] error:', e); }}
-  }}
-  return [];
-}}
-
 async function searchPredMarkets(){{
   var q=(document.getElementById('pred-query').value||'').trim();
   if(!q)return;
   var btn=document.getElementById('pred-btn');
   var status=document.getElementById('pred-status');
   btn.disabled=true; btn.textContent='Searching\u2026';
-  status.textContent='Fetching Manifold, PredScope, Polymarket & Kalshi\u2026';
+  status.textContent='Fetching Manifold & PredScope\u2026';
   document.getElementById('pred-chart-wrap').style.display='none';
   document.getElementById('pred-table-wrap').style.display='none';
   document.getElementById('pred-empty').style.display='none';
+
   try{{
-    var [flaskData, oddspipeItems] = await Promise.all([
-      fetch('/api/prediction-markets?q='+encodeURIComponent(q)).then(function(r){{return r.json();}}),
-      _fetchOddspipe(q),
-    ]);
-    if(flaskData.error){{status.textContent='Error: '+flaskData.error;return;}}
-    var results=(flaskData.results||[]).concat(oddspipeItems);
-    results.sort(function(a,b){{
-      var qa=q.toLowerCase();
-      var ea=a.title.toLowerCase().indexOf(qa)!==-1?1:0;
-      var eb=b.title.toLowerCase().indexOf(qa)!==-1?1:0;
-      if(eb!==ea)return eb-ea;
-      return Math.abs(a.probability-50)-Math.abs(b.probability-50);
-    }});
-    var srcCount=(flaskData.sources||0)+(oddspipeItems.length>0?1:0);
-    status.textContent='Found '+results.length+' market(s) across '+srcCount+' source(s)';
+    var r=await fetch('/api/prediction-markets?q='+encodeURIComponent(q));
+    var data=await r.json();
+    if(data.error){{status.textContent='Error: '+data.error;return;}}
+    var results=data.results||[];
+    status.textContent='Found '+results.length+' market(s) across '+data.sources+' source(s)';
     if(!results.length){{document.getElementById('pred-empty').style.display='block';return;}}
     renderPredChart(results);
     renderPredTable(results);
   }}catch(e){{
     status.textContent='Network error: '+String(e);
-    console.error('[PredMarkets]',e);
   }}finally{{
     btn.disabled=false; btn.textContent='Search Markets';
   }}
@@ -5031,12 +4922,7 @@ function renderPredChart(results){{
     return t;
   }});
   var probs=top.map(function(r){{return r.probability;}});
-  var colors=top.map(function(r){{
-    if(r.platform==='Manifold')   return '#000000';
-    if(r.platform==='Polymarket') return '#0050ff';
-    if(r.platform==='Kalshi')     return '#008060';
-    return '#555555';  // PredScope + fallback
-  }});
+  var colors=top.map(function(r){{return r.platform==='Manifold'?'#000000':'#555555';}});
 
   var trace={{
     type:'bar', orientation:'h',
@@ -5789,113 +5675,6 @@ def api_prediction_markets():
     except Exception as exc:
         print(f"[PredMarkets] PredScope error: {exc}")
 
-    # ── Oddspipe → Polymarket + Kalshi ───────────────────────────────────────
-    if ODDSPIPE_API_KEY:
-        try:
-            # Try with and without categories param — some API plans differ
-            for _op in [
-                {"sources": "polymarket,kalshi", "categories": "stocks,finance"},
-                {"sources": "polymarket,kalshi"},
-            ]:
-                r3 = requests.get(
-                    "https://oddspipe.com/v1/markets",
-                    headers=ODDSPIPE_HEADERS,
-                    params=_op,
-                    timeout=15,
-                )
-                r3.raise_for_status()
-                raw3 = r3.json()
-                # API may wrap in 'items', 'data', 'markets', 'results', or be a bare list
-                if isinstance(raw3, list):
-                    items = raw3
-                else:
-                    items = (raw3.get("items") or raw3.get("data") or
-                             raw3.get("markets") or raw3.get("results") or [])
-                print(f"[Oddspipe] params={_op} status={r3.status_code} "
-                      f"top_keys={list(raw3.keys()) if isinstance(raw3,dict) else 'list'} "
-                      f"items={len(items)}")
-                if items:
-                    break  # got data — stop trying alternate params
-
-            _PLAT = {"polymarket": "Polymarket", "kalshi": "Kalshi"}
-            ql = q.lower()
-            oddspipe_added = 0
-
-            for m in items:
-                # ── title: try every known field name ────────────────────────
-                title = (m.get("title") or m.get("question") or
-                         m.get("name") or m.get("label") or "").strip()
-                if not title:
-                    continue
-                if ql and ql not in title.lower():
-                    continue
-
-                # ── platform: check top-level first, then inside source ───────
-                raw_plat = (
-                    m.get("platform") or m.get("source_name") or
-                    m.get("exchange") or ""
-                )
-                src = m.get("source") or m.get("sources") or {}
-                if isinstance(src, list):
-                    src = src[0] if src else {}
-                if not raw_plat and isinstance(src, dict):
-                    raw_plat = (src.get("platform") or src.get("name") or
-                                src.get("source") or "")
-                raw_plat = str(raw_plat).lower().strip()
-                platform = _PLAT.get(raw_plat, raw_plat.capitalize() or "Oddspipe")
-
-                # ── price: check every known nesting pattern ─────────────────
-                price = {}
-                if isinstance(src, dict):
-                    price = (src.get("latest_price") or src.get("price") or
-                             src.get("pricing") or {})
-                # Also try flat on the item itself
-                if not price:
-                    price = (m.get("latest_price") or m.get("price") or
-                             m.get("pricing") or {})
-
-                # yes_price field aliases
-                yes_p = None
-                if isinstance(price, dict):
-                    yes_p = (price.get("yes_price") or price.get("yes") or
-                             price.get("probability") or price.get("prob") or
-                             price.get("price"))
-                # Flat fallbacks on the item
-                if yes_p is None:
-                    yes_p = (m.get("yes_price") or m.get("probability") or
-                             m.get("prob") or m.get("price"))
-
-                if yes_p is None:
-                    print(f"[Oddspipe] no yes_price for: {title[:60]}  keys={list(m.keys())}")
-                    continue
-
-                prob_val = float(yes_p)
-                prob_pct = round(prob_val * 100, 2) if prob_val <= 1.0 else round(prob_val, 2)
-
-                # volume
-                vol = None
-                if isinstance(price, dict):
-                    vol = price.get("volume_usd") or price.get("volume")
-                if vol is None:
-                    vol = m.get("volume_usd") or m.get("volume") or m.get("liquidity")
-
-                results.append({
-                    "platform":      platform,
-                    "title":         title,
-                    "market_id":     m.get("id") or m.get("slug", ""),
-                    "url":           m.get("url") or (src.get("url") if isinstance(src,dict) else "") or "",
-                    "probability":   prob_pct,
-                    "outcome_label": "YES",
-                    "volume":        vol,
-                })
-                oddspipe_added += 1
-
-            print(f"[Oddspipe] matched {oddspipe_added} for query='{q}'")
-            sources += 1
-        except Exception as exc:
-            import traceback as _tb
-            print(f"[Oddspipe] error: {exc}\n{_tb.format_exc()}")
-
     # ── Rank: exact title match first, then by distance from 50% ─────────────
     def _rank(r):
         exact = 1 if q.lower() in r["title"].lower() else 0
@@ -5906,73 +5685,6 @@ def api_prediction_markets():
     results.sort(key=_rank, reverse=True)
 
     return jsonify({"results": results, "sources": sources, "query": q})
-
-
-@app.route("/api/oddspipe-debug")
-def api_oddspipe_debug():
-    """
-    Rich Oddspipe debug — visit /api/oddspipe-debug?q=apple
-    Shows raw response, field map, and which items match the query.
-    """
-    if not ODDSPIPE_API_KEY:
-        return jsonify({"error": "ODDSPIPE_API_KEY not set"}), 400
-    q_dbg = (request.args.get("q") or "").strip().lower()
-    out = {}
-    try:
-        # Try both param sets so we can see which returns data
-        for label, params in [
-            ("with_categories",    {"sources": "polymarket,kalshi", "categories": "stocks,finance"}),
-            ("without_categories", {"sources": "polymarket,kalshi"}),
-            ("polymarket_only",    {"sources": "polymarket"}),
-            ("kalshi_only",        {"sources": "kalshi"}),
-        ]:
-            r = requests.get(
-                "https://oddspipe.com/v1/markets",
-                headers=ODDSPIPE_HEADERS,
-                params=params,
-                timeout=15,
-            )
-            raw = r.json() if r.status_code == 200 else {"_error": r.text[:500]}
-            if isinstance(raw, list):
-                items = raw
-            else:
-                items = (raw.get("items") or raw.get("data") or
-                         raw.get("markets") or raw.get("results") or [])
-
-            # Field map of first item
-            field_map = {}
-            if items:
-                first = items[0]
-                field_map["top_keys"] = list(first.keys())
-                for k in ("source", "sources", "price", "latest_price"):
-                    v = first.get(k)
-                    if isinstance(v, dict):
-                        field_map[f"{k}_keys"] = list(v.keys())
-                        for k2 in ("latest_price", "price", "pricing"):
-                            v2 = v.get(k2)
-                            if isinstance(v2, dict):
-                                field_map[f"{k}.{k2}_keys"] = list(v2.keys())
-
-            # Filter matches if query given
-            matches = []
-            if q_dbg and items:
-                for m in items:
-                    t = (m.get("title") or m.get("question") or m.get("name") or "")
-                    if q_dbg in t.lower():
-                        matches.append(m)
-
-            out[label] = {
-                "http_status":   r.status_code,
-                "top_level_keys": list(raw.keys()) if isinstance(raw, dict) else ["list"],
-                "total_items":   len(items),
-                "field_map":     field_map,
-                "sample_items":  items[:2],
-                "query_matches": matches[:5] if q_dbg else "(no q param given)",
-            }
-    except Exception as exc:
-        import traceback as _tb
-        out["error"] = {"msg": str(exc), "traceback": _tb.format_exc()}
-    return jsonify(out)
 
 
 @app.route("/api/rate-limits")
