@@ -1,15 +1,8 @@
 {
-  "version": 2,
   "builds": [
-    {
-      "src": "app/starfish.py",
-      "use": "@vercel/python"
-    }
+    { "src": "app/starfish.py", "use": "@vercel/python" }
   ],
   "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "app/starfish.py"
-    }
+    { "src": "/(.*)", "dest": "app/starfish.py" }
   ]
 }
