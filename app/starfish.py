@@ -4356,11 +4356,13 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span class="panel-label" style="margin:0;">AIS Live Map</span>
     <button id="ais-toggle-btn" onclick="toggleAIS()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
+    <button id="ais-region-btn" onclick="toggleAISRegion()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(100,180,255,.4);background:rgba(100,180,255,.07);color:#4499cc;cursor:pointer;font-family:inherit;transition:all .2s;">&#9974; Select Region</button>
     <span id="ais-vessel-badge" style="margin-left:auto;font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
   <iframe id="vessel-iframe" src="/vessels" style="width:100%;height:660px;border:none;display:block;" title="Live Vessel Tracker" loading="lazy"></iframe>
   <script>
   var _aisRunning = false;
+  var _aisRegionActive = false;
   function toggleAIS() {{
     var btn = document.getElementById('ais-toggle-btn');
     var badge = document.getElementById('ais-vessel-badge');
@@ -4383,6 +4385,33 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       iframe.contentWindow.postMessage('ais:stop', '*');
     }}
   }}
+  function toggleAISRegion() {{
+    var btn = document.getElementById('ais-region-btn');
+    var iframe = document.getElementById('vessel-iframe');
+    if (!_aisRegionActive) {{
+      _aisRegionActive = true;
+      btn.textContent = '✕ Clear Region';
+      btn.style.borderColor = 'rgba(255,170,50,.6)';
+      btn.style.background = 'rgba(255,170,50,.1)';
+      btn.style.color = '#ffaa33';
+      iframe.contentWindow.postMessage('ais:region:start', '*');
+    }} else {{
+      _aisRegionActive = false;
+      btn.innerHTML = '&#9974; Select Region';
+      btn.style.borderColor = 'rgba(100,180,255,.4)';
+      btn.style.background = 'rgba(100,180,255,.07)';
+      btn.style.color = '#4499cc';
+      iframe.contentWindow.postMessage('ais:region:clear', '*');
+    }}
+  }}
+  // Reset button if iframe clears region via escape
+  window.addEventListener('message', function(e) {{
+    if (e.data === 'ais:region:cancelled') {{
+      _aisRegionActive = false;
+      var btn = document.getElementById('ais-region-btn');
+      if (btn) {{ btn.innerHTML = '&#9974; Select Region'; btn.style.borderColor='rgba(100,180,255,.4)'; btn.style.background='rgba(100,180,255,.07)'; btn.style.color='#4499cc'; }}
+    }}
+  }});
   </script>
 </div>
 
@@ -4396,6 +4425,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div style="padding:10px 16px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <span class="panel-label" style="margin:0;">ADS-B Live Map</span>
     <button id="adsb-toggle-btn" onclick="toggleADSB()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(255,100,100,.5);background:rgba(255,100,100,.08);color:#cc3333;cursor:pointer;font-family:inherit;transition:all .2s;">&#9654; Start</button>
+    <button id="adsb-region-btn" onclick="toggleADSBRegion()" style="font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 12px;border-radius:20px;border:1px solid rgba(100,180,255,.4);background:rgba(100,180,255,.07);color:#4499cc;cursor:pointer;font-family:inherit;transition:all .2s;">&#9974; Select Region</button>
     <span id="adsb-aircraft-badge" style="font-size:.58rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#555;background:#f4f4f4;border:1px solid #e0e0e0;border-radius:20px;padding:3px 10px;">Stopped</span>
   </div>
   <iframe id="aircraft-iframe" src="/aircraft" style="width:100%;height:660px;border:none;display:block;" title="Live Aircraft Tracker"></iframe>
@@ -4403,6 +4433,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   var _adsbRunning = false;
   var _adsbIframeReady = false;
   var _adsbPendingCmd = null;
+  var _adsbRegionActive = false;
   var _adsbIframe = document.getElementById('aircraft-iframe');
   // Mark iframe ready after load so postMessage is never lost
   _adsbIframe.addEventListener('load', function() {{
@@ -4412,13 +4443,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       _adsbPendingCmd = null;
     }}
   }});
-  // Listen for badge updates FROM the iframe
-  window.addEventListener('message', function(e) {{
-    if (e.data && e.data.type === 'adsb:count') {{
-      var badge = document.getElementById('adsb-aircraft-badge');
-      if (badge) badge.textContent = e.data.count + ' live';
-    }}
-  }});
+  // Listen for badge updates FROM the iframe (handled in combined listener below)
   function _sendAdsbMsg(cmd) {{
     if (_adsbIframeReady) {{
       _adsbIframe.contentWindow.postMessage(cmd, '*');
@@ -4447,6 +4472,36 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       _sendAdsbMsg('adsb:stop');
     }}
   }}
+  function toggleADSBRegion() {{
+    var btn = document.getElementById('adsb-region-btn');
+    if (!_adsbRegionActive) {{
+      _adsbRegionActive = true;
+      btn.textContent = '✕ Clear Region';
+      btn.style.borderColor = 'rgba(255,170,50,.6)';
+      btn.style.background = 'rgba(255,170,50,.1)';
+      btn.style.color = '#ffaa33';
+      _sendAdsbMsg('adsb:region:start');
+    }} else {{
+      _adsbRegionActive = false;
+      btn.innerHTML = '&#9974; Select Region';
+      btn.style.borderColor = 'rgba(100,180,255,.4)';
+      btn.style.background = 'rgba(100,180,255,.07)';
+      btn.style.color = '#4499cc';
+      _sendAdsbMsg('adsb:region:clear');
+    }}
+  }}
+  // Reset region button if iframe cancels via Escape
+  window.addEventListener('message', function(eAdsbR) {{
+    if (eAdsbR.data && eAdsbR.data.type === 'adsb:count') {{
+      var badge = document.getElementById('adsb-aircraft-badge');
+      if (badge) badge.textContent = eAdsbR.data.count + ' live';
+    }}
+    if (eAdsbR.data === 'adsb:region:cancelled') {{
+      _adsbRegionActive = false;
+      var rBtn = document.getElementById('adsb-region-btn');
+      if (rBtn) {{ rBtn.innerHTML = '&#9974; Select Region'; rBtn.style.borderColor='rgba(100,180,255,.4)'; rBtn.style.background='rgba(100,180,255,.07)'; rBtn.style.color='#4499cc'; }}
+    }}
+  }});
   </script>
 </div>
 
@@ -5800,7 +5855,9 @@ def vessels():
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Live Vessel Tracker</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#07090f;overflow:hidden}
@@ -5845,9 +5902,16 @@ html,body{height:100%;font-family:'DM Mono',monospace,sans-serif;background:#070
   #debugbar{height:44px;padding:4px 10px}
   #debug-line2{display:none}
 }
+/* Region selection overlay */
+#region-overlay{display:none;position:fixed;top:38px;left:0;right:0;bottom:60px;z-index:900;background:rgba(100,180,255,.06);border:2px dashed rgba(100,180,255,.5);pointer-events:none}
+#region-hint{display:none;position:fixed;top:42px;left:50%;transform:translateX(-50%);z-index:2000;background:rgba(13,17,23,.95);color:#4ab4ff;font-size:10px;letter-spacing:.07em;text-transform:uppercase;padding:5px 14px;border-radius:20px;border:1px solid rgba(100,180,255,.4);pointer-events:none;white-space:nowrap}
+.leaflet-draw-toolbar a{background-color:#0d1117!important;border-color:rgba(255,255,255,.1)!important}
+.leaflet-draw-tooltip{background:rgba(13,17,23,.92);border:1px solid rgba(100,180,255,.4);color:#4ab4ff;font-family:'DM Mono',monospace;font-size:10px;border-radius:4px}
 </style>
 </head>
 <body>
+<div id="region-overlay"></div>
+<div id="region-hint">🖱 Draw a rectangle to filter region &middot; Press Esc to cancel</div>
 <div id="topbar">
   <div id="status-led"></div>
   <span id="status-text"></span>
@@ -6017,7 +6081,10 @@ document.getElementById('filter-bar').addEventListener('click', function(e){
   btn.classList.add('on');
   Object.values(vessels).forEach(function(v){
     var cls = v.data.cls;
-    var vis = (activeFilter==='all'||activeFilter===cls||(activeFilter==='other'&&(cls==='other'||cls==='service')));
+    var typeOk = (activeFilter==='all'||activeFilter===cls||(activeFilter==='other'&&(cls==='other'||cls==='service')));
+    var lat = parseFloat(v.data.lat), lon = parseFloat(v.data.lon);
+    var regionOk = !_regionBounds || _regionBounds.contains([lat, lon]);
+    var vis = typeOk && regionOk;
     if (vis && !v.shown)  { map.addLayer(v.marker);    v.shown=true; }
     if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
   });
@@ -6190,10 +6257,99 @@ function aisStop() {
   dbg('AIS tracker stopped.');
 }
 
-// Listen for start/stop commands from parent page
+// ── REGION SELECTION ──────────────────────────────────────────────────────
+var _regionLayer = null;
+var _regionBounds = null;
+var _drawControl = null;
+var _drawnItems = new L.FeatureGroup();
+map.addLayer(_drawnItems);
+
+function startRegionDraw() {
+  // Clear any existing region first
+  clearRegion(true);
+  document.getElementById('region-overlay').style.display = 'block';
+  document.getElementById('region-hint').style.display = 'block';
+  // Activate Leaflet.draw rectangle tool
+  _drawControl = new L.Draw.Rectangle(map, {
+    shapeOptions: {
+      color: '#4ab4ff',
+      fillColor: '#4ab4ff',
+      fillOpacity: 0.08,
+      weight: 2,
+      dashArray: '6 4'
+    }
+  });
+  _drawControl.enable();
+  // Esc cancels
+  function onEsc(ev) {
+    if (ev.key === 'Escape') {
+      _drawControl.disable();
+      document.getElementById('region-overlay').style.display = 'none';
+      document.getElementById('region-hint').style.display = 'none';
+      document.removeEventListener('keydown', onEsc);
+      try { window.parent.postMessage('ais:region:cancelled', '*'); } catch(e){}
+    }
+  }
+  document.addEventListener('keydown', onEsc);
+}
+
+map.on(L.Draw.Event.CREATED, function(e) {
+  document.getElementById('region-overlay').style.display = 'none';
+  document.getElementById('region-hint').style.display = 'none';
+  _drawnItems.clearLayers();
+  _regionLayer = e.layer;
+  _drawnItems.addLayer(_regionLayer);
+  _regionBounds = _regionLayer.getBounds();
+  // Apply region filter: hide vessels outside the bounding box
+  applyRegionFilter();
+  dbg('Region active: '+_regionBounds.getSouth().toFixed(2)+'°S '+_regionBounds.getNorth().toFixed(2)+'°N '+_regionBounds.getWest().toFixed(2)+'°W '+_regionBounds.getEast().toFixed(2)+'°E');
+});
+
+function applyRegionFilter() {
+  if (!_regionBounds) return;
+  Object.values(vessels).forEach(function(v) {
+    var lat = parseFloat(v.data.lat), lon = parseFloat(v.data.lon);
+    var inRegion = _regionBounds.contains([lat, lon]);
+    var typeOk = (activeFilter === 'all' || activeFilter === v.data.cls ||
+                  (activeFilter === 'other' && (v.data.cls === 'other' || v.data.cls === 'service')));
+    var vis = inRegion && typeOk;
+    if (vis && !v.shown)  { map.addLayer(v.marker);    v.shown = true; }
+    if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown = false; }
+  });
+}
+
+function clearRegion(skipParent) {
+  _regionBounds = null;
+  _drawnItems.clearLayers();
+  _regionLayer = null;
+  document.getElementById('region-overlay').style.display = 'none';
+  document.getElementById('region-hint').style.display = 'none';
+  // Restore all vessels according to active type filter
+  Object.values(vessels).forEach(function(v) {
+    var typeOk = (activeFilter === 'all' || activeFilter === v.data.cls ||
+                  (activeFilter === 'other' && (v.data.cls === 'other' || v.data.cls === 'service')));
+    if (typeOk && !v.shown)  { map.addLayer(v.marker);    v.shown = true; }
+    if (!typeOk && v.shown)  { map.removeLayer(v.marker); v.shown = false; }
+  });
+  dbg('Region cleared — showing all vessels');
+}
+
+// Patch upsertVessel to respect region filter after vessels update
+var _origUpsertVessel = upsertVessel;
+// Override visibility in upsertVessel: if a region is active, new vessels
+// outside the region should not be shown. We hook into updateCounter instead.
+var _origUpdateCounter = updateCounter;
+updateCounter = function() {
+  _origUpdateCounter();
+  if (_regionBounds) applyRegionFilter();
+};
+
+// ── postMessage handler ────────────────────────────────────────────────────
 window.addEventListener('message', function(e) {
   if (e.data === 'ais:start') aisStart();
   if (e.data === 'ais:stop')  aisStop();
+  if (e.data === 'ais:region:start') startRegionDraw();
+  if (e.data === 'ais:region:clear') clearRegion(false);
 });
 
 // Do NOT auto-start — wait for parent page command
@@ -6216,7 +6372,9 @@ def aircraft():
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Live Aircraft Tracker — Starfish</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace,sans-serif;background:#07090f;color:#c8d8f0}
@@ -6372,9 +6530,16 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Mono',monospace
     position:fixed;
   }
 }
+/* Region selection */
+#ac-region-overlay{display:none;position:fixed;top:40px;left:0;right:0;bottom:28px;z-index:900;background:rgba(100,180,255,.05);border:2px dashed rgba(100,180,255,.45);pointer-events:none}
+#ac-region-hint{display:none;position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:2000;background:rgba(13,17,23,.95);color:#4ab4ff;font-size:9px;letter-spacing:.07em;text-transform:uppercase;padding:5px 14px;border-radius:20px;border:1px solid rgba(100,180,255,.4);pointer-events:none;white-space:nowrap}
+.leaflet-draw-toolbar a{background-color:#0d1117!important;border-color:rgba(255,255,255,.1)!important}
+.leaflet-draw-tooltip{background:rgba(13,17,23,.92);border:1px solid rgba(100,180,255,.4);color:#4ab4ff;font-family:'DM Mono',monospace;font-size:10px;border-radius:4px}
 </style>
 </head>
 <body>
+<div id="ac-region-overlay"></div>
+<div id="ac-region-hint">🖱 Draw a rectangle to filter region &middot; Press Esc to cancel</div>
 <div id="topbar">
   <div id="status-led"></div>
   <span id="status-text">Ready</span>
@@ -6685,7 +6850,9 @@ document.getElementById('filter-bar').addEventListener('click', function(e) {
   document.querySelectorAll('.fbtn').forEach(function(x){ x.classList.remove('on'); });
   b.classList.add('on');
   Object.values(ac).forEach(function(v) {
-    var vis = (filter==='all'||filter===v.data.cls);
+    var typeOk = (filter==='all'||filter===v.data.cls);
+    var regionOk = !_acRegionBounds || _acRegionBounds.contains([v.data.lat, v.data.lon]);
+    var vis = typeOk && regionOk;
     if (vis && !v.shown)  { v.marker.addTo(map);     v.shown=true; }
     if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown=false; }
   });
@@ -6775,10 +6942,88 @@ function adsbStop() {
   log('ADS-B tracker stopped.');
 }
 
+// ── REGION SELECTION ──────────────────────────────────────────────────────────
+var _acRegionBounds = null;
+var _acDrawControl = null;
+var _acDrawnItems = new L.FeatureGroup();
+map.addLayer(_acDrawnItems);
+
+function acStartRegionDraw() {
+  acClearRegion(true);
+  document.getElementById('ac-region-overlay').style.display = 'block';
+  document.getElementById('ac-region-hint').style.display = 'block';
+  _acDrawControl = new L.Draw.Rectangle(map, {
+    shapeOptions: {
+      color: '#4ab4ff',
+      fillColor: '#4ab4ff',
+      fillOpacity: 0.07,
+      weight: 2,
+      dashArray: '6 4'
+    }
+  });
+  _acDrawControl.enable();
+  function onEsc(ev) {
+    if (ev.key === 'Escape') {
+      _acDrawControl.disable();
+      document.getElementById('ac-region-overlay').style.display = 'none';
+      document.getElementById('ac-region-hint').style.display = 'none';
+      document.removeEventListener('keydown', onEsc);
+      try { window.parent.postMessage('adsb:region:cancelled', '*'); } catch(e) {}
+    }
+  }
+  document.addEventListener('keydown', onEsc);
+}
+
+map.on(L.Draw.Event.CREATED, function(e) {
+  document.getElementById('ac-region-overlay').style.display = 'none';
+  document.getElementById('ac-region-hint').style.display = 'none';
+  _acDrawnItems.clearLayers();
+  _acDrawnItems.addLayer(e.layer);
+  _acRegionBounds = e.layer.getBounds();
+  acApplyRegionFilter();
+  log('Region: '+_acRegionBounds.getSouth().toFixed(2)+'°S '+_acRegionBounds.getNorth().toFixed(2)+'°N · '+_acRegionBounds.getWest().toFixed(2)+'°W '+_acRegionBounds.getEast().toFixed(2)+'°E');
+  updateUI();
+});
+
+function acApplyRegionFilter() {
+  if (!_acRegionBounds) return;
+  Object.values(ac).forEach(function(v) {
+    var inRegion = _acRegionBounds.contains([v.data.lat, v.data.lon]);
+    var typeOk = (filter === 'all' || filter === v.data.cls);
+    var vis = inRegion && typeOk;
+    if (vis && !v.shown)  { v.marker.addTo(map);     v.shown = true; }
+    if (!vis && v.shown)  { map.removeLayer(v.marker); v.shown = false; }
+  });
+}
+
+function acClearRegion(skipParent) {
+  _acRegionBounds = null;
+  _acDrawnItems.clearLayers();
+  document.getElementById('ac-region-overlay').style.display = 'none';
+  document.getElementById('ac-region-hint').style.display = 'none';
+  // Restore all aircraft by type filter
+  Object.values(ac).forEach(function(v) {
+    var typeOk = (filter === 'all' || filter === v.data.cls);
+    if (typeOk && !v.shown)  { v.marker.addTo(map);     v.shown = true; }
+    if (!typeOk && v.shown)  { map.removeLayer(v.marker); v.shown = false; }
+  });
+  log('Region cleared — all aircraft visible');
+  updateUI();
+}
+
+// Patch updateUI to enforce region on new data
+var _origUpdateUI = updateUI;
+updateUI = function() {
+  _origUpdateUI();
+  if (_acRegionBounds) acApplyRegionFilter();
+};
+
 // ── START/STOP from parent page via postMessage ───────────────────────────────
 window.addEventListener('message', function(e) {
-  if (e.data === 'adsb:start') adsbStart();
-  if (e.data === 'adsb:stop')  adsbStop();
+  if (e.data === 'adsb:start')         adsbStart();
+  if (e.data === 'adsb:stop')          adsbStop();
+  if (e.data === 'adsb:region:start')  acStartRegionDraw();
+  if (e.data === 'adsb:region:clear')  acClearRegion(false);
 });
 
 // Ready — wait for parent Start command
@@ -6939,4 +7184,4 @@ if __name__ == "__main__":
     print("=" * 60)
     print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client\n")
     _start_adsb_collector()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)s
