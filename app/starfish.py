@@ -2927,17 +2927,30 @@ def call_openrouter(model_id, prompt):
  
  
 # ══════════════════════════════════════════════════════════════════════════════
-# CHART BUILDER  (unchanged visual design)
+# CHART BUILDER — shadcn Stock Market Tracker visual style
 # ══════════════════════════════════════════════════════════════════════════════
-_C = {"bg":"rgba(0,0,0,0)","paper":"rgba(0,0,0,0)","grid":"rgba(42,46,57,0.15)","axis":"#787b86",
-      "text":"#787b86","white":"#2962ff","green":"#26a69a","red":"#ef5350",
-      "sma20":"#f9a825","sma50":"#7b1fa2","sma200":"#1565c0",
-      "bb_u":"rgba(33,150,243,0.7)","bb_l":"rgba(33,150,243,0.7)","bb_f":"rgba(33,150,243,0.05)",
-      "rsi":"#7e57c2","rsi_ob":"rgba(239,83,80,0.08)","rsi_os":"rgba(38,166,154,0.08)",
-      "macd":"#2196f3","sig":"#ff6d00","hp":"rgba(38,166,154,0.85)","hn":"rgba(239,83,80,0.85)",
-      "vu":"rgba(38,166,154,0.6)","vd":"rgba(239,83,80,0.6)"}
- 
- 
+_C = {
+    # Price line (blue, matches ChartTooltipContent cursor + Line stroke in prompt)
+    "line":    "#3b82f6",
+    "dot_act": "#3b82f6",
+    # Sub-panel indicators
+    "sma20":   "#f9a825", "sma50": "#7b1fa2", "sma200": "#1565c0",
+    "bb_u":    "rgba(59,130,246,0.55)", "bb_l": "rgba(59,130,246,0.55)",
+    "bb_f":    "rgba(59,130,246,0.04)",
+    "rsi":     "#7e57c2",
+    "rsi_ob":  "rgba(239,83,80,0.07)", "rsi_os": "rgba(38,166,154,0.07)",
+    "macd":    "#2196f3", "sig": "#ff6d00",
+    "hp":      "rgba(38,166,154,0.85)", "hn": "rgba(239,83,80,0.85)",
+    "vu":      "rgba(38,166,154,0.55)", "vd": "rgba(239,83,80,0.55)",
+    # Candlestick colours kept for candlestick mode
+    "cs_up":   "#26a69a", "cs_dn": "#ef5350",
+    # Layout
+    "bg":      "rgba(0,0,0,0)", "paper": "rgba(0,0,0,0)",
+    "grid":    "rgba(229,229,229,0.8)",   # light horizontal-only grid
+    "axis":    "#888888", "text": "#888888",
+}
+
+
 def build_chart(ticker, period, chart_type, indicators):
     data, err = fetch_yfinance_data(ticker, period)
     if err: return None, f"Data error: {err}"
@@ -2946,83 +2959,154 @@ def build_chart(ticker, period, chart_type, indicators):
     if missing: return None, f"Missing: {missing}"
     data = data.dropna(subset=["Close"])
     if len(data) < 5: return None, "Not enough data points."
- 
-    cl = data["Close"].squeeze(); hi = data["High"].squeeze()
-    lo = data["Low"].squeeze(); op = data["Open"].squeeze()
+
+    cl  = data["Close"].squeeze()
+    hi  = data["High"].squeeze()
+    lo  = data["Low"].squeeze()
+    op  = data["Open"].squeeze()
     vol = data["Volume"].squeeze() if "Volume" in data.columns else None
-    dates = data.index; name = _get_name(ticker)
-    currency = "INR" if ticker.upper().endswith((".NS",".BO")) else "USD"
- 
+    dates = data.index
+    name  = _get_name(ticker)
+
     sv = "vol" in indicators and vol is not None
-    sr = "rsi" in indicators; sm = "macd" in indicators
+    sr = "rsi" in indicators
+    sm = "macd" in indicators
     rows = 1 + int(sv) + int(sr) + int(sm)
-    rh = {1:[1.0],2:[0.65,0.35],3:[0.55,0.22,0.23],4:[0.50,0.17,0.17,0.16]}.get(rows,[0.5,0.17,0.17,0.16])
-    titles = [f"{name} ({ticker.upper()})"]
+    rh   = {1:[1.0],2:[0.62,0.38],3:[0.54,0.23,0.23],4:[0.48,0.18,0.17,0.17]}.get(rows,[0.48,0.18,0.17,0.17])
+    titles = [""]   # main panel — no subplot title (price info shown in HTML header above)
     if sv: titles.append("Volume")
     if sr: titles.append("RSI (14)")
-    if sm: titles.append("MACD (12, 26, 9)")
+    if sm: titles.append("MACD")
+
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True,
-                        vertical_spacing=0.03, row_heights=rh, subplot_titles=titles)
-    rv = 2 if sv else None; rr = (2+int(sv)) if sr else None; rm = (2+int(sv)+int(sr)) if sm else None
- 
+                        vertical_spacing=0.025, row_heights=rh,
+                        subplot_titles=titles)
+
+    rv = 2 if sv else None
+    rr = (2+int(sv)) if sr else None
+    rm = (2+int(sv)+int(sr)) if sm else None
+
+    # ── Main price trace ──────────────────────────────────────────────────────
     if chart_type == "candlestick":
-        fig.add_trace(go.Candlestick(x=dates,open=op,high=hi,low=lo,close=cl,name="Price",
-            increasing_line_color=_C["green"],increasing_fillcolor="rgba(38,166,154,.18)",
-            decreasing_line_color=_C["red"],decreasing_fillcolor="rgba(239,83,80,.18)",
-            line=dict(width=1)), row=1,col=1)
+        fig.add_trace(go.Candlestick(
+            x=dates, open=op, high=hi, low=lo, close=cl, name="Price",
+            increasing_line_color=_C["cs_up"],  increasing_fillcolor="rgba(38,166,154,.15)",
+            decreasing_line_color=_C["cs_dn"],  decreasing_fillcolor="rgba(239,83,80,.15)",
+            line=dict(width=1),
+        ), row=1, col=1)
     else:
-        fig.add_trace(go.Scatter(x=dates,y=cl,mode="lines",name="Price",
-            line=dict(color=_C["white"],width=2),fill="tozeroy",fillcolor="rgba(41,98,255,.06)"),row=1,col=1)
- 
+        # Clean blue line — NO fill, matching the prompt exactly
+        fig.add_trace(go.Scatter(
+            x=dates, y=cl, mode="lines", name="Price",
+            line=dict(color=_C["line"], width=2),
+            # Blue dot on hover (activeDot in prompt: r=4, fill=#3b82f6, stroke=white)
+            marker=dict(color=_C["dot_act"], size=7,
+                        line=dict(color="#ffffff", width=2)),
+        ), row=1, col=1)
+
+    # ── Overlays ─────────────────────────────────────────────────────────────
     if "sma" in indicators:
-        for w,color,lbl in [(20,_C["sma20"],"SMA 20"),(50,_C["sma50"],"SMA 50"),(200,_C["sma200"],"SMA 200")]:
+        for w, color, lbl in [(20, _C["sma20"], "SMA 20"),
+                               (50, _C["sma50"], "SMA 50"),
+                               (200, _C["sma200"], "SMA 200")]:
             if len(cl) >= w:
-                fig.add_trace(go.Scatter(x=dates,y=calc_sma(cl,w),mode="lines",name=lbl,
-                    line=dict(color=color,width=1.2),opacity=0.85),row=1,col=1)
+                fig.add_trace(go.Scatter(
+                    x=dates, y=calc_sma(cl, w), mode="lines", name=lbl,
+                    line=dict(color=color, width=1.2), opacity=0.85,
+                ), row=1, col=1)
+
     if "bb" in indicators and len(cl) >= 20:
-        bbu,bbm,bbl = calc_bb(cl)
-        fig.add_trace(go.Scatter(x=dates,y=bbu,mode="lines",name="BB Upper",
-            line=dict(color=_C["bb_u"],width=1,dash="dot")),row=1,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=bbl,mode="lines",name="BB Lower",
-            line=dict(color=_C["bb_l"],width=1,dash="dot"),
-            fill="tonexty",fillcolor=_C["bb_f"]),row=1,col=1)
+        bbu, bbm, bbl = calc_bb(cl)
+        fig.add_trace(go.Scatter(x=dates, y=bbu, mode="lines", name="BB Upper",
+            line=dict(color=_C["bb_u"], width=1, dash="dot")), row=1, col=1)
+        fig.add_trace(go.Scatter(x=dates, y=bbl, mode="lines", name="BB Lower",
+            line=dict(color=_C["bb_l"], width=1, dash="dot"),
+            fill="tonexty", fillcolor=_C["bb_f"]), row=1, col=1)
+
+    # ── Sub-panels ───────────────────────────────────────────────────────────
     if sv and vol is not None:
-        colors = [_C["vu"] if c>=o else _C["vd"] for c,o in zip(cl,op)]
-        fig.add_trace(go.Bar(x=dates,y=vol,name="Volume",marker_color=colors,showlegend=False),row=rv,col=1)
+        colors = [_C["vu"] if c >= o else _C["vd"] for c, o in zip(cl, op)]
+        fig.add_trace(go.Bar(x=dates, y=vol, name="Volume",
+            marker_color=colors, showlegend=False), row=rv, col=1)
+
     if sr and len(cl) >= 15:
         rv2 = calc_rsi(cl)
-        fig.add_trace(go.Scatter(x=dates,y=rv2,mode="lines",name="RSI",
-            line=dict(color=_C["rsi"],width=1.5),showlegend=False),row=rr,col=1)
-        fig.add_hrect(y0=70,y1=100,row=rr,col=1,fillcolor=_C["rsi_ob"],line_width=0,layer="below")
-        fig.add_hrect(y0=0,y1=30,row=rr,col=1,fillcolor=_C["rsi_os"],line_width=0,layer="below")
-        for lvl,c in [(70,"rgba(239,83,80,.5)"),(30,"rgba(38,166,154,.5)"),(50,"rgba(120,123,134,.3)")]:
-            fig.add_hline(y=lvl,row=rr,col=1,line=dict(color=c,width=0.8,dash="dash"))
+        fig.add_trace(go.Scatter(x=dates, y=rv2, mode="lines", name="RSI",
+            line=dict(color=_C["rsi"], width=1.5), showlegend=False), row=rr, col=1)
+        fig.add_hrect(y0=70, y1=100, row=rr, col=1, fillcolor=_C["rsi_ob"], line_width=0, layer="below")
+        fig.add_hrect(y0=0,  y1=30,  row=rr, col=1, fillcolor=_C["rsi_os"], line_width=0, layer="below")
+        for lvl, c in [(70, "rgba(239,83,80,.45)"), (30, "rgba(38,166,154,.45)"), (50, "rgba(136,136,136,.3)")]:
+            fig.add_hline(y=lvl, row=rr, col=1, line=dict(color=c, width=0.8, dash="dash"))
+
     if sm and len(cl) >= 27:
-        ml,sl,hl = calc_macd(cl)
-        hc = [_C["hp"] if v>=0 else _C["hn"] for v in hl.fillna(0)]
-        fig.add_trace(go.Bar(x=dates,y=hl,name="MACD Hist",marker_color=hc,showlegend=False),row=rm,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=ml,mode="lines",name="MACD",
-            line=dict(color=_C["macd"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_trace(go.Scatter(x=dates,y=sl,mode="lines",name="Signal",
-            line=dict(color=_C["sig"],width=1.5),showlegend=False),row=rm,col=1)
-        fig.add_hline(y=0,row=rm,col=1,line=dict(color="rgba(120,123,134,.4)",width=0.8,dash="dash"))
- 
-    ax = dict(gridcolor=_C["grid"],color=_C["axis"],showline=False,zeroline=False,tickfont=dict(size=9,color=_C["text"]))
-    fig.update_layout(
-        height=420+120*(rows-1), plot_bgcolor=_C["bg"], paper_bgcolor=_C["paper"],
-        font=dict(color=_C["text"],family="'DM Sans',sans-serif",size=11),
-        legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="left",x=0,
-                    bgcolor="rgba(255,255,255,0)",font=dict(size=10,color=_C["text"])),
-        hovermode="x unified", margin=dict(l=55,r=20,t=55,b=30),
-        hoverlabel=dict(bgcolor="rgba(255,255,255,.97)",bordercolor="rgba(120,123,134,.3)",font=dict(color="#000")),
-        xaxis_rangeslider_visible=False, dragmode="pan",
+        ml, sl, hl = calc_macd(cl)
+        hc = [_C["hp"] if v >= 0 else _C["hn"] for v in hl.fillna(0)]
+        fig.add_trace(go.Bar(x=dates, y=hl, name="Hist",
+            marker_color=hc, showlegend=False), row=rm, col=1)
+        fig.add_trace(go.Scatter(x=dates, y=ml, mode="lines", name="MACD",
+            line=dict(color=_C["macd"], width=1.5), showlegend=False), row=rm, col=1)
+        fig.add_trace(go.Scatter(x=dates, y=sl, mode="lines", name="Signal",
+            line=dict(color=_C["sig"], width=1.5), showlegend=False), row=rm, col=1)
+        fig.add_hline(y=0, row=rm, col=1,
+            line=dict(color="rgba(136,136,136,.35)", width=0.8, dash="dash"))
+
+    # ── Axes — horizontal grid only, clean ticks, no border lines ────────────
+    # Main price Y-axis: add 2% padding so line never kisses the edge
+    y_pad = (float(cl.max()) - float(cl.min())) * 0.04
+    main_yrange = [float(cl.min()) - y_pad, float(cl.max()) + y_pad]
+
+    ax_common = dict(
+        gridcolor=_C["grid"],
+        gridwidth=1,
+        showgrid=True,
+        zeroline=False,
+        showline=False,
+        tickfont=dict(size=9, color=_C["text"], family="'DM Mono', monospace"),
+        color=_C["axis"],
     )
-    for i in range(1, rows+1):
-        fig.update_layout(**{f"xaxis{'' if i==1 else i}": {**ax,"rangeslider":{"visible":False}}})
-        fig.update_layout(**{f"yaxis{'' if i==1 else i}": {**ax}})
-    if sr: fig.update_layout(**{f"yaxis{'' if rr==1 else rr}": {**ax,"range":[0,100]}})
-    for ann in fig.layout.annotations: ann.font.color="#787b86"; ann.font.size=10
-    return pyo.plot(fig,output_type="div",include_plotlyjs=False), None
+    ax_no_grid = {**ax_common, "showgrid": False}
+
+    fig.update_layout(
+        height=225 + 110 * (rows - 1),   # 225 px for main panel (matches prompt h-[225px])
+        plot_bgcolor=_C["bg"],
+        paper_bgcolor=_C["paper"],
+        font=dict(color=_C["text"], family="'DM Sans', sans-serif", size=10),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+            bgcolor="rgba(0,0,0,0)", font=dict(size=9, color=_C["text"]),
+        ),
+        hovermode="x unified",
+        margin=dict(l=48, r=8, t=8, b=28),
+        hoverlabel=dict(
+            bgcolor="rgba(255,255,255,0.97)",
+            bordercolor="rgba(120,123,134,0.3)",
+            font=dict(color="#000", size=11),
+        ),
+        xaxis_rangeslider_visible=False,
+        dragmode="pan",
+    )
+
+    # Apply axis styles per panel
+    for i in range(1, rows + 1):
+        xkey = "xaxis" if i == 1 else f"xaxis{i}"
+        ykey = "yaxis" if i == 1 else f"yaxis{i}"
+        fig.update_layout(**{xkey: {**ax_no_grid, "rangeslider": {"visible": False}}})
+        fig.update_layout(**{ykey: {**ax_common}})
+
+    # Pin main Y range
+    fig.update_layout(yaxis=dict(range=main_yrange))
+
+    # RSI fixed 0-100 range
+    if sr and rr:
+        rr_key = "yaxis" if rr == 1 else f"yaxis{rr}"
+        fig.update_layout(**{rr_key: {**ax_common, "range": [0, 100]}})
+
+    # Clear subplot title fonts (we hide the main one; style the sub-panel labels)
+    for ann in fig.layout.annotations:
+        ann.font.color = "#aaaaaa"
+        ann.font.size  = 8
+
+    return pyo.plot(fig, output_type="div", include_plotlyjs=False), None
  
  
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3297,8 +3381,39 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                letter-spacing:.05em;transition:all .16s;user-select:none;text-transform:uppercase}}
     .ind-chip:hover{{border-color:#000;color:#000;background:#f0f0f0}}
     .ind-chip.active{{background:#eee;border-style:dashed;color:#000;font-weight:600}}
-    .chart-card{{padding:20px 16px 12px;min-height:460px;display:flex;align-items:flex-start;justify-content:center;overflow:hidden;background:#fff}}
+    /* ── CHART CARD — shadcn Stock Market Tracker style ── */
+    .chart-card{{padding:0;overflow:hidden;background:#fff;border-radius:var(--r)}}
     .chart-card>div{{width:100%}}
+    /* period button bar */
+    .chart-period-bar{{display:flex;width:100%;border:1px solid #e5e5e5;border-radius:8px;overflow:hidden;margin-bottom:12px}}
+    .chart-period-btn{{flex:1;height:32px;background:transparent;border:none;border-right:1px solid #e5e5e5;
+                       font-size:.8rem;font-weight:600;letter-spacing:-.006em;color:#888;cursor:pointer;
+                       transition:background .12s,color .12s;outline:none}}
+    .chart-period-btn:last-child{{border-right:none}}
+    .chart-period-btn:hover{{background:rgba(0,0,0,.03)}}
+    .chart-period-btn.active{{background:rgba(0,0,0,.06);color:#000}}
+    /* price header */
+    .chart-price-hdr{{padding:16px 20px 0}}
+    .chart-price-row{{display:flex;align-items:baseline;gap:10px;margin-bottom:2px}}
+    .chart-price-val{{font-size:1.45rem;font-weight:600;letter-spacing:-.006em;font-variant-numeric:tabular-nums}}
+    .chart-badge-up{{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;
+                     border-radius:6px;background:#E0FAEC;color:#22C55E;font-size:.72rem;font-weight:600;
+                     letter-spacing:-.006em;white-space:nowrap}}
+    .chart-badge-dn{{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;
+                     border-radius:6px;background:#fce4e4;color:#ef5350;font-size:.72rem;font-weight:600;
+                     letter-spacing:-.006em;white-space:nowrap}}
+    .chart-sym-label{{font-size:.8rem;font-weight:400;letter-spacing:-.006em;color:#888;text-transform:uppercase;margin-bottom:12px}}
+    /* highest/lowest footer bar */
+    .chart-hl-bar{{display:flex;width:100%;border:1px solid #e5e5e5;border-radius:8px;overflow:hidden;margin-top:10px}}
+    .chart-hl-btn{{flex:1;height:32px;background:transparent;border:none;border-right:1px solid #e5e5e5;
+                   font-size:.8rem;font-weight:400;color:#888;cursor:default;
+                   display:flex;align-items:center;justify-content:center;gap:6px;outline:none}}
+    .chart-hl-btn:last-child{{border-right:none}}
+    .chart-hl-val{{font-size:.8rem;font-weight:600;color:#000;font-variant-numeric:tabular-nums}}
+    /* chart body wrapper */
+    .chart-body-wrap{{padding:0 12px}}
+    /* card inner padding for period bar + hl bar */
+    .chart-controls-wrap{{padding:12px 16px 14px}}
     .error-box{{border:1px solid #000;border-left:3px solid #000;border-radius:var(--rs);padding:16px 20px;color:#555;font-size:.875rem;background:#f8f7f4;width:100%;line-height:1.6}}
     .empty-state{{color:#888;font-size:.85rem;text-align:center;letter-spacing:.03em}}
  
@@ -3914,7 +4029,42 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   <div class="ind-row"><span class="ind-label">Indicators</span>{ichips}</div>
 </div>
 
-<div class="glass chart-card" style="margin-top:12px">{content}</div>
+<div class="glass chart-card" style="margin-top:12px" id="chart-outer">
+  <!-- ── Price header (populated by JS after page load) ── -->
+  <div class="chart-price-hdr" id="chart-price-hdr">
+    <div class="chart-price-row">
+      <span class="chart-price-val" id="chart-cur-price">—</span>
+      <span id="chart-chg-badge"></span>
+    </div>
+    <p class="chart-sym-label" id="chart-sym-label">{ticker}</p>
+  </div>
+  <!-- ── Controls: period buttons ── -->
+  <div class="chart-controls-wrap">
+    <div class="chart-period-bar" id="chart-period-bar">
+      <button class="chart-period-btn" data-period="1mo"  onclick="chartPeriod(this)">1M</button>
+      <button class="chart-period-btn" data-period="3mo"  onclick="chartPeriod(this)">3M</button>
+      <button class="chart-period-btn" data-period="6mo"  onclick="chartPeriod(this)">6M</button>
+      <button class="chart-period-btn" data-period="1y"   onclick="chartPeriod(this)">1Y</button>
+      <button class="chart-period-btn" data-period="2y"   onclick="chartPeriod(this)">2Y</button>
+      <button class="chart-period-btn" data-period="5y"   onclick="chartPeriod(this)">5Y</button>
+    </div>
+  </div>
+  <!-- ── Chart plot ── -->
+  <div class="chart-body-wrap">{content}</div>
+  <!-- ── Highest / Lowest footer ── -->
+  <div class="chart-controls-wrap" style="padding-top:0">
+    <div class="chart-hl-bar" id="chart-hl-bar">
+      <div class="chart-hl-btn">
+        <span style="font-weight:400;color:#888">Highest</span>
+        <span class="chart-hl-val" id="chart-high-val">—</span>
+      </div>
+      <div class="chart-hl-btn">
+        <span style="font-weight:400;color:#888">Lowest</span>
+        <span class="chart-hl-val" id="chart-low-val">—</span>
+      </div>
+    </div>
+  </div>
+</div>
   </div>
 </div>
 
@@ -4847,6 +4997,59 @@ function updateTickerStrip(stocks) {{
   track.style.animation = '';
 }}
 
+
+// ── Chart period buttons & price header ─────────────────────────────────────
+(function initChartUI(){{
+  // Mark the active period button matching the current form selection
+  var curPeriod = document.getElementById('period') ? document.getElementById('period').value : '3mo';
+  document.querySelectorAll('.chart-period-btn').forEach(function(btn){{
+    if(btn.dataset.period === curPeriod) btn.classList.add('active');
+  }});
+
+  // Populate price header & high/low from Plotly trace data (if chart rendered)
+  var plotDiv = document.querySelector('.chart-body-wrap .js-plotly-plot');
+  if(plotDiv && plotDiv.data && plotDiv.data.length){{
+    var trace = plotDiv.data[0];
+    var yArr = trace.y || trace.close || [];
+    if(yArr.length){{
+      var lastPrice = yArr[yArr.length-1];
+      var firstPrice= yArr[0];
+      var maxPrice  = Math.max.apply(null, yArr.filter(function(v){{return v!=null && !isNaN(v)}}));
+      var minPrice  = Math.min.apply(null, yArr.filter(function(v){{return v!=null && !isNaN(v)}}));
+      var chg = firstPrice ? ((lastPrice - firstPrice)/firstPrice)*100 : 0;
+      var currency = (document.getElementById('ticker').value||'').toUpperCase().endsWith('.NS') ||
+                     (document.getElementById('ticker').value||'').toUpperCase().endsWith('.BO') ? '₹' : '$';
+
+      var priceEl = document.getElementById('chart-cur-price');
+      if(priceEl) priceEl.textContent = currency + lastPrice.toLocaleString(undefined,{{minimumFractionDigits:2,maximumFractionDigits:2}});
+
+      var badgeEl = document.getElementById('chart-chg-badge');
+      if(badgeEl){{
+        var arrow = chg>=0
+          ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18L18 6m0 0H9m9 0v9"/></svg>'
+          : '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12m0 0H9m9 0V9"/></svg>';
+        badgeEl.className = chg>=0 ? 'chart-badge-up' : 'chart-badge-dn';
+        badgeEl.innerHTML = arrow + Math.abs(chg).toFixed(2) + '%';
+      }}
+
+      var symEl = document.getElementById('chart-sym-label');
+      var tkr = (document.getElementById('ticker').value||'').toUpperCase();
+      if(symEl) symEl.textContent = tkr;
+
+      var hiEl = document.getElementById('chart-high-val');
+      var loEl = document.getElementById('chart-low-val');
+      if(hiEl) hiEl.textContent = currency + maxPrice.toLocaleString(undefined,{{minimumFractionDigits:2,maximumFractionDigits:2}});
+      if(loEl) loEl.textContent = currency + minPrice.toLocaleString(undefined,{{minimumFractionDigits:2,maximumFractionDigits:2}});
+    }}
+  }}
+}})();
+
+function chartPeriod(btn){{
+  document.querySelectorAll('.chart-period-btn').forEach(function(b){{b.classList.remove('active');}});
+  btn.classList.add('active');
+  document.getElementById('period').value = btn.dataset.period;
+  document.getElementById('main-form').submit();
+}}
 
 // ── Existing Starfish functions ─────────────────────────────────────────────
 function setTicker(s){{document.getElementById('ticker').value=s;document.getElementById('main-form').submit();}}
