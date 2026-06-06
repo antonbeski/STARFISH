@@ -7184,4 +7184,4 @@ if __name__ == "__main__":
     print("=" * 60)
     print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client\n")
     _start_adsb_collector()
-    app.run(debug=True, host="0.0.0.0", port=5000)s
+    app.run(debug=True, host="0.0.0.0", port=5000)
