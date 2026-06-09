@@ -4023,7 +4023,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
         <option value="line" {ct_l}>Line</option>
       </select>
     </div>
-    <button type="submit" class="btn">Load</button>
+    <button type="button" class="btn" onclick="loadChart()">Load</button>
   </form>
   <div class="chips">{chips}</div>
   <div class="ind-row"><span class="ind-label">Indicators</span>{ichips}</div>
@@ -4884,7 +4884,6 @@ function renderAlpacaGrid() {{
         </div>
         <div class="alpaca-footer">
           <div class="alpaca-vol" id="avol-${{s.symbol}}">VOL ${{s.volume ? s.volume.toLocaleString() : '—'}}</div>
-          <div class="alpaca-dtype ${{s.data_type}}" id="adt-${{s.symbol}}">${{s.data_type}}</div>
         </div>
       </div>`;
     }}).join('');
@@ -4928,12 +4927,6 @@ function renderAlpacaGrid() {{
     if (chgEl && chgEl.className !== 'alpaca-change ' + changeClass)
       chgEl.className = 'alpaca-change ' + changeClass;
 
-    // Data-type badge
-    const dtEl = document.getElementById('adt-' + s.symbol);
-    if (dtEl) {{
-      if (dtEl.textContent !== s.data_type) dtEl.textContent = s.data_type;
-      if (dtEl.className !== 'alpaca-dtype ' + s.data_type) dtEl.className = 'alpaca-dtype ' + s.data_type;
-    }}
 
     // Flash on price change — no layout impact
     if (alpacaPrevPrices[s.symbol] !== undefined && alpacaPrevPrices[s.symbol] !== s.price) {{
@@ -5044,22 +5037,46 @@ function updateTickerStrip(stocks) {{
   }}
 }})();
 
+function loadChart(){{
+  var ticker    = document.getElementById('ticker').value.trim().toUpperCase();
+  var period    = document.getElementById('period').value;
+  var chartType = document.getElementById('chart_type').value;
+  var inds      = document.getElementById('inds-h').value;
+  if(!ticker) return;
+  var outer = document.getElementById('chart-outer');
+  var body  = outer ? outer.querySelector('.chart-body-wrap') : null;
+  if(body) body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#888;font-size:.85rem">Loading chart…</div>';
+  fetch('/api/chart',{{
+    method:'POST', headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{ticker:ticker,period:period,chart_type:chartType,indicators:inds}})
+  }}).then(r=>r.json()).then(data=>{{
+    if(body){{
+      body.innerHTML = data.html || (data.error ? '<p style="color:red;padding:16px">'+esc(data.error)+'</p>' : '');
+    }}
+    // Update the sym label
+    var lbl = document.getElementById('chart-sym-label');
+    if(lbl) lbl.textContent = ticker;
+  }}).catch(err=>{{
+    if(body) body.innerHTML='<p style="color:red;padding:16px">'+esc(String(err))+'</p>';
+  }});
+}}
+
 function chartPeriod(btn){{
   document.querySelectorAll('.chart-period-btn').forEach(function(b){{b.classList.remove('active');}});
   btn.classList.add('active');
   document.getElementById('period').value = btn.dataset.period;
-  document.getElementById('main-form').submit();
+  loadChart();
 }}
 
 // ── Existing Starfish functions ─────────────────────────────────────────────
-function setTicker(s){{document.getElementById('ticker').value=s;document.getElementById('main-form').submit();}}
+function setTicker(s){{document.getElementById('ticker').value=s;loadChart();}}
  
 var aInds = {ai_js};
 function toggleInd(el){{
   var k=el.dataset.ind,i=aInds.indexOf(k);
   i===-1?(aInds.push(k),el.classList.add('active')):(aInds.splice(i,1),el.classList.remove('active'));
   document.getElementById('inds-h').value=aInds.join(',');
-  document.getElementById('main-form').submit();
+  loadChart();
 }}
  
 // ── AI model selection ────────────────────────────────────────────────────────
@@ -5840,6 +5857,20 @@ def api_ai_analysis():
     })
  
  
+
+@app.route("/api/chart", methods=["POST"])
+def api_chart():
+    body       = request.get_json(force=True) or {}
+    ticker     = (body.get("ticker", "AAPL") or "AAPL").strip().upper()
+    period     = body.get("period", "6mo")
+    chart_type = body.get("chart_type", "candlestick")
+    ind_raw    = body.get("indicators", ",".join(DEFAULT_INDICATORS))
+    if period not in VALID_PERIODS: period = "6mo"
+    if chart_type not in ("candlestick", "line"): chart_type = "candlestick"
+    active = set(filter(None, ind_raw.split(","))) if ind_raw else DEFAULT_INDICATORS
+    graph_html, error = build_chart(ticker, period, chart_type, active)
+    return jsonify({"html": graph_html or "", "error": error or ""})
+
 
 @app.route("/api/gbm", methods=["POST"])
 def api_gbm():
