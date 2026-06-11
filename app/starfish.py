@@ -67,33 +67,48 @@ alpaca_rt_lock   = threading.Lock()
 ALPACA_WS_URL    = "wss://stream.data.alpaca.markets/v2/iex"
 ALPACA_SYMBOLS   = [s["symbol"] for s in ALPACA_WATCHLIST]
 
-ALPACA_CRYPTO_WATCHLIST = [
-    {"symbol": "BTC/USD",  "name": "Bitcoin",          "category": "Layer 1"},
-    {"symbol": "ETH/USD",  "name": "Ethereum",         "category": "Layer 1"},
-    {"symbol": "SOL/USD",  "name": "Solana",           "category": "Layer 1"},
-    {"symbol": "BNB/USD",  "name": "BNB",              "category": "Layer 1"},
-    {"symbol": "XRP/USD",  "name": "XRP",              "category": "Layer 1"},
-    {"symbol": "ADA/USD",  "name": "Cardano",          "category": "Layer 1"},
-    {"symbol": "AVAX/USD", "name": "Avalanche",        "category": "Layer 1"},
-    {"symbol": "DOGE/USD", "name": "Dogecoin",         "category": "Meme"},
-    {"symbol": "SHIB/USD", "name": "Shiba Inu",        "category": "Meme"},
-    {"symbol": "LINK/USD", "name": "Chainlink",        "category": "Oracle"},
-    {"symbol": "DOT/USD",  "name": "Polkadot",         "category": "Layer 0"},
-    {"symbol": "MATIC/USD","name": "Polygon",          "category": "Layer 2"},
-    {"symbol": "UNI/USD",  "name": "Uniswap",          "category": "DeFi"},
-    {"symbol": "AAVE/USD", "name": "Aave",             "category": "DeFi"},
-    {"symbol": "LTC/USD",  "name": "Litecoin",         "category": "Layer 1"},
-    {"symbol": "BCH/USD",  "name": "Bitcoin Cash",     "category": "Layer 1"},
-    {"symbol": "ATOM/USD", "name": "Cosmos",           "category": "Layer 0"},
-    {"symbol": "XLM/USD",  "name": "Stellar",          "category": "Layer 1"},
-    {"symbol": "ALGO/USD", "name": "Algorand",         "category": "Layer 1"},
-    {"symbol": "XTZ/USD",  "name": "Tezos",            "category": "Layer 1"},
+# ══════════════════════════════════════════════════════════════════════════════
+# CRYPTO MARKET DATA CONFIGURATION
+# ══════════════════════════════════════════════════════════════════════════════
+COINGECKO_API_KEY  = os.environ.get("COINGECKO_API_KEY", "").strip()
+COINGECKO_BASE_URL = os.environ.get(
+    "COINGECKO_BASE_URL",
+    "https://pro-api.coingecko.com/api/v3" if COINGECKO_API_KEY else "https://api.coingecko.com/api/v3",
+).rstrip("/")
+COINGECKO_HEADERS = {"accept": "application/json"}
+if COINGECKO_API_KEY:
+    COINGECKO_HEADERS["x-cg-pro-api-key"] = COINGECKO_API_KEY
+
+DIA_BASE_URL = os.environ.get("DIA_BASE_URL", "https://api.diadata.org").rstrip("/")
+DIA_HEADERS = {"accept": "application/json"}
+
+CRYPTO_WATCHLIST = [
+    {"symbol": "BTC",  "name": "Bitcoin",          "category": "Layer 1"},
+    {"symbol": "ETH",  "name": "Ethereum",         "category": "Layer 1"},
+    {"symbol": "SOL",  "name": "Solana",           "category": "Layer 1"},
+    {"symbol": "BNB",  "name": "BNB",              "category": "Layer 1"},
+    {"symbol": "XRP",  "name": "XRP",              "category": "Layer 1"},
+    {"symbol": "ADA",  "name": "Cardano",          "category": "Layer 1"},
+    {"symbol": "AVAX", "name": "Avalanche",        "category": "Layer 1"},
+    {"symbol": "DOGE", "name": "Dogecoin",         "category": "Meme"},
+    {"symbol": "SHIB", "name": "Shiba Inu",        "category": "Meme"},
+    {"symbol": "LINK", "name": "Chainlink",        "category": "Oracle"},
+    {"symbol": "DOT",  "name": "Polkadot",         "category": "Layer 0"},
+    {"symbol": "MATIC","name": "Polygon",          "category": "Layer 2"},
+    {"symbol": "UNI",  "name": "Uniswap",          "category": "DeFi"},
+    {"symbol": "AAVE", "name": "Aave",             "category": "DeFi"},
+    {"symbol": "LTC",  "name": "Litecoin",         "category": "Layer 1"},
+    {"symbol": "BCH",  "name": "Bitcoin Cash",     "category": "Layer 1"},
+    {"symbol": "ATOM", "name": "Cosmos",           "category": "Layer 0"},
+    {"symbol": "XLM",  "name": "Stellar",          "category": "Layer 1"},
+    {"symbol": "ALGO", "name": "Algorand",         "category": "Layer 1"},
+    {"symbol": "XTZ",  "name": "Tezos",            "category": "Layer 1"},
 ]
-ALPACA_CRYPTO_SYMBOLS = [c["symbol"] for c in ALPACA_CRYPTO_WATCHLIST]
 
 alpaca_cache      = {}
 alpaca_cache_time = {}
 ALPACA_CACHE_TTL  = 15  # seconds
+CRYPTO_CACHE_TTL  = 10  # seconds
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NATIVE ACCELERATION — C++ & Rust hot-path extensions
@@ -722,91 +737,207 @@ def alpaca_fetch_all_data():
     return result
 
 
+
+def _safe_float(value):
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _safe_int(value):
+    try:
+        if value is None or value == "":
+            return None
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _safe_json_get(url, headers=None, timeout=10):
+    try:
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        if resp.status_code != 200:
+            print(f"[CRYPTO] HTTP {resp.status_code} for {url}")
+            return None
+        return resp.json()
+    except Exception as exc:
+        print(f"[CRYPTO] request error for {url}: {exc}")
+        return None
+
+
+def coingecko_fetch_crypto_data(symbols):
+    """
+    Fetch crypto quotes from CoinGecko using symbol-based lookup.
+    The endpoint can return price, market cap, 24h volume, 24h change, and
+    the last update timestamp when supported by the plan.
+    """
+    unique_symbols = [s.lower() for s in dict.fromkeys(symbols) if s]
+    if not unique_symbols:
+        return {}
+
+    params = (
+        f"symbols={quote_plus(','.join(unique_symbols))}"
+        "&vs_currencies=usd"
+        "&include_market_cap=true"
+        "&include_24hr_vol=true"
+        "&include_24hr_change=true"
+        "&include_last_updated_at=true"
+    )
+    url = f"{COINGECKO_BASE_URL}/simple/price?{params}"
+    data = _safe_json_get(url, headers=COINGECKO_HEADERS, timeout=12) or {}
+
+    # normalize keys for safer lookup
+    return {str(k).lower(): v for k, v in data.items() if isinstance(v, dict)}
+
+
+def dia_fetch_crypto_data(symbols):
+    """
+    Fetch crypto quotes from DIA using the current public quotation endpoint.
+    """
+    unique_symbols = [s.upper() for s in dict.fromkeys(symbols) if s]
+    if not unique_symbols:
+        return {}
+
+    result = {}
+
+    def _fetch_one(symbol):
+        url = f"{DIA_BASE_URL}/v1/quotation/{quote_plus(symbol)}"
+        payload = _safe_json_get(url, headers=DIA_HEADERS, timeout=12)
+        return symbol, payload
+
+    max_workers = min(8, max(1, len(unique_symbols)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for symbol, payload in ex.map(_fetch_one, unique_symbols):
+            if isinstance(payload, dict) and payload:
+                result[symbol] = payload
+
+    return result
+
+
+def _parse_iso_ts(value):
+    if not value:
+        return None
+    try:
+        # support trailing Z and fractional seconds
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _fmt_ts(dt):
+    if not dt:
+        return ""
+    try:
+        return dt.astimezone().isoformat(timespec="seconds")
+    except Exception:
+        return dt.isoformat(timespec="seconds")
+
+
+def _derive_prev_from_change(price, change_pct):
+    if price is None or change_pct is None:
+        return None
+    try:
+        denom = 1.0 + (float(change_pct) / 100.0)
+        if abs(denom) < 1e-12:
+            return None
+        return float(price) / denom
+    except Exception:
+        return None
+
+
 def alpaca_fetch_crypto_data():
-    """Fetch all crypto data from Alpaca Crypto Data API."""
-    symbols_param = ",".join(ALPACA_CRYPTO_SYMBOLS)
-    # Latest bars
-    bars_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/bars/latest?symbols={symbols_param}")
-    bars = bars_r.json().get("bars", {}) if bars_r and bars_r.status_code == 200 else {}
+    """Fetch live crypto data from CoinGecko with DIA fallback / cross-check."""
+    symbols = [coin["symbol"] for coin in CRYPTO_WATCHLIST]
 
-    # Latest quotes
-    quotes_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/quotes/latest?symbols={symbols_param}")
-    quotes = quotes_r.json().get("quotes", {}) if quotes_r and quotes_r.status_code == 200 else {}
-
-    # Latest trades
-    trades_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/trades/latest?symbols={symbols_param}")
-    trades = trades_r.json().get("trades", {}) if trades_r and trades_r.status_code == 200 else {}
-
-    # Previous close via daily bars (last 2)
-    prev_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/bars?symbols={symbols_param}&timeframe=1Day&limit=2")
-    prev_raw = prev_r.json().get("bars", {}) if prev_r and prev_r.status_code == 200 else {}
-    prevs = {}
-    for sym, bar_list in prev_raw.items():
-        if len(bar_list) >= 2:
-            prevs[sym] = bar_list[-2]["c"]
-        elif bar_list:
-            prevs[sym] = bar_list[0]["c"]
+    # Fetch both providers in parallel for a fresher, cross-checked result.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        cg_future = ex.submit(coingecko_fetch_crypto_data, symbols)
+        dia_future = ex.submit(dia_fetch_crypto_data, symbols)
+        cg_data = cg_future.result(timeout=20) or {}
+        dia_data = dia_future.result(timeout=20) or {}
 
     result = []
-    for coin in ALPACA_CRYPTO_WATCHLIST:
+
+    for coin in CRYPTO_WATCHLIST:
         sym = coin["symbol"]
-        b = bars.get(sym, {})
-        q = quotes.get(sym, {})
-        t = trades.get(sym, {})
+        sym_l = sym.lower()
 
-        last_price = t.get("p", 0) or b.get("c", 0)
-        bid        = q.get("bp", 0) or 0
-        ask        = q.get("ap", 0) or 0
-        bid_size   = q.get("bs", 0) or 0
-        ask_size   = q.get("as", 0) or 0
-        last_price = last_price or ask or bid
-        volume     = t.get("s", 0) or b.get("v", 0)
+        cg = cg_data.get(sym_l, {})
+        dia = dia_data.get(sym, {})
 
-        if not last_price and not bid and not ask:
+        cg_price = _safe_float(cg.get("usd"))
+        cg_mcap = _safe_float(cg.get("usd_market_cap"))
+        cg_vol = _safe_float(cg.get("usd_24h_vol"))
+        cg_change_pct = _safe_float(cg.get("usd_24h_change"))
+        cg_updated_at = cg.get("last_updated_at")
+        cg_ts = datetime.utcfromtimestamp(cg_updated_at) if cg_updated_at else None
+
+        dia_price = _safe_float(dia.get("Price"))
+        dia_prev = _safe_float(dia.get("PriceYesterday"))
+        dia_vol = _safe_float(dia.get("VolumeYesterdayUSD"))
+        dia_ts = _parse_iso_ts(dia.get("Time"))
+
+        # Primary source: CoinGecko. Fallback: DIA.
+        price_source = "CoinGecko" if cg_price is not None else ("DIA" if dia_price is not None else None)
+        price = cg_price if cg_price is not None else dia_price
+
+        if price is None:
             continue
 
-        bar_open  = b.get("o", 0)
-        bar_high  = b.get("h", 0)
-        bar_low   = b.get("l", 0)
-        bar_close = b.get("c", 0) or last_price
-        prev      = prevs.get(sym) or bar_open or last_price
+        # Prefer CoinGecko metadata when available; use DIA to fill gaps.
+        change_pct = cg_change_pct
+        if change_pct is None and dia_price is not None and dia_prev not in (None, 0):
+            try:
+                change_pct = round(((dia_price - dia_prev) / dia_prev) * 100.0, 4)
+            except Exception:
+                change_pct = None
 
-        change     = round(last_price - prev, 6) if (last_price and prev) else 0
-        change_pct = round((change / prev) * 100, 4) if prev else 0
-        spread     = round(ask - bid, 6) if ask and bid else 0
+        prev_close = _derive_prev_from_change(price, change_pct)
+        if prev_close is None and dia_prev is not None:
+            prev_close = dia_prev
 
-        if t.get("p"):
-            dtype = "TRADE"
-        elif ask or bid:
-            dtype = "QUOTE"
-        else:
-            dtype = "BAR"
+        change = None
+        if prev_close is not None:
+            change = round(price - prev_close, 8)
+
+        source_label = "CoinGecko + DIA" if (cg_price is not None and dia_price is not None) else price_source
 
         result.append({
-            "symbol":     sym,
-            "name":       coin["name"],
-            "category":   coin["category"],
-            "price":      last_price,
-            "ask":        ask,
-            "bid":        bid,
-            "ask_size":   ask_size,
-            "bid_size":   bid_size,
-            "spread":     spread,
-            "change":     change,
-            "change_pct": change_pct,
-            "volume":     volume,
-            "open":       bar_open,
-            "high":       bar_high,
-            "low":        bar_low,
-            "close":      bar_close,
-            "data_type":  dtype,
-            "timestamp":  t.get("t") or q.get("t") or b.get("t") or "",
+            "symbol": sym,
+            "name": coin["name"],
+            "category": coin["category"],
+            "price": price,
+            "ask": None,
+            "bid": None,
+            "ask_size": None,
+            "bid_size": None,
+            "spread": None,
+            "change": change if change is not None else 0,
+            "change_pct": round(change_pct, 4) if change_pct is not None else 0,
+            "volume": cg_vol if cg_vol is not None else dia_vol,
+            "market_cap": cg_mcap,
+            "open": prev_close,
+            "high": None,
+            "low": None,
+            "close": price,
+            "data_type": "REALTIME",
+            "timestamp": _fmt_ts(cg_ts or dia_ts),
+            "source": source_label,
+            "coingecko_price": cg_price,
+            "coingecko_last_updated_at": int(cg_updated_at) if cg_updated_at else None,
+            "dia_price": dia_price,
+            "dia_time": _fmt_ts(dia_ts),
+            "dia_source": dia.get("Source", ""),
         })
 
     return result
 
 
 def get_alpaca_live_price(ticker):
+
     """
     Return the best available real-time price for a US-listed ticker.
 
@@ -5990,9 +6121,9 @@ def api_alpaca_stocks():
 
 @app.route("/api/alpaca-crypto")
 def api_alpaca_crypto():
-    """Return live crypto data from Alpaca for the crypto watchlist."""
+    """Return live crypto data from CoinGecko/DIA for the crypto watchlist."""
     now = time.time()
-    if "crypto" not in alpaca_cache or (now - alpaca_cache_time.get("crypto", 0)) > ALPACA_CACHE_TTL:
+    if "crypto" not in alpaca_cache or (now - alpaca_cache_time.get("crypto", 0)) > CRYPTO_CACHE_TTL:
         try:
             alpaca_cache["crypto"] = alpaca_fetch_crypto_data()
             alpaca_cache_time["crypto"] = now
