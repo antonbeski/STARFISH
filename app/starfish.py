@@ -89,23 +89,34 @@ CRYPTO_WATCHLIST = [
     {"symbol": "BNB",  "name": "BNB",              "category": "Layer 1"},
     {"symbol": "XRP",  "name": "XRP",              "category": "Layer 1"},
     {"symbol": "ADA",  "name": "Cardano",          "category": "Layer 1"},
-    {"symbol": "AVAX", "name": "Avalanche",        "category": "Layer 1"},
     {"symbol": "DOGE", "name": "Dogecoin",         "category": "Meme"},
-    {"symbol": "SHIB", "name": "Shiba Inu",        "category": "Meme"},
+    {"symbol": "TRX",  "name": "TRON",             "category": "Layer 1"},
+    {"symbol": "AVAX", "name": "Avalanche",        "category": "Layer 1"},
     {"symbol": "LINK", "name": "Chainlink",        "category": "Oracle"},
     {"symbol": "DOT",  "name": "Polkadot",         "category": "Layer 0"},
     {"symbol": "MATIC","name": "Polygon",          "category": "Layer 2"},
-    {"symbol": "UNI",  "name": "Uniswap",          "category": "DeFi"},
-    {"symbol": "AAVE", "name": "Aave",             "category": "DeFi"},
+    {"symbol": "ATOM", "name": "Cosmos",           "category": "Layer 0"},
     {"symbol": "LTC",  "name": "Litecoin",         "category": "Layer 1"},
     {"symbol": "BCH",  "name": "Bitcoin Cash",     "category": "Layer 1"},
-    {"symbol": "ATOM", "name": "Cosmos",           "category": "Layer 0"},
+    {"symbol": "UNI",  "name": "Uniswap",          "category": "DeFi"},
+    {"symbol": "AAVE", "name": "Aave",             "category": "DeFi"},
+    {"symbol": "SUI",  "name": "Sui",              "category": "Layer 1"},
+    {"symbol": "APT",  "name": "Aptos",            "category": "Layer 1"},
+    {"symbol": "SHIB", "name": "Shiba Inu",        "category": "Meme"},
+    {"symbol": "PEPE", "name": "Pepe",             "category": "Meme"},
+    {"symbol": "ARB",  "name": "Arbitrum",         "category": "Layer 2"},
+    {"symbol": "OP",   "name": "Optimism",         "category": "Layer 2"},
+    {"symbol": "INJ",  "name": "Injective",        "category": "DeFi"},
+    {"symbol": "NEAR", "name": "NEAR Protocol",    "category": "Layer 1"},
+    {"symbol": "FIL",  "name": "Filecoin",         "category": "Layer 1"},
+    {"symbol": "HBAR", "name": "Hedera",           "category": "Layer 1"},
+    {"symbol": "ETC",  "name": "Ethereum Classic", "category": "Layer 1"},
     {"symbol": "XLM",  "name": "Stellar",          "category": "Layer 1"},
-    {"symbol": "ALGO", "name": "Algorand",         "category": "Layer 1"},
-    {"symbol": "XTZ",  "name": "Tezos",            "category": "Layer 1"},
+    {"symbol": "ICP",  "name": "Internet Computer","category": "Layer 1"},
+    {"symbol": "TON",  "name": "Toncoin",          "category": "Layer 1"},
 ]
 
-alpaca_cache      = {}
+alpaca_cache = {}
 alpaca_cache_time = {}
 ALPACA_CACHE_TTL  = 15  # seconds
 CRYPTO_CACHE_TTL  = 10  # seconds
@@ -849,24 +860,16 @@ def _derive_prev_from_change(price, change_pct):
 
 
 def alpaca_fetch_crypto_data():
-    """Fetch live crypto data from CoinGecko with DIA fallback / cross-check."""
+    """Fetch live crypto data from CoinGecko for the crypto watchlist."""
     symbols = [coin["symbol"] for coin in CRYPTO_WATCHLIST]
-
-    # Fetch both providers in parallel for a fresher, cross-checked result.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        cg_future = ex.submit(coingecko_fetch_crypto_data, symbols)
-        dia_future = ex.submit(dia_fetch_crypto_data, symbols)
-        cg_data = cg_future.result(timeout=20) or {}
-        dia_data = dia_future.result(timeout=20) or {}
+    cg_data = coingecko_fetch_crypto_data(symbols)
 
     result = []
 
     for coin in CRYPTO_WATCHLIST:
         sym = coin["symbol"]
         sym_l = sym.lower()
-
         cg = cg_data.get(sym_l, {})
-        dia = dia_data.get(sym, {})
 
         cg_price = _safe_float(cg.get("usd"))
         cg_mcap = _safe_float(cg.get("usd_market_cap"))
@@ -875,62 +878,37 @@ def alpaca_fetch_crypto_data():
         cg_updated_at = cg.get("last_updated_at")
         cg_ts = datetime.utcfromtimestamp(cg_updated_at) if cg_updated_at else None
 
-        dia_price = _safe_float(dia.get("Price"))
-        dia_prev = _safe_float(dia.get("PriceYesterday"))
-        dia_vol = _safe_float(dia.get("VolumeYesterdayUSD"))
-        dia_ts = _parse_iso_ts(dia.get("Time"))
-
-        # Primary source: CoinGecko. Fallback: DIA.
-        price_source = "CoinGecko" if cg_price is not None else ("DIA" if dia_price is not None else None)
-        price = cg_price if cg_price is not None else dia_price
-
-        if price is None:
+        if cg_price is None:
             continue
 
-        # Prefer CoinGecko metadata when available; use DIA to fill gaps.
-        change_pct = cg_change_pct
-        if change_pct is None and dia_price is not None and dia_prev not in (None, 0):
-            try:
-                change_pct = round(((dia_price - dia_prev) / dia_prev) * 100.0, 4)
-            except Exception:
-                change_pct = None
-
-        prev_close = _derive_prev_from_change(price, change_pct)
-        if prev_close is None and dia_prev is not None:
-            prev_close = dia_prev
-
+        prev_close = _derive_prev_from_change(cg_price, cg_change_pct)
         change = None
         if prev_close is not None:
-            change = round(price - prev_close, 8)
-
-        source_label = "CoinGecko + DIA" if (cg_price is not None and dia_price is not None) else price_source
+            change = round(cg_price - prev_close, 8)
 
         result.append({
             "symbol": sym,
             "name": coin["name"],
             "category": coin["category"],
-            "price": price,
+            "price": cg_price,
             "ask": None,
             "bid": None,
             "ask_size": None,
             "bid_size": None,
             "spread": None,
             "change": change if change is not None else 0,
-            "change_pct": round(change_pct, 4) if change_pct is not None else 0,
-            "volume": cg_vol if cg_vol is not None else dia_vol,
+            "change_pct": round(cg_change_pct, 4) if cg_change_pct is not None else 0,
+            "volume": cg_vol,
             "market_cap": cg_mcap,
             "open": prev_close,
             "high": None,
             "low": None,
-            "close": price,
-            "data_type": "REALTIME",
-            "timestamp": _fmt_ts(cg_ts or dia_ts),
-            "source": source_label,
+            "close": cg_price,
+            "data_type": "CoinGecko",
+            "timestamp": _fmt_ts(cg_ts),
+            "source": "CoinGecko",
             "coingecko_price": cg_price,
             "coingecko_last_updated_at": int(cg_updated_at) if cg_updated_at else None,
-            "dia_price": dia_price,
-            "dia_time": _fmt_ts(dia_ts),
-            "dia_source": dia.get("Source", ""),
         })
 
     return result
@@ -3549,7 +3527,44 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .alpaca-dtype.TRADE{{background:#e3f2fd;color:#1565c0;border:1px solid #1565c0}}
     .alpaca-dtype.QUOTE{{background:#fff3e0;color:#e65100;border:1px solid #e65100}}
     .alpaca-dtype.BAR{{background:#f5f5f5;color:#616161;border:1px solid #616161}}
- 
+
+    /* Crypto card styling — CoinGecko-only, no bid/ask */
+    .crypto-grid{{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}}
+    .crypto-card{{background:
+        radial-gradient(circle at top left, rgba(246,178,49,.14), transparent 34%),
+        linear-gradient(180deg, #121827 0%, #0d1320 100%);
+        border:1px solid rgba(255,255,255,.08);
+        border-radius:18px;
+        padding:16px;
+        color:#e5e7eb;
+        box-shadow:0 18px 40px rgba(0,0,0,.18);
+        transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        animation:card-in .3s ease both}}
+    .crypto-card:hover{{transform:translateY(-2px);box-shadow:0 22px 50px rgba(0,0,0,.24);border-color:rgba(247,147,26,.35)}}
+    .crypto-card.up{{border-left:3px solid #26a69a}}
+    .crypto-card.down{{border-left:3px solid #ef5350}}
+    .crypto-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}}
+    .crypto-card-sym{{font-size:1.15rem;font-weight:800;letter-spacing:.08em;color:#fff}}
+    .crypto-card-name{{font-size:.76rem;color:#9ca3af;margin-top:3px}}
+    .crypto-source-pill{{font-size:.55rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+        padding:4px 8px;border-radius:999px;background:rgba(247,147,26,.12);color:#f6b23a;
+        border:1px solid rgba(247,147,26,.26);white-space:nowrap}}
+    .crypto-price-row{{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:14px}}
+    .crypto-price{{font-size:1.35rem;font-weight:800;letter-spacing:-.02em;color:#fff}}
+    .crypto-card.up .crypto-price{{color:#7be0c3}}
+    .crypto-card.down .crypto-price{{color:#ff8d8d}}
+    .crypto-change{{font-size:.78rem;font-weight:700;font-family:'DM Mono',monospace;white-space:nowrap}}
+    .crypto-change.up-t{{color:#26a69a}}
+    .crypto-change.down-t{{color:#ef5350}}
+    .crypto-change.flat-t{{color:#9ca3af}}
+    .crypto-stats{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:6px}}
+    .crypto-stat{{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:10px 11px;min-height:62px}}
+    .crypto-stat-label{{display:block;font-size:.56rem;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px}}
+    .crypto-stat-value{{display:block;font-size:.88rem;font-weight:700;color:#fff;line-height:1.25;word-break:break-word}}
+    .crypto-footer{{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)}}
+    .crypto-updated{{font-size:.6rem;color:#aab2c0;font-family:'DM Mono',monospace}}
+    .crypto-source{{font-size:.58rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#f6b23a}}
+
     /* Alpaca status bar */
     .alpaca-status{{display:flex;align-items:center;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid #e5e5e5}}
     .alpaca-led{{width:8px;height:8px;border-radius:50%;background:#44cc44;flex-shrink:0;animation:pulse 2s ease-in-out infinite}}
@@ -4344,7 +4359,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     </div>
   </div>
 
-  <div id="crypto-grid" class="alpaca-grid">
+  <div id="crypto-grid" class="alpaca-grid crypto-grid">
     <div style="text-align:center;padding:40px;color:#888">Loading live crypto data…</div>
   </div>
 
@@ -5993,36 +6008,58 @@ function renderCryptoGrid() {{
     return;
   }}
 
-  const existing = grid.querySelector('.alpaca-card');
+  const fmtPrice = v => {{
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    const n = Number(v);
+    return '$' + (Math.abs(n) >= 1 ? n.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}) : n.toPrecision(4));
+  }};
+  const fmtLarge = v => {{
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    const n = Number(v);
+    const abs = Math.abs(n);
+    if (abs >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+    if (abs >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+    if (abs >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+    if (abs >= 1e3) return '$' + (n / 1e3).toFixed(2) + 'K';
+    return '$' + n.toLocaleString(undefined, {{maximumFractionDigits: 2}});
+  }};
+
+  const existing = grid.querySelector('.crypto-card');
   if (!existing) {{
     grid.innerHTML = coins.map(c => {{
       const dir = c.change_pct > 0 ? 'up' : (c.change_pct < 0 ? 'down' : '');
       const sign = c.change_pct >= 0 ? '+' : '';
       const changeClass = c.change_pct > 0 ? 'up-t' : (c.change_pct < 0 ? 'down-t' : 'flat-t');
       const sym = c.symbol.replace('/', '');
-      const priceStr = c.price ? (c.price >= 1 ? c.price.toFixed(2) : c.price.toPrecision(4)) : '—';
-      return `<div class="alpaca-card ${{dir}}" id="ccard-${{sym}}">
-        <div class="alpaca-card-sym">${{c.symbol}}</div>
-        <div class="alpaca-card-name">${{c.name}}</div>
-        <div class="alpaca-price-row">
-          <div class="alpaca-price" id="cp-${{sym}}">$${{priceStr}}</div>
-          <div class="alpaca-change ${{changeClass}}" id="cc-${{sym}}">${{sign}}${{c.change_pct ? c.change_pct.toFixed(2) : '0.00'}}%</div>
-        </div>
-        <div class="alpaca-bidask">
-          <div class="alpaca-ba alpaca-bid">
-            <div class="alpaca-ba-label">BID</div>
-            <div class="alpaca-ba-price" id="cbid-${{sym}}">$${{c.bid ? (c.bid >= 1 ? c.bid.toFixed(2) : c.bid.toPrecision(4)) : '—'}}</div>
-            <div class="alpaca-ba-size" id="cbidsz-${{sym}}">${{c.bid_size ? c.bid_size.toLocaleString() : ''}}</div>
+      return `<div class="crypto-card ${{dir}}" id="ccard-${{sym}}">
+        <div class="crypto-top">
+          <div>
+            <div class="crypto-card-sym">${{c.symbol}}</div>
+            <div class="crypto-card-name">${{c.name}}</div>
           </div>
-          <div class="alpaca-ba alpaca-ask">
-            <div class="alpaca-ba-label">ASK</div>
-            <div class="alpaca-ba-price" id="cask-${{sym}}">$${{c.ask ? (c.ask >= 1 ? c.ask.toFixed(2) : c.ask.toPrecision(4)) : '—'}}</div>
-            <div class="alpaca-ba-size" id="casksz-${{sym}}">${{c.ask_size ? c.ask_size.toLocaleString() : ''}}</div>
+          <div class="crypto-source-pill">CoinGecko</div>
+        </div>
+        <div class="crypto-price-row">
+          <div class="crypto-price" id="cp-${{sym}}">${{fmtPrice(c.price)}}</div>
+          <div class="crypto-change ${{changeClass}}" id="cc-${{sym}}">${{sign}}${{c.change_pct ? c.change_pct.toFixed(2) : '0.00'}}%</div>
+        </div>
+        <div class="crypto-stats">
+          <div class="crypto-stat">
+            <span class="crypto-stat-label">Market Cap</span>
+            <span class="crypto-stat-value" id="cmcap-${{sym}}">${{fmtLarge(c.market_cap)}}</span>
+          </div>
+          <div class="crypto-stat">
+            <span class="crypto-stat-label">24H Volume</span>
+            <span class="crypto-stat-value" id="cvol-${{sym}}">${{fmtLarge(c.volume)}}</span>
+          </div>
+          <div class="crypto-stat">
+            <span class="crypto-stat-label">Updated</span>
+            <span class="crypto-stat-value" id="cupd-${{sym}}">${{c.timestamp || '—'}}</span>
           </div>
         </div>
-        <div class="alpaca-footer">
-          <div class="alpaca-vol" id="cvol-${{sym}}">VOL ${{c.volume ? c.volume.toLocaleString() : '—'}}</div>
-          <div class="alpaca-dtype ${{c.data_type}}" id="cdt-${{sym}}">${{c.data_type}}</div>
+        <div class="crypto-footer">
+          <div class="crypto-source" id="csrc-${{sym}}">${{c.source || 'CoinGecko'}}</div>
+          <div class="crypto-updated">${{c.category}}</div>
         </div>
       </div>`;
     }}).join('');
@@ -6040,23 +6077,34 @@ function renderCryptoGrid() {{
     const dir = c.change_pct > 0 ? 'up' : (c.change_pct < 0 ? 'down' : '');
     const sign = c.change_pct >= 0 ? '+' : '';
     const changeClass = c.change_pct > 0 ? 'up-t' : (c.change_pct < 0 ? 'down-t' : 'flat-t');
-    const wantClass = 'alpaca-card' + (dir ? ' ' + dir : '');
+    const wantClass = 'crypto-card' + (dir ? ' ' + dir : '');
     if (card.className !== wantClass) card.className = wantClass;
 
-    const fmt = v => v ? (v >= 1 ? '$' + v.toFixed(2) : '$' + v.toPrecision(4)) : '—';
-    setText('cp-' + sym,     fmt(c.price));
-    setText('cc-' + sym,     sign + (c.change_pct ? c.change_pct.toFixed(2) : '0.00') + '%');
-    setText('cbid-' + sym,   fmt(c.bid));
-    setText('cbidsz-' + sym, c.bid_size ? c.bid_size.toLocaleString() : '');
-    setText('cask-' + sym,   fmt(c.ask));
-    setText('casksz-' + sym, c.ask_size ? c.ask_size.toLocaleString() : '');
-    setText('cvol-' + sym,   'VOL ' + (c.volume ? c.volume.toLocaleString() : '—'));
+    const fmtPrice = v => {{
+      if (v === null || v === undefined || isNaN(v)) return '—';
+      const n = Number(v);
+      return '$' + (Math.abs(n) >= 1 ? n.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}) : n.toPrecision(4));
+    }};
+    const fmtLarge = v => {{
+      if (v === null || v === undefined || isNaN(v)) return '—';
+      const n = Number(v);
+      const abs = Math.abs(n);
+      if (abs >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+      if (abs >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+      if (abs >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+      if (abs >= 1e3) return '$' + (n / 1e3).toFixed(2) + 'K';
+      return '$' + n.toLocaleString(undefined, {{maximumFractionDigits: 2}});
+    }};
 
+    setText('cp-' + sym, fmtPrice(c.price));
+    setText('cc-' + sym, sign + (c.change_pct ? c.change_pct.toFixed(2) : '0.00') + '%');
     const chgEl = document.getElementById('cc-' + sym);
-    if (chgEl && chgEl.className !== 'alpaca-change ' + changeClass) chgEl.className = 'alpaca-change ' + changeClass;
+    if (chgEl && chgEl.className !== 'crypto-change ' + changeClass) chgEl.className = 'crypto-change ' + changeClass;
 
-    const dtEl = document.getElementById('cdt-' + sym);
-    if (dtEl) {{ if (dtEl.textContent !== c.data_type) dtEl.textContent = c.data_type; if (dtEl.className !== 'alpaca-dtype ' + c.data_type) dtEl.className = 'alpaca-dtype ' + c.data_type; }}
+    setText('cmcap-' + sym, fmtLarge(c.market_cap));
+    setText('cvol-' + sym, fmtLarge(c.volume));
+    setText('cupd-' + sym, c.timestamp || '—');
+    setText('csrc-' + sym, c.source || 'CoinGecko');
 
     if (cryptoPrevPrices[c.symbol] !== undefined && cryptoPrevPrices[c.symbol] !== c.price) {{
       const cls = c.price > cryptoPrevPrices[c.symbol] ? 'flash-up' : 'flash-down';
@@ -6079,12 +6127,8 @@ async function fetchAlpacaCrypto() {{
     cryptoAllCoins = data.coins || [];
     renderCryptoGrid();
     document.getElementById('crypto-last-update').textContent = data.updated;
-    document.getElementById('crypto-status-text').textContent = 'Live · ' + cryptoAllCoins.length + ' symbols';
-    var typeCounts = {{}};
-    cryptoAllCoins.forEach(function(c) {{ typeCounts[c.data_type] = (typeCounts[c.data_type] || 0) + 1; }});
-    var dominantType = Object.keys(typeCounts).sort(function(a,b){{ return typeCounts[b]-typeCounts[a]; }})[0] || '—';
-    var badgeLabels = {{TRADE:'Trade Data', QUOTE:'Quote Data', BAR:'Bar Data (Delayed)'}};
-    document.getElementById('crypto-data-badge').textContent = badgeLabels[dominantType] || dominantType;
+    document.getElementById('crypto-status-text').textContent = 'Live · ' + cryptoAllCoins.length + ' coins';
+    document.getElementById('crypto-data-badge').textContent = 'CoinGecko';
   }} catch(e) {{
     document.getElementById('crypto-status-text').textContent = 'Connection error — retrying';
     document.getElementById('crypto-data-badge').textContent = 'Offline';
