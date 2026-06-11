@@ -3529,42 +3529,40 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .alpaca-dtype.BAR{{background:#f5f5f5;color:#616161;border:1px solid #616161}}
 
     /* Crypto card styling — CoinGecko-only, no bid/ask */
-    .crypto-grid{{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}}
-    .crypto-card{{background:
-        radial-gradient(circle at top left, rgba(246,178,49,.14), transparent 34%),
-        linear-gradient(180deg, #121827 0%, #0d1320 100%);
+    .crypto-grid{{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}}
+    .crypto-card{{position:relative;overflow:hidden;background:
+        radial-gradient(circle at top left, rgba(246,178,49,.16), transparent 32%),
+        linear-gradient(180deg, #111827 0%, #0b1020 100%);
         border:1px solid rgba(255,255,255,.08);
-        border-radius:18px;
-        padding:16px;
+        border-radius:22px;
+        padding:18px;
         color:#e5e7eb;
-        box-shadow:0 18px 40px rgba(0,0,0,.18);
-        transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        box-shadow:0 20px 42px rgba(0,0,0,.22);
+        transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease, border-radius .18s ease;
         animation:card-in .3s ease both}}
-    .crypto-card:hover{{transform:translateY(-2px);box-shadow:0 22px 50px rgba(0,0,0,.24);border-color:rgba(247,147,26,.35)}}
+    .crypto-card::before{{content:'';position:absolute;inset:0 0 auto 0;height:2px;
+        background:linear-gradient(90deg, transparent, rgba(246,178,49,.7), transparent);opacity:.9}}
+    .crypto-card:hover{{transform:translateY(-2px);box-shadow:0 24px 54px rgba(0,0,0,.28);border-color:rgba(247,147,26,.36)}}
     .crypto-card.up{{border-left:3px solid #26a69a}}
     .crypto-card.down{{border-left:3px solid #ef5350}}
-    .crypto-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}}
-    .crypto-card-sym{{font-size:1.15rem;font-weight:800;letter-spacing:.08em;color:#fff}}
-    .crypto-card-name{{font-size:.76rem;color:#9ca3af;margin-top:3px}}
-    .crypto-source-pill{{font-size:.55rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
-        padding:4px 8px;border-radius:999px;background:rgba(247,147,26,.12);color:#f6b23a;
-        border:1px solid rgba(247,147,26,.26);white-space:nowrap}}
-    .crypto-price-row{{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:14px}}
-    .crypto-price{{font-size:1.35rem;font-weight:800;letter-spacing:-.02em;color:#fff}}
+    .crypto-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}}
+    .crypto-card-sym{{font-size:1.2rem;font-weight:800;letter-spacing:.08em;color:#fff}}
+    .crypto-card-name{{font-size:.78rem;color:#9ca3af;margin-top:4px}}
+    .crypto-source-pill{{font-size:.55rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:4px 8px;border-radius:999px;background:rgba(247,147,26,.12);color:#f6b23a;border:1px solid rgba(247,147,26,.24);white-space:nowrap}}
+    .crypto-price-row{{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:14px;padding:12px 14px;border-radius:16px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)}}
+    .crypto-price{{font-size:1.45rem;font-weight:800;letter-spacing:-.02em;color:#fff;line-height:1.05}}
     .crypto-card.up .crypto-price{{color:#7be0c3}}
     .crypto-card.down .crypto-price{{color:#ff8d8d}}
-    .crypto-change{{font-size:.78rem;font-weight:700;font-family:'DM Mono',monospace;white-space:nowrap}}
+    .crypto-change{{font-size:.76rem;font-weight:700;font-family:'DM Mono',monospace;white-space:nowrap;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06)}}
     .crypto-change.up-t{{color:#26a69a}}
     .crypto-change.down-t{{color:#ef5350}}
     .crypto-change.flat-t{{color:#9ca3af}}
-    .crypto-stats{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:6px}}
-    .crypto-stat{{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:10px 11px;min-height:62px}}
+    .crypto-stats{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:8px}}
+    .crypto-stat{{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:10px 11px;min-height:64px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}}
     .crypto-stat-label{{display:block;font-size:.56rem;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px}}
-    .crypto-stat-value{{display:block;font-size:.88rem;font-weight:700;color:#fff;line-height:1.25;word-break:break-word}}
+    .crypto-stat-value{{display:block;font-size:.9rem;font-weight:700;color:#fff;line-height:1.25;word-break:break-word}}
     .crypto-footer{{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)}}
-    .crypto-updated{{font-size:.6rem;color:#aab2c0;font-family:'DM Mono',monospace}}
-    .crypto-source{{font-size:.58rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#f6b23a}}
-
+    .crypto-source{{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#f6b23a}}
     /* Alpaca status bar */
     .alpaca-status{{display:flex;align-items:center;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid #e5e5e5}}
     .alpaca-led{{width:8px;height:8px;border-radius:50%;background:#44cc44;flex-shrink:0;animation:pulse 2s ease-in-out infinite}}
@@ -6058,8 +6056,7 @@ function renderCryptoGrid() {{
           </div>
         </div>
         <div class="crypto-footer">
-          <div class="crypto-source" id="csrc-${{sym}}">${{c.source || 'CoinGecko'}}</div>
-          <div class="crypto-updated">${{c.category}}</div>
+          <div class="crypto-source" id="csrc-${{sym}}">${{c.source || 'CoinGecko Live Data'}}</div>
         </div>
       </div>`;
     }}).join('');
@@ -6104,7 +6101,7 @@ function renderCryptoGrid() {{
     setText('cmcap-' + sym, fmtLarge(c.market_cap));
     setText('cvol-' + sym, fmtLarge(c.volume));
     setText('cupd-' + sym, c.timestamp || '—');
-    setText('csrc-' + sym, c.source || 'CoinGecko');
+    setText('csrc-' + sym, c.source || 'CoinGecko Live Data');
 
     if (cryptoPrevPrices[c.symbol] !== undefined && cryptoPrevPrices[c.symbol] !== c.price) {{
       const cls = c.price > cryptoPrevPrices[c.symbol] ? 'flash-up' : 'flash-down';
