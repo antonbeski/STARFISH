@@ -66,6 +66,31 @@ alpaca_rt_data   = {}   # {symbol: {price, bid, ask, bid_size, ask_size, volume,
 alpaca_rt_lock   = threading.Lock()
 ALPACA_WS_URL    = "wss://stream.data.alpaca.markets/v2/iex"
 ALPACA_SYMBOLS   = [s["symbol"] for s in ALPACA_WATCHLIST]
+
+ALPACA_CRYPTO_WATCHLIST = [
+    {"symbol": "BTC/USD",  "name": "Bitcoin",          "category": "Layer 1"},
+    {"symbol": "ETH/USD",  "name": "Ethereum",         "category": "Layer 1"},
+    {"symbol": "SOL/USD",  "name": "Solana",           "category": "Layer 1"},
+    {"symbol": "BNB/USD",  "name": "BNB",              "category": "Layer 1"},
+    {"symbol": "XRP/USD",  "name": "XRP",              "category": "Layer 1"},
+    {"symbol": "ADA/USD",  "name": "Cardano",          "category": "Layer 1"},
+    {"symbol": "AVAX/USD", "name": "Avalanche",        "category": "Layer 1"},
+    {"symbol": "DOGE/USD", "name": "Dogecoin",         "category": "Meme"},
+    {"symbol": "SHIB/USD", "name": "Shiba Inu",        "category": "Meme"},
+    {"symbol": "LINK/USD", "name": "Chainlink",        "category": "Oracle"},
+    {"symbol": "DOT/USD",  "name": "Polkadot",         "category": "Layer 0"},
+    {"symbol": "MATIC/USD","name": "Polygon",          "category": "Layer 2"},
+    {"symbol": "UNI/USD",  "name": "Uniswap",          "category": "DeFi"},
+    {"symbol": "AAVE/USD", "name": "Aave",             "category": "DeFi"},
+    {"symbol": "LTC/USD",  "name": "Litecoin",         "category": "Layer 1"},
+    {"symbol": "BCH/USD",  "name": "Bitcoin Cash",     "category": "Layer 1"},
+    {"symbol": "ATOM/USD", "name": "Cosmos",           "category": "Layer 0"},
+    {"symbol": "XLM/USD",  "name": "Stellar",          "category": "Layer 1"},
+    {"symbol": "ALGO/USD", "name": "Algorand",         "category": "Layer 1"},
+    {"symbol": "XTZ/USD",  "name": "Tezos",            "category": "Layer 1"},
+]
+ALPACA_CRYPTO_SYMBOLS = [c["symbol"] for c in ALPACA_CRYPTO_WATCHLIST]
+
 alpaca_cache      = {}
 alpaca_cache_time = {}
 ALPACA_CACHE_TTL  = 15  # seconds
@@ -692,6 +717,90 @@ def alpaca_fetch_all_data():
             "close":      bar_close,
             "data_type":  dtype,
             "timestamp":  rt.get("ts") or t.get("t") or q.get("t") or b.get("t") or "",
+        })
+
+    return result
+
+
+def alpaca_fetch_crypto_data():
+    """Fetch all crypto data from Alpaca Crypto Data API."""
+    symbols_param = ",".join(ALPACA_CRYPTO_SYMBOLS)
+    # Latest bars
+    bars_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/bars/latest?symbols={symbols_param}")
+    bars = bars_r.json().get("bars", {}) if bars_r and bars_r.status_code == 200 else {}
+
+    # Latest quotes
+    quotes_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/quotes/latest?symbols={symbols_param}")
+    quotes = quotes_r.json().get("quotes", {}) if quotes_r and quotes_r.status_code == 200 else {}
+
+    # Latest trades
+    trades_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/trades/latest?symbols={symbols_param}")
+    trades = trades_r.json().get("trades", {}) if trades_r and trades_r.status_code == 200 else {}
+
+    # Previous close via daily bars (last 2)
+    prev_r = alpaca_get(f"{ALPACA_DATA_URL}/crypto/us/bars?symbols={symbols_param}&timeframe=1Day&limit=2")
+    prev_raw = prev_r.json().get("bars", {}) if prev_r and prev_r.status_code == 200 else {}
+    prevs = {}
+    for sym, bar_list in prev_raw.items():
+        if len(bar_list) >= 2:
+            prevs[sym] = bar_list[-2]["c"]
+        elif bar_list:
+            prevs[sym] = bar_list[0]["c"]
+
+    result = []
+    for coin in ALPACA_CRYPTO_WATCHLIST:
+        sym = coin["symbol"]
+        b = bars.get(sym, {})
+        q = quotes.get(sym, {})
+        t = trades.get(sym, {})
+
+        last_price = t.get("p", 0) or b.get("c", 0)
+        bid        = q.get("bp", 0) or 0
+        ask        = q.get("ap", 0) or 0
+        bid_size   = q.get("bs", 0) or 0
+        ask_size   = q.get("as", 0) or 0
+        last_price = last_price or ask or bid
+        volume     = t.get("s", 0) or b.get("v", 0)
+
+        if not last_price and not bid and not ask:
+            continue
+
+        bar_open  = b.get("o", 0)
+        bar_high  = b.get("h", 0)
+        bar_low   = b.get("l", 0)
+        bar_close = b.get("c", 0) or last_price
+        prev      = prevs.get(sym) or bar_open or last_price
+
+        change     = round(last_price - prev, 6) if (last_price and prev) else 0
+        change_pct = round((change / prev) * 100, 4) if prev else 0
+        spread     = round(ask - bid, 6) if ask and bid else 0
+
+        if t.get("p"):
+            dtype = "TRADE"
+        elif ask or bid:
+            dtype = "QUOTE"
+        else:
+            dtype = "BAR"
+
+        result.append({
+            "symbol":     sym,
+            "name":       coin["name"],
+            "category":   coin["category"],
+            "price":      last_price,
+            "ask":        ask,
+            "bid":        bid,
+            "ask_size":   ask_size,
+            "bid_size":   bid_size,
+            "spread":     spread,
+            "change":     change,
+            "change_pct": change_pct,
+            "volume":     volume,
+            "open":       bar_open,
+            "high":       bar_high,
+            "low":        bar_low,
+            "close":      bar_close,
+            "data_type":  dtype,
+            "timestamp":  t.get("t") or q.get("t") or b.get("t") or "",
         })
 
     return result
@@ -4069,6 +4178,53 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
 </div>
 
 <!-- ══════════════════════════════════════════
+     CRYPTO SECTION
+═══════════════════════════════════════════ -->
+<div class="section-divider" id="crypto">
+  <div class="section-divider-line"></div>
+  <div class="section-label"><span class="dot" style="background:#f7931a"></span>Crypto</div>
+  <div class="section-divider-line"></div>
+</div>
+
+<div class="alpaca-panel">
+  <div class="alpaca-header">
+    <span class="alpaca-title">CRYPTO · LIVE MARKET DATA</span>
+    <span class="alpaca-badge" id="crypto-data-badge">Connecting…</span>
+  </div>
+
+  <div class="alpaca-filter">
+    <button class="alpaca-filter-btn active" onclick="setCryptoFilter('ALL')">ALL</button>
+    <button class="alpaca-filter-btn" onclick="setCryptoFilter('Layer 1')">LAYER 1</button>
+    <button class="alpaca-filter-btn" onclick="setCryptoFilter('Layer 2')">LAYER 2</button>
+    <button class="alpaca-filter-btn" onclick="setCryptoFilter('Layer 0')">LAYER 0</button>
+    <button class="alpaca-filter-btn" onclick="setCryptoFilter('DeFi')">DEFI</button>
+    <button class="alpaca-filter-btn" onclick="setCryptoFilter('Oracle')">ORACLE</button>
+    <button class="alpaca-filter-btn" onclick="setCryptoFilter('Meme')">MEME</button>
+    <div class="alpaca-sort">
+      <span class="alpaca-sort-label">SORT</span>
+      <select id="crypto-sort" class="alpaca-sort-select" onchange="document.getElementById('crypto-grid').innerHTML='';renderCryptoGrid()">
+        <option value="default">DEFAULT</option>
+        <option value="price-desc">PRICE ↓</option>
+        <option value="price-asc">PRICE ↑</option>
+        <option value="chg-desc">GAIN ↓</option>
+        <option value="chg-asc">LOSS ↓</option>
+        <option value="vol-desc">VOLUME ↓</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="crypto-grid" class="alpaca-grid">
+    <div style="text-align:center;padding:40px;color:#888">Loading live crypto data…</div>
+  </div>
+
+  <div class="alpaca-status">
+    <div class="alpaca-led"></div>
+    <span class="alpaca-status-text" id="crypto-status-text">Connecting…</span>
+    <span id="crypto-last-update" style="font-size:.55rem;color:#aaa;margin-left:auto"></span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
      GBM MONTE CARLO SIMULATION
 ═══════════════════════════════════════════ -->
 <div class="glass panel" id="gbm-panel" style="margin-top:12px">
@@ -5666,6 +5822,146 @@ function _satLog(msg, type) {{
 // Initialize Alpaca feeds
 fetchAlpacaStocks();
 setInterval(fetchAlpacaStocks, 15000);
+
+// ── CRYPTO ────────────────────────────────────────────────────────────────────
+var cryptoAllCoins = [];
+var cryptoFilter = 'ALL';
+var cryptoPrevPrices = {{}};
+
+function setCryptoFilter(f) {{
+  cryptoFilter = f;
+  document.querySelectorAll('#crypto .alpaca-filter-btn').forEach(btn => {{
+    const t = btn.textContent.trim();
+    const match = (f === 'ALL' && t === 'ALL') ||
+                  (f === 'Layer 1' && t === 'LAYER 1') ||
+                  (f === 'Layer 2' && t === 'LAYER 2') ||
+                  (f === 'Layer 0' && t === 'LAYER 0') ||
+                  (f === 'DeFi' && t === 'DEFI') ||
+                  (f === 'Oracle' && t === 'ORACLE') ||
+                  (f === 'Meme' && t === 'MEME');
+    btn.classList.toggle('active', match);
+  }});
+  document.getElementById('crypto-grid').innerHTML = '';
+  renderCryptoGrid();
+}}
+
+function renderCryptoGrid() {{
+  let coins = [...cryptoAllCoins];
+  if (cryptoFilter !== 'ALL') coins = coins.filter(c => c.category === cryptoFilter);
+
+  const sortVal = document.getElementById('crypto-sort').value;
+  if (sortVal === 'price-desc') coins.sort((a,b) => b.price - a.price);
+  else if (sortVal === 'price-asc') coins.sort((a,b) => a.price - b.price);
+  else if (sortVal === 'chg-desc') coins.sort((a,b) => b.change_pct - a.change_pct);
+  else if (sortVal === 'chg-asc') coins.sort((a,b) => a.change_pct - b.change_pct);
+  else if (sortVal === 'vol-desc') coins.sort((a,b) => (b.volume || 0) - (a.volume || 0));
+
+  const grid = document.getElementById('crypto-grid');
+  if (!coins.length) {{
+    grid.innerHTML = '<div style="text-align:center;padding:40px;color:#888">No coins match filter</div>';
+    return;
+  }}
+
+  const existing = grid.querySelector('.alpaca-card');
+  if (!existing) {{
+    grid.innerHTML = coins.map(c => {{
+      const dir = c.change_pct > 0 ? 'up' : (c.change_pct < 0 ? 'down' : '');
+      const sign = c.change_pct >= 0 ? '+' : '';
+      const changeClass = c.change_pct > 0 ? 'up-t' : (c.change_pct < 0 ? 'down-t' : 'flat-t');
+      const sym = c.symbol.replace('/', '');
+      const priceStr = c.price ? (c.price >= 1 ? c.price.toFixed(2) : c.price.toPrecision(4)) : '—';
+      return `<div class="alpaca-card ${{dir}}" id="ccard-${{sym}}">
+        <div class="alpaca-card-sym">${{c.symbol}}</div>
+        <div class="alpaca-card-name">${{c.name}}</div>
+        <div class="alpaca-price-row">
+          <div class="alpaca-price" id="cp-${{sym}}">$${{priceStr}}</div>
+          <div class="alpaca-change ${{changeClass}}" id="cc-${{sym}}">${{sign}}${{c.change_pct ? c.change_pct.toFixed(2) : '0.00'}}%</div>
+        </div>
+        <div class="alpaca-bidask">
+          <div class="alpaca-ba alpaca-bid">
+            <div class="alpaca-ba-label">BID</div>
+            <div class="alpaca-ba-price" id="cbid-${{sym}}">$${{c.bid ? (c.bid >= 1 ? c.bid.toFixed(2) : c.bid.toPrecision(4)) : '—'}}</div>
+            <div class="alpaca-ba-size" id="cbidsz-${{sym}}">${{c.bid_size ? c.bid_size.toLocaleString() : ''}}</div>
+          </div>
+          <div class="alpaca-ba alpaca-ask">
+            <div class="alpaca-ba-label">ASK</div>
+            <div class="alpaca-ba-price" id="cask-${{sym}}">$${{c.ask ? (c.ask >= 1 ? c.ask.toFixed(2) : c.ask.toPrecision(4)) : '—'}}</div>
+            <div class="alpaca-ba-size" id="casksz-${{sym}}">${{c.ask_size ? c.ask_size.toLocaleString() : ''}}</div>
+          </div>
+        </div>
+        <div class="alpaca-footer">
+          <div class="alpaca-vol" id="cvol-${{sym}}">VOL ${{c.volume ? c.volume.toLocaleString() : '—'}}</div>
+          <div class="alpaca-dtype ${{c.data_type}}" id="cdt-${{sym}}">${{c.data_type}}</div>
+        </div>
+      </div>`;
+    }}).join('');
+    coins.forEach(c => {{ cryptoPrevPrices[c.symbol] = c.price; }});
+    return;
+  }}
+
+  function setText(id, val) {{ const el = document.getElementById(id); if (el && el.textContent !== val) el.textContent = val; }}
+
+  coins.forEach(c => {{
+    const sym = c.symbol.replace('/', '');
+    const card = document.getElementById('ccard-' + sym);
+    if (!card) return;
+
+    const dir = c.change_pct > 0 ? 'up' : (c.change_pct < 0 ? 'down' : '');
+    const sign = c.change_pct >= 0 ? '+' : '';
+    const changeClass = c.change_pct > 0 ? 'up-t' : (c.change_pct < 0 ? 'down-t' : 'flat-t');
+    const wantClass = 'alpaca-card' + (dir ? ' ' + dir : '');
+    if (card.className !== wantClass) card.className = wantClass;
+
+    const fmt = v => v ? (v >= 1 ? '$' + v.toFixed(2) : '$' + v.toPrecision(4)) : '—';
+    setText('cp-' + sym,     fmt(c.price));
+    setText('cc-' + sym,     sign + (c.change_pct ? c.change_pct.toFixed(2) : '0.00') + '%');
+    setText('cbid-' + sym,   fmt(c.bid));
+    setText('cbidsz-' + sym, c.bid_size ? c.bid_size.toLocaleString() : '');
+    setText('cask-' + sym,   fmt(c.ask));
+    setText('casksz-' + sym, c.ask_size ? c.ask_size.toLocaleString() : '');
+    setText('cvol-' + sym,   'VOL ' + (c.volume ? c.volume.toLocaleString() : '—'));
+
+    const chgEl = document.getElementById('cc-' + sym);
+    if (chgEl && chgEl.className !== 'alpaca-change ' + changeClass) chgEl.className = 'alpaca-change ' + changeClass;
+
+    const dtEl = document.getElementById('cdt-' + sym);
+    if (dtEl) {{ if (dtEl.textContent !== c.data_type) dtEl.textContent = c.data_type; if (dtEl.className !== 'alpaca-dtype ' + c.data_type) dtEl.className = 'alpaca-dtype ' + c.data_type; }}
+
+    if (cryptoPrevPrices[c.symbol] !== undefined && cryptoPrevPrices[c.symbol] !== c.price) {{
+      const cls = c.price > cryptoPrevPrices[c.symbol] ? 'flash-up' : 'flash-down';
+      card.classList.add(cls);
+      setTimeout(() => card.classList.remove(cls), 800);
+    }}
+    cryptoPrevPrices[c.symbol] = c.price;
+  }});
+}}
+
+async function fetchAlpacaCrypto() {{
+  try {{
+    const r = await fetch('/api/alpaca-crypto');
+    const data = await r.json();
+    if (data.error) {{
+      document.getElementById('crypto-status-text').textContent = 'Error: ' + data.error;
+      document.getElementById('crypto-data-badge').textContent = 'Unavailable';
+      return;
+    }}
+    cryptoAllCoins = data.coins || [];
+    renderCryptoGrid();
+    document.getElementById('crypto-last-update').textContent = data.updated;
+    document.getElementById('crypto-status-text').textContent = 'Live · ' + cryptoAllCoins.length + ' symbols';
+    var typeCounts = {{}};
+    cryptoAllCoins.forEach(function(c) {{ typeCounts[c.data_type] = (typeCounts[c.data_type] || 0) + 1; }});
+    var dominantType = Object.keys(typeCounts).sort(function(a,b){{ return typeCounts[b]-typeCounts[a]; }})[0] || '—';
+    var badgeLabels = {{TRADE:'Trade Data', QUOTE:'Quote Data', BAR:'Bar Data (Delayed)'}};
+    document.getElementById('crypto-data-badge').textContent = badgeLabels[dominantType] || dominantType;
+  }} catch(e) {{
+    document.getElementById('crypto-status-text').textContent = 'Connection error — retrying';
+    document.getElementById('crypto-data-badge').textContent = 'Offline';
+  }}
+}}
+
+fetchAlpacaCrypto();
+setInterval(fetchAlpacaCrypto, 15000);
 </script>
 </body>
 </html>"""
@@ -5688,6 +5984,23 @@ def api_alpaca_stocks():
                 return jsonify({"error": str(e)}), 500
     return jsonify({
         "stocks":  alpaca_cache.get("alpaca", []),
+        "updated": datetime.utcnow().strftime("%H:%M:%S UTC"),
+    })
+
+
+@app.route("/api/alpaca-crypto")
+def api_alpaca_crypto():
+    """Return live crypto data from Alpaca for the crypto watchlist."""
+    now = time.time()
+    if "crypto" not in alpaca_cache or (now - alpaca_cache_time.get("crypto", 0)) > ALPACA_CACHE_TTL:
+        try:
+            alpaca_cache["crypto"] = alpaca_fetch_crypto_data()
+            alpaca_cache_time["crypto"] = now
+        except Exception as e:
+            if "crypto" not in alpaca_cache:
+                return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "coins":   alpaca_cache.get("crypto", []),
         "updated": datetime.utcnow().strftime("%H:%M:%S UTC"),
     })
 
