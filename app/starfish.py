@@ -4384,7 +4384,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <button class="alpaca-filter-btn" onclick="setCryptoFilter('Meme')">MEME</button>
     <div class="alpaca-sort">
       <span class="alpaca-sort-label">SORT</span>
-      <select id="crypto-sort" class="alpaca-sort-select" onchange="document.getElementById('crypto-grid').innerHTML='';renderCryptoGrid()">
+      <select id="crypto-sort" class="alpaca-sort-select" onchange="renderCryptoGrid()">
         <option value="default">DEFAULT</option>
         <option value="price-desc">PRICE ↓</option>
         <option value="price-asc">PRICE ↑</option>
@@ -6024,7 +6024,6 @@ function setCryptoFilter(f) {{
                   (f === 'Meme' && t === 'MEME');
     btn.classList.toggle('active', match);
   }});
-  document.getElementById('crypto-grid').innerHTML = '';
   renderCryptoGrid();
 }}
 
@@ -6071,21 +6070,7 @@ async function fetchSparkline(coingeckoId, sym, isUp) {{
 }}
 
 function renderCryptoGrid() {{
-  let coins = [...cryptoAllCoins];
-  if (cryptoFilter !== 'ALL') coins = coins.filter(c => c.category === cryptoFilter);
-
-  const sortVal = document.getElementById('crypto-sort').value;
-  if (sortVal === 'price-desc') coins.sort((a,b) => b.price - a.price);
-  else if (sortVal === 'price-asc') coins.sort((a,b) => a.price - b.price);
-  else if (sortVal === 'chg-desc') coins.sort((a,b) => b.change_pct - a.change_pct);
-  else if (sortVal === 'chg-asc') coins.sort((a,b) => a.change_pct - b.change_pct);
-  else if (sortVal === 'vol-desc') coins.sort((a,b) => (b.volume || 0) - (a.volume || 0));
-
   const grid = document.getElementById('crypto-grid');
-  if (!coins.length) {{
-    grid.innerHTML = '<div style="text-align:center;padding:40px;color:#888">No coins match filter</div>';
-    return;
-  }}
 
   const fmtPrice = v => {{
     if (v === null || v === undefined || isNaN(v)) return '—';
@@ -6097,83 +6082,79 @@ function renderCryptoGrid() {{
     const n = Number(v);
     const abs = Math.abs(n);
     if (abs >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
-    if (abs >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
-    if (abs >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
-    if (abs >= 1e3) return '$' + (n / 1e3).toFixed(2) + 'K';
+    if (abs >= 1e9)  return '$' + (n / 1e9).toFixed(2) + 'B';
+    if (abs >= 1e6)  return '$' + (n / 1e6).toFixed(2) + 'M';
+    if (abs >= 1e3)  return '$' + (n / 1e3).toFixed(2) + 'K';
     return '$' + n.toLocaleString(undefined, {{maximumFractionDigits: 2}});
   }};
-
-  const existing = grid.querySelector('.crypto-card');
-  if (!existing) {{
-    grid.innerHTML = coins.map((c, idx) => {{
-      const dir = c.change_pct > 0 ? 'up' : (c.change_pct < 0 ? 'down' : '');
-      const sign = c.change_pct >= 0 ? '+' : '';
-      const changeClass = c.change_pct > 0 ? 'up-t' : (c.change_pct < 0 ? 'down-t' : 'flat-t');
-      const arrow = c.change_pct > 0 ? '▲' : (c.change_pct < 0 ? '▼' : '—');
-      const sym = c.symbol.replace('/', '');
-      const initials = c.symbol.slice(0, 3);
-      const animDelay = (idx * 0.04).toFixed(2);
-      const openStr = c.open ? fmtPrice(c.open) : '—';
-      return `<div class="crypto-card ${{dir}}" id="ccard-${{sym}}" style="animation-delay:${{animDelay}}s">
-        <div class="crypto-top">
-          <div class="crypto-top-left">
-            <div class="crypto-coin-icon">${{initials}}</div>
-            <div>
-              <div class="crypto-card-sym">${{c.symbol}}</div>
-              <div class="crypto-card-name">${{c.name}}</div>
-            </div>
-          </div>
-          <span class="crypto-cat-badge">${{c.category || 'Crypto'}}</span>
-        </div>
-        <div class="crypto-price-row">
-          <div class="crypto-price" id="cp-${{sym}}">${{fmtPrice(c.price)}}</div>
-          <div class="crypto-change ${{changeClass}}" id="cc-${{sym}}">${{arrow}} ${{sign}}${{c.change_pct ? c.change_pct.toFixed(2) : '0.00'}}%</div>
-        </div>
-        <div class="crypto-sparkline-wrap" id="cspk-${{sym}}">
-          <div class="crypto-spark-loading">loading chart…</div>
-        </div>
-        <div class="crypto-stats">
-          <div class="crypto-stat">
-            <span class="crypto-stat-label">Market Cap</span>
-            <span class="crypto-stat-value" id="cmcap-${{sym}}">${{fmtLarge(c.market_cap)}}</span>
-          </div>
-          <div class="crypto-stat">
-            <span class="crypto-stat-label">24H Volume</span>
-            <span class="crypto-stat-value" id="cvol-${{sym}}">${{fmtLarge(c.volume)}}</span>
-          </div>
-          <div class="crypto-stat">
-            <span class="crypto-stat-label">Prev Close</span>
-            <span class="crypto-stat-value" id="copn-${{sym}}">${{openStr}}</span>
-          </div>
-          <div class="crypto-stat">
-            <span class="crypto-stat-label">Change</span>
-            <span class="crypto-stat-value" id="cchg-${{sym}}">${{sign}}${{fmtPrice(c.change)}}</span>
-          </div>
-        </div>
-        <div class="crypto-footer">
-          <span class="crypto-source" id="csrc-${{sym}}">${{c.source || 'CoinGecko'}}</span>
-          <span class="crypto-ts" id="cupd-${{sym}}">${{c.timestamp || ''}}</span>
-        </div>
-      </div>`;
-    }}).join('');
-    coins.forEach(c => {{
-      cryptoPrevPrices[c.symbol] = c.price;
-      // stagger sparkline fetches to avoid rate-limiting
-      const sym = c.symbol.replace('/', '');
-      const isUp = c.change_pct >= 0;
-      setTimeout(() => fetchSparkline(c.coingecko_id, sym, isUp), 80 * coins.indexOf(c));
-    }});
-    return;
-  }}
-
   function setText(id, val) {{ const el = document.getElementById(id); if (el && el.textContent !== val) el.textContent = val; }}
-  const fmtPrice2 = v => {{
-    if (v === null || v === undefined || isNaN(v)) return '—';
-    const n = Number(v);
-    return '$' + (Math.abs(n) >= 1 ? n.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}) : n.toPrecision(4));
-  }};
 
-  coins.forEach(c => {{
+  // ── STEP 1: inject any new coins that aren't yet in the DOM ─────────────────
+  // Always build cards for ALL coins regardless of current filter.
+  // Visibility is handled by show/hide — never by adding/removing DOM nodes.
+  cryptoAllCoins.forEach((c, idx) => {{
+    const sym = c.symbol.replace('/', '');
+    if (document.getElementById('ccard-' + sym)) return;  // already exists
+    const dir = c.change_pct > 0 ? 'up' : (c.change_pct < 0 ? 'down' : '');
+    const sign = c.change_pct >= 0 ? '+' : '';
+    const changeClass = c.change_pct > 0 ? 'up-t' : (c.change_pct < 0 ? 'down-t' : 'flat-t');
+    const arrow = c.change_pct > 0 ? '▲' : (c.change_pct < 0 ? '▼' : '—');
+    const initials = c.symbol.slice(0, 3);
+    const animDelay = (idx * 0.04).toFixed(2);
+    const openStr = c.open ? fmtPrice(c.open) : '—';
+    const div = document.createElement('div');
+    div.className = 'crypto-card' + (dir ? ' ' + dir : '');
+    div.id = 'ccard-' + sym;
+    div.style.animationDelay = animDelay + 's';
+    div.innerHTML = `
+      <div class="crypto-top">
+        <div class="crypto-top-left">
+          <div class="crypto-coin-icon">${{initials}}</div>
+          <div>
+            <div class="crypto-card-sym">${{c.symbol}}</div>
+            <div class="crypto-card-name">${{c.name}}</div>
+          </div>
+        </div>
+        <span class="crypto-cat-badge">${{c.category || 'Crypto'}}</span>
+      </div>
+      <div class="crypto-price-row">
+        <div class="crypto-price" id="cp-${{sym}}">${{fmtPrice(c.price)}}</div>
+        <div class="crypto-change ${{changeClass}}" id="cc-${{sym}}">${{arrow}} ${{sign}}${{c.change_pct ? c.change_pct.toFixed(2) : '0.00'}}%</div>
+      </div>
+      <div class="crypto-sparkline-wrap" id="cspk-${{sym}}">
+        <div class="crypto-spark-loading">loading chart…</div>
+      </div>
+      <div class="crypto-stats">
+        <div class="crypto-stat">
+          <span class="crypto-stat-label">Market Cap</span>
+          <span class="crypto-stat-value" id="cmcap-${{sym}}">${{fmtLarge(c.market_cap)}}</span>
+        </div>
+        <div class="crypto-stat">
+          <span class="crypto-stat-label">24H Volume</span>
+          <span class="crypto-stat-value" id="cvol-${{sym}}">${{fmtLarge(c.volume)}}</span>
+        </div>
+        <div class="crypto-stat">
+          <span class="crypto-stat-label">Prev Close</span>
+          <span class="crypto-stat-value" id="copn-${{sym}}">${{openStr}}</span>
+        </div>
+        <div class="crypto-stat">
+          <span class="crypto-stat-label">Change</span>
+          <span class="crypto-stat-value" id="cchg-${{sym}}">${{sign}}${{fmtPrice(c.change)}}</span>
+        </div>
+      </div>
+      <div class="crypto-footer">
+        <span class="crypto-source" id="csrc-${{sym}}">${{c.source || 'CoinGecko'}}</span>
+        <span class="crypto-ts" id="cupd-${{sym}}">${{c.timestamp || ''}}</span>
+      </div>`;
+    grid.appendChild(div);
+    cryptoPrevPrices[c.symbol] = c.price;
+    // stagger sparkline fetches to avoid rate-limiting
+    const isUp = c.change_pct >= 0;
+    setTimeout(() => fetchSparkline(c.coingecko_id, sym, isUp), 80 * idx);
+  }});
+
+  // ── STEP 2: update data in all existing cards ────────────────────────────────
+  cryptoAllCoins.forEach(c => {{
     const sym = c.symbol.replace('/', '');
     const card = document.getElementById('ccard-' + sym);
     if (!card) return;
@@ -6185,15 +6166,15 @@ function renderCryptoGrid() {{
     const wantClass = 'crypto-card' + (dir ? ' ' + dir : '');
     if (card.className !== wantClass) card.className = wantClass;
 
-    setText('cp-' + sym, fmtPrice2(c.price));
+    setText('cp-' + sym, fmtPrice(c.price));
     setText('cc-' + sym, arrow + ' ' + sign + (c.change_pct ? c.change_pct.toFixed(2) : '0.00') + '%');
     const chgEl = document.getElementById('cc-' + sym);
     if (chgEl && chgEl.className !== 'crypto-change ' + changeClass) chgEl.className = 'crypto-change ' + changeClass;
 
     setText('cmcap-' + sym, fmtLarge(c.market_cap));
     setText('cvol-' + sym, fmtLarge(c.volume));
-    setText('copn-' + sym, c.open ? fmtPrice2(c.open) : '—');
-    setText('cchg-' + sym, sign + fmtPrice2(c.change));
+    setText('copn-' + sym, c.open ? fmtPrice(c.open) : '—');
+    setText('cchg-' + sym, sign + fmtPrice(c.change));
     setText('cupd-' + sym, c.timestamp || '');
     setText('csrc-' + sym, c.source || 'CoinGecko');
 
@@ -6203,6 +6184,35 @@ function renderCryptoGrid() {{
       setTimeout(() => card.classList.remove(cls), 700);
     }}
     cryptoPrevPrices[c.symbol] = c.price;
+  }});
+
+  // ── STEP 3: apply filter + sort by show/hide + DOM reorder ──────────────────
+  // Build the filtered+sorted subset
+  let visible = [...cryptoAllCoins];
+  if (cryptoFilter !== 'ALL') visible = visible.filter(c => c.category === cryptoFilter);
+
+  const sortVal = document.getElementById('crypto-sort').value;
+  if (sortVal === 'price-desc') visible.sort((a,b) => b.price - a.price);
+  else if (sortVal === 'price-asc') visible.sort((a,b) => a.price - b.price);
+  else if (sortVal === 'chg-desc') visible.sort((a,b) => b.change_pct - a.change_pct);
+  else if (sortVal === 'chg-asc') visible.sort((a,b) => a.change_pct - b.change_pct);
+  else if (sortVal === 'vol-desc') visible.sort((a,b) => (b.volume || 0) - (a.volume || 0));
+
+  const visibleSyms = new Set(visible.map(c => c.symbol.replace('/', '')));
+
+  // Show/hide without touching innerHTML
+  cryptoAllCoins.forEach(c => {{
+    const sym = c.symbol.replace('/', '');
+    const card = document.getElementById('ccard-' + sym);
+    if (!card) return;
+    card.style.display = visibleSyms.has(sym) ? '' : 'none';
+  }});
+
+  // Re-order visible cards in the grid to match sorted order (no DOM removal)
+  visible.forEach(c => {{
+    const sym = c.symbol.replace('/', '');
+    const card = document.getElementById('ccard-' + sym);
+    if (card) grid.appendChild(card);   // moves to end; builds correct order
   }});
 }}
 
