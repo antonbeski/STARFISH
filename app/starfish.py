@@ -6215,7 +6215,14 @@ async function fetchAlpacaCrypto() {{
       document.getElementById('crypto-data-badge').textContent = 'Unavailable';
       return;
     }}
-    cryptoAllCoins = data.coins || [];
+    // Only replace in-memory data when the response is non-empty; a transient
+    // upstream failure can return an empty array — keep the last good snapshot
+    // so existing cards are never cleared mid-refresh.
+    const fresh = data.coins || [];
+    if (fresh.length > 0) {{
+      cryptoAllCoins = fresh;
+    }}
+    if (cryptoAllCoins.length === 0) return;
     renderCryptoGrid();
     document.getElementById('crypto-last-update').textContent = data.updated;
     document.getElementById('crypto-status-text').textContent = 'Live · ' + cryptoAllCoins.length + ' coins';
@@ -6260,7 +6267,12 @@ def api_alpaca_crypto():
     now = time.time()
     if "crypto" not in alpaca_cache or (now - alpaca_cache_time.get("crypto", 0)) > CRYPTO_CACHE_TTL:
         try:
-            alpaca_cache["crypto"] = alpaca_fetch_crypto_data()
+            fresh = alpaca_fetch_crypto_data()
+            # Only replace the cache when we actually got data back; a transient
+            # CoinGecko timeout/rate-limit returns an empty list — keep the last
+            # good snapshot so the UI never goes blank.
+            if fresh:
+                alpaca_cache["crypto"] = fresh
             alpaca_cache_time["crypto"] = now
         except Exception as e:
             if "crypto" not in alpaca_cache:
