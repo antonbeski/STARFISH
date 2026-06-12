@@ -4396,7 +4396,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
   </div>
 
   <div id="crypto-grid" class="alpaca-grid crypto-grid">
-    <div style="text-align:center;padding:40px;color:#888">Loading live crypto data…</div>
   </div>
 
   <div class="alpaca-status">
