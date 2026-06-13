@@ -59,7 +59,6 @@ ALPACA_WATCHLIST = [
     {"symbol": "JNJ",   "name": "Johnson & Johnson", "sector": "Healthcare"},
     {"symbol": "WMT",   "name": "Walmart Inc.",      "sector": "Consumer"},
     {"symbol": "SPY",   "name": "S&P 500 ETF",       "sector": "ETF"},
-    {"symbol": "SPCX",  "name": "S&P 500 Ex-Carbon ETF", "sector": "ETF"},
 ]
 
 # Alpaca realtime WebSocket data
@@ -3526,7 +3525,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .alpaca-vol{{font-size:.6rem;color:#888}}
     .alpaca-dtype{{font-family:'DM Mono',monospace;font-size:.55rem;padding:2px 7px;border-radius:3px;font-weight:600}}
     .alpaca-dtype.LIVE{{background:#e8f5e9;color:#2e7d32;border:1px solid #2e7d32}}
-    
+    .alpaca-dtype.TRADE{{background:#e3f2fd;color:#1565c0;border:1px solid #1565c0}}
     .alpaca-dtype.QUOTE{{background:#fff3e0;color:#e65100;border:1px solid #e65100}}
     .alpaca-dtype.BAR{{background:#f5f5f5;color:#616161;border:1px solid #616161}}
 
@@ -5302,7 +5301,7 @@ async function fetchAlpacaStocks() {{
     var typeCounts = {{}};
     alpacaAllStocks.forEach(function(s) {{ typeCounts[s.data_type] = (typeCounts[s.data_type] || 0) + 1; }});
     var dominantType = Object.keys(typeCounts).sort(function(a,b){{ return typeCounts[b]-typeCounts[a]; }})[0] || '—';
-    var badgeLabels = {{LIVE:'Live Feed', QUOTE:'Quote Data', BAR:'Bar Data (Delayed)', YFIN:'Delayed (yfinance)'}};
+    var badgeLabels = {{LIVE:'Live Feed', TRADE:'Trade Data', QUOTE:'Quote Data', BAR:'Bar Data (Delayed)', YFIN:'Delayed (yfinance)'}};
     document.getElementById('alpaca-data-badge').textContent = badgeLabels[dominantType] || dominantType;
   }} catch(e) {{
     console.error('Alpaca fetch error:', e);
