@@ -4256,7 +4256,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       <span class="market-pill-dot" id="market-pill-dot" style="background:#e65100"></span>
       <span id="market-pill-text">Checking…</span>
     </span>
-    <span class="alpaca-badge" id="alpaca-data-badge">Connecting…</span>
   </div>
 
   <div class="alpaca-filter">
@@ -5221,7 +5220,6 @@ function renderAlpacaGrid() {{
         </div>
         <div class="alpaca-footer">
           <div class="alpaca-vol" id="avol-${{s.symbol}}">VOL ${{s.volume ? s.volume.toLocaleString() : '—'}}</div>
-          <div class="alpaca-dtype ${{s.data_type}}" id="adt-${{s.symbol}}">${{s.data_type}}</div>
         </div>
       </div>`;
     }}).join('');
