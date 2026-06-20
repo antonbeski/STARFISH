@@ -136,6 +136,7 @@ A 30-coin watchlist spanning Layer 0/1/2 chains, DeFi, Oracles, and meme assets,
 </details>
 
 The grid filters by category (`ALL · LAYER 1 · LAYER 2 · LAYER 0 · DEFI · ORACLE · MEME`) and sorts by price, 24h change, or market cap.
+
 <img width="749" height="482" alt="Screenshot 2026-06-12 202949" src="https://github.com/user-attachments/assets/4a473a12-11e6-430e-81ff-81c6ff922b83" />
 
 ---
