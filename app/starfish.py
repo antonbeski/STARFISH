@@ -3694,15 +3694,13 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     input:focus,select:focus{{border-color:#000;background:#fff;box-shadow:0 0 0 3px rgba(0,0,0,.06)}}
     select{{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:34px}}
     select option{{background:#fff;color:#000}}
-    .btn{{position:relative;background:rgba(20,20,20,.82);color:#fff;border:1px solid rgba(255,255,255,.14);
-          border-radius:999px;padding:10px 26px;backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
+    .btn{{background:#fff;color:#222;border:1px solid #222;border-radius:8px;padding:10px 26px;
           font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;
-          letter-spacing:.09em;text-transform:uppercase;transition:opacity .18s,transform .13s,box-shadow .18s;height:42px;
-          box-shadow:0 1px 1px rgba(0,0,0,.3),0 8px 18px -6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2),inset 0 -8px 14px -10px rgba(255,255,255,.12)}}
-    .btn::after{{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-          background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%)}}
-    .btn:hover{{opacity:.86;box-shadow:0 1px 1px rgba(0,0,0,.3),0 10px 22px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.22)}}
-    .btn:active{{transform:scale(.96)}}
+          letter-spacing:.09em;text-transform:uppercase;transition:box-shadow .2s,transform .13s;height:42px;
+          outline:none;user-select:none;-webkit-user-select:none;touch-action:manipulation}}
+    .btn:focus-visible{{box-shadow:#222 0 0 0 2px,rgba(255,255,255,.8) 0 0 0 4px;transition:box-shadow .2s}}
+    .btn:active{{background:#f7f7f7;border-color:#000;transform:scale(.96)}}
+    .btn:disabled{{border-color:#ddd;color:#ddd;cursor:not-allowed}}
     .chips{{display:flex;flex-wrap:wrap;gap:7px;margin-top:22px;padding-top:20px;border-top:1px solid #e5e5e5}}
     .chip{{background:transparent;border:1px solid #000;border-radius:20px;padding:5px 15px;
            font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
@@ -3778,15 +3776,13 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                   padding:2px 7px;border-radius:4px;margin-left:auto;
                   background:#f0f0f0;border:1px solid #aaa;color:#555}}
     .ai-action-row{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px}}
-    .btn-ai{{position:relative;background:rgba(20,20,20,.82);border:1px solid rgba(255,255,255,.14);border-radius:999px;color:#fff;
+    .btn-ai{{background:#fff;color:#222;border:1px solid #222;border-radius:8px;
              padding:10px 28px;font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;
-             letter-spacing:.09em;text-transform:uppercase;transition:all .18s;
-             backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
-             box-shadow:0 1px 1px rgba(0,0,0,.3),0 8px 18px -6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2),inset 0 -8px 14px -10px rgba(255,255,255,.12)}}
-    .btn-ai::after{{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-             background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%)}}
-    .btn-ai:hover{{opacity:.86}}
-    .btn-ai:active{{transform:scale(.96)}}.btn-ai:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
+             letter-spacing:.09em;text-transform:uppercase;transition:box-shadow .2s,transform .13s;
+             outline:none;user-select:none;-webkit-user-select:none;touch-action:manipulation}}
+    .btn-ai:focus-visible{{box-shadow:#222 0 0 0 2px,rgba(255,255,255,.8) 0 0 0 4px;transition:box-shadow .2s}}
+    .btn-ai:active{{background:#f7f7f7;border-color:#000;transform:scale(.96)}}
+    .btn-ai:disabled{{border-color:#ddd;color:#ddd;cursor:not-allowed}}
     .ai-sel-label{{font-size:.72rem;color:#555}}
     .ai-timer{{font-size:.67rem;font-family:'DM Mono',monospace;color:#888;margin-left:auto}}
     .ai-result{{display:none;border:2px solid #000;border-radius:var(--r);overflow:hidden;margin-top:4px;background:#fff}}
@@ -3856,15 +3852,13 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");
                     background-repeat:no-repeat;background-position:right 12px center}}
     .sector-select option{{background:#fff;color:#000}}
-    .btn-sector{{position:relative;background:rgba(20,20,20,.82);color:#fff;border:1px solid rgba(255,255,255,.14);
-                 border-radius:999px;padding:0 22px;font-size:.75rem;font-weight:700;font-family:inherit;cursor:pointer;
-                 letter-spacing:.1em;text-transform:uppercase;transition:opacity .18s,transform .13s;white-space:nowrap;
-                 backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
-                 box-shadow:0 1px 1px rgba(0,0,0,.3),0 8px 18px -6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2),inset 0 -8px 14px -10px rgba(255,255,255,.12)}}
-    .btn-sector::after{{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-                 background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%)}}
-    .btn-sector:hover{{opacity:.86}}.btn-sector:active{{transform:scale(.96)}}
-    .btn-sector:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
+    .btn-sector{{background:#fff;color:#222;border:1px solid #222;border-radius:8px;padding:0 22px;
+                 font-size:.75rem;font-weight:700;font-family:inherit;cursor:pointer;
+                 letter-spacing:.1em;text-transform:uppercase;transition:box-shadow .2s,transform .13s;white-space:nowrap;
+                 outline:none;user-select:none;-webkit-user-select:none;touch-action:manipulation}}
+    .btn-sector:focus-visible{{box-shadow:#222 0 0 0 2px,rgba(255,255,255,.8) 0 0 0 4px;transition:box-shadow .2s}}
+    .btn-sector:active{{background:#f7f7f7;border-color:#000;transform:scale(.96)}}
+    .btn-sector:disabled{{border-color:#ddd;color:#ddd;cursor:not-allowed}}
     .sector-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:8px;margin-bottom:4px}}
     .s-tile{{background:#fff;border:2px solid #000;border-radius:var(--r);
              padding:14px 12px;cursor:pointer;text-align:left;color:inherit;
