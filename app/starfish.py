@@ -3145,6 +3145,45 @@ def call_openrouter(model_id, prompt):
     return result
  
  
+def call_openrouter_plaintext(model_id, prompt):
+    """Same OpenRouter call path as call_openrouter, but for the AI follow-up
+    chat: no JSON schema, no parsing — just clean plain text output, with any
+    markdown the model adds anyway stripped out so the chat / .txt export
+    stays plain text only."""
+    if not OPEN_ROUTER_API_KEY:
+        raise ValueError("OPEN_ROUTER_API_KEY environment variable is not set.")
+
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://starfish.finance",
+            "X-Title": "Starfish Stock Analyzer",
+        },
+        json={
+            "model": model_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "max_tokens": 1200,
+            "top_p": 1,
+            "frequency_penalty": 0,
+        },
+        timeout=60,
+    )
+    r.raise_for_status()
+    raw = r.json()["choices"][0]["message"]["content"].strip()
+
+    # Strip markdown the model might add anyway — output must be plain text only.
+    raw = re.sub(r"```[a-zA-Z]*\n?", "", raw)
+    raw = re.sub(r"```", "", raw)
+    raw = re.sub(r"^\s{0,3}#{1,6}\s*", "", raw, flags=re.MULTILINE)
+    raw = re.sub(r"\*\*(.*?)\*\*", r"\1", raw)
+    raw = re.sub(r"(?<!\*)\*(?!\*)(.*?)\*(?!\*)", r"\1", raw)
+    raw = re.sub(r"^\s*[-*]\s+", "- ", raw, flags=re.MULTILINE)
+    return raw.strip()
+ 
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHART BUILDER — shadcn Stock Market Tracker visual style
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3655,10 +3694,15 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     input:focus,select:focus{{border-color:#000;background:#fff;box-shadow:0 0 0 3px rgba(0,0,0,.06)}}
     select{{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:34px}}
     select option{{background:#fff;color:#000}}
-    .btn{{background:#000;color:#fff;border:none;border-radius:var(--rs);padding:10px 26px;
+    .btn{{position:relative;background:rgba(20,20,20,.82);color:#fff;border:1px solid rgba(255,255,255,.14);
+          border-radius:999px;padding:10px 26px;backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
           font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;
-          letter-spacing:.09em;text-transform:uppercase;transition:opacity .18s,transform .13s;height:42px}}
-    .btn:hover{{opacity:.8}}.btn:active{{transform:scale(.96)}}
+          letter-spacing:.09em;text-transform:uppercase;transition:opacity .18s,transform .13s,box-shadow .18s;height:42px;
+          box-shadow:0 1px 1px rgba(0,0,0,.3),0 8px 18px -6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2),inset 0 -8px 14px -10px rgba(255,255,255,.12)}}
+    .btn::after{{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+          background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%)}}
+    .btn:hover{{opacity:.86;box-shadow:0 1px 1px rgba(0,0,0,.3),0 10px 22px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.22)}}
+    .btn:active{{transform:scale(.96)}}
     .chips{{display:flex;flex-wrap:wrap;gap:7px;margin-top:22px;padding-top:20px;border-top:1px solid #e5e5e5}}
     .chip{{background:transparent;border:1px solid #000;border-radius:20px;padding:5px 15px;
            font-size:.72rem;font-family:'DM Mono',monospace;cursor:pointer;color:#555;
@@ -3734,10 +3778,14 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                   padding:2px 7px;border-radius:4px;margin-left:auto;
                   background:#f0f0f0;border:1px solid #aaa;color:#555}}
     .ai-action-row{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px}}
-    .btn-ai{{background:#000;border:none;border-radius:var(--rs);color:#fff;
+    .btn-ai{{position:relative;background:rgba(20,20,20,.82);border:1px solid rgba(255,255,255,.14);border-radius:999px;color:#fff;
              padding:10px 28px;font-size:.8rem;font-weight:700;font-family:inherit;cursor:pointer;
-             letter-spacing:.09em;text-transform:uppercase;transition:all .18s}}
-    .btn-ai:hover{{opacity:.8}}
+             letter-spacing:.09em;text-transform:uppercase;transition:all .18s;
+             backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
+             box-shadow:0 1px 1px rgba(0,0,0,.3),0 8px 18px -6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2),inset 0 -8px 14px -10px rgba(255,255,255,.12)}}
+    .btn-ai::after{{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+             background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%)}}
+    .btn-ai:hover{{opacity:.86}}
     .btn-ai:active{{transform:scale(.96)}}.btn-ai:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
     .ai-sel-label{{font-size:.72rem;color:#555}}
     .ai-timer{{font-size:.67rem;font-family:'DM Mono',monospace;color:#888;margin-left:auto}}
@@ -3776,7 +3824,23 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .ai-data-tags{{display:flex;flex-wrap:wrap;gap:5px;padding:14px 22px;border-bottom:1px solid #e5e5e5;background:#f8f7f4}}
     .ai-data-tag{{font-size:.55rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
                   padding:2px 8px;border-radius:4px;border:1px solid #000;color:#333;background:#fff}}
- 
+
+    /* ── AI FOLLOW-UP CHAT (plain-text / .txt style display) ── */
+    .ai-followup{{border-top:1px solid #e5e5e5;margin-top:18px;padding-top:18px}}
+    .ai-followup-hdr{{font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#888;margin-bottom:10px}}
+    .ai-chat-log{{display:flex;flex-direction:column;gap:10px;margin-bottom:12px;max-height:380px;overflow-y:auto}}
+    .ai-chat-msg{{border:1px solid #000;border-radius:8px;padding:12px 14px;background:#fff;
+                  font-family:'DM Mono',monospace;font-size:.78rem;line-height:1.65;color:#222;
+                  white-space:pre-wrap;word-break:break-word}}
+    .ai-chat-msg.ai-chat-user{{background:#f0f0f0}}
+    .ai-chat-lbl{{display:flex;align-items:center;justify-content:space-between;font-size:.55rem;
+                  font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#888;margin-bottom:6px}}
+    .ai-chat-dl{{font-family:inherit;text-transform:none;letter-spacing:0;color:#555;cursor:pointer;
+                 border:1px solid #000;border-radius:20px;padding:1px 9px;font-size:.6rem;background:transparent}}
+    .ai-chat-dl:hover{{background:#000;color:#fff}}
+    .ai-followup-row{{display:flex;gap:10px}}
+    #ai-followup-input{{flex:1}}
+
     /* ── SECTOR SECTION ── */
     .sector-panel{{padding:26px 30px;margin-bottom:18px}}
     .sector-selector-row{{display:flex;gap:10px;align-items:stretch;margin-bottom:20px}}
@@ -3792,10 +3856,14 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
                     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23000' d='M5 6L0 0z'/%3E%3C/svg%3E");
                     background-repeat:no-repeat;background-position:right 12px center}}
     .sector-select option{{background:#fff;color:#000}}
-    .btn-sector{{background:#000;color:#fff;border:none;border-radius:var(--rs);padding:0 22px;
-                 font-size:.75rem;font-weight:700;font-family:inherit;cursor:pointer;
-                 letter-spacing:.1em;text-transform:uppercase;transition:opacity .18s,transform .13s;white-space:nowrap}}
-    .btn-sector:hover{{opacity:.8}}.btn-sector:active{{transform:scale(.96)}}
+    .btn-sector{{position:relative;background:rgba(20,20,20,.82);color:#fff;border:1px solid rgba(255,255,255,.14);
+                 border-radius:999px;padding:0 22px;font-size:.75rem;font-weight:700;font-family:inherit;cursor:pointer;
+                 letter-spacing:.1em;text-transform:uppercase;transition:opacity .18s,transform .13s;white-space:nowrap;
+                 backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
+                 box-shadow:0 1px 1px rgba(0,0,0,.3),0 8px 18px -6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2),inset 0 -8px 14px -10px rgba(255,255,255,.12)}}
+    .btn-sector::after{{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+                 background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%)}}
+    .btn-sector:hover{{opacity:.86}}.btn-sector:active{{transform:scale(.96)}}
     .btn-sector:disabled{{opacity:.35;cursor:not-allowed;transform:none}}
     .sector-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:8px;margin-bottom:4px}}
     .s-tile{{background:#fff;border:2px solid #000;border-radius:var(--r);
@@ -4723,6 +4791,15 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <span class="ai-timer" id="ai-timer"></span>
   </div>
   <div class="ai-result" id="ai-result"></div>
+  <div class="ai-followup" id="ai-followup" style="display:none">
+    <div class="ai-followup-hdr">Ask a follow-up</div>
+    <div class="ai-chat-log" id="ai-chat-log"></div>
+    <div class="ai-followup-row">
+      <input id="ai-followup-input" type="text" placeholder="Ask about this analysis…"
+        onkeydown="if(event.key==='Enter')askFollowup()" />
+      <button class="btn-ai" id="ai-followup-btn" onclick="askFollowup()">Ask</button>
+    </div>
+  </div>
 </div>
  
 <!-- ══════════════════════════════════════════
@@ -5399,6 +5476,7 @@ function toggleInd(el){{
  
 // ── AI model selection ────────────────────────────────────────────────────────
 var selModelId=null,selModelKey=null,timerIv=null;
+var aiChatHistory=[],aiContext=null;
  
 function selectModel(card){{
   if(card.classList.contains('exhausted'))return;
@@ -5476,6 +5554,61 @@ function renderAIResult(data){{
       '<div class="ai-pt"><div class="ai-pt-lbl">Target 2</div><div class="ai-pt-val pt-t2">'+fn(pt.target_2)+'</div></div>'+
     '</div>'+
     '<div class="ai-secs">'+secHtml+'</div>';
+  // Reset & reveal the follow-up chat for this fresh analysis
+  aiChatHistory=[];
+  aiContext={{ticker:TICKER,period:PERIOD,model_id:data.model_id,analysis:r}};
+  document.getElementById('ai-chat-log').innerHTML='';
+  document.getElementById('ai-followup').style.display='block';
+}}
+
+function renderChatMsg(role,text,sources){{
+  var log=document.getElementById('ai-chat-log');
+  var isUser=role==='user';
+  var div=document.createElement('div');
+  div.className='ai-chat-msg'+(isUser?' ai-chat-user':'');
+  var dlBtn=isUser?'':'<span class="ai-chat-dl" onclick="downloadTxt(this)">&#11015; .txt</span>';
+  var srcHtml=(!isUser&&sources&&sources.length)?
+    '<div style="font-size:.55rem;letter-spacing:.05em;color:#888;margin-bottom:8px">'+
+    sources.map(s=>esc(s)).join(' &middot; ')+'</div>':'';
+  div.innerHTML='<div class="ai-chat-lbl"><span>'+(isUser?'You':'AI')+'</span>'+dlBtn+'</div>'+srcHtml+esc(text);
+  if(!isUser)div.dataset.txt=text;
+  log.appendChild(div);
+  log.scrollTop=log.scrollHeight;
+}}
+
+function downloadTxt(el){{
+  var msg=el.closest('.ai-chat-msg');
+  var txt=(msg&&msg.dataset.txt)||'';
+  var blob=new Blob([txt],{{type:'text/plain'}});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='ai-answer-'+TICKER+'-'+Date.now()+'.txt';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}}
+
+function askFollowup(){{
+  var inp=document.getElementById('ai-followup-input');
+  var q=(inp.value||'').trim();
+  if(!q||!aiContext)return;
+  var btn=document.getElementById('ai-followup-btn');
+  renderChatMsg('user',q);
+  aiChatHistory.push({{role:'user',content:q}});
+  inp.value='';
+  btn.disabled=true; btn.textContent='Thinking\u2026';
+  fetch('/api/ai-followup',{{
+    method:'POST',headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{ticker:aiContext.ticker,period:aiContext.period,model_id:aiContext.model_id,
+      question:q,history:aiChatHistory,context:aiContext.analysis}})
+  }}).then(r=>r.json()).then(data=>{{
+    btn.disabled=false; btn.textContent='Ask';
+    if(data.error){{renderChatMsg('ai','Error: '+data.error);return;}}
+    renderChatMsg('ai',data.answer,data.data_sources);
+    aiChatHistory.push({{role:'assistant',content:data.answer}});
+  }}).catch(err=>{{
+    btn.disabled=false; btn.textContent='Ask';
+    renderChatMsg('ai','Network error: '+String(err));
+  }});
 }}
  
 // ── Prediction Markets ────────────────────────────────────────────────────────
@@ -6455,6 +6588,92 @@ def api_ai_analysis():
  
  
 
+@app.route("/api/ai-followup", methods=["POST"])
+def api_ai_followup():
+    """Follow-up chat on top of a completed AI analysis. Output is plain text
+    only (no JSON/markdown) so it can be displayed cleanly and saved as a
+    .txt file from the chat UI."""
+    body     = request.get_json(force=True) or {}
+    ticker   = (body.get("ticker", "AAPL") or "AAPL").strip().upper()
+    period   = body.get("period", "6mo")
+    model_id = (body.get("model_id") or "").strip()
+    question = (body.get("question") or "").strip()
+    history  = body.get("history") or []
+    context  = body.get("context") or {}
+
+    if not model_id:
+        return jsonify({"error": "model_id required"}), 400
+    if not question:
+        return jsonify({"error": "question required"}), 400
+    model = next((m for m in AI_MODELS if m["id"] == model_id), None)
+    if not model:
+        return jsonify({"error": f"Unknown model: {model_id}"}), 400
+
+    rl = rl_check(model["key"])
+    if not rl["available"]:
+        reset = rl_next_rpm_reset(model["key"])
+        return jsonify({"error": f"Rate limit hit ({model['label']}): RPM {rl['rpm_used']}/{rl['rpm_max']}, RPD {rl['rpd_used']}/{rl['rpd_max']}. Resets in {reset}s."}), 429
+
+    # ── Pull a FRESH real price snapshot from the live pipeline — the model
+    # must never guess/estimate a current price; if it's unavailable we say so. ──
+    try:
+        live_price_data = get_alpaca_live_price(ticker)
+    except Exception:
+        live_price_data = None
+
+    data_sources = ["Prior AI Analysis (this session, built from live data)"]
+    if live_price_data:
+        data_sources.append(f"Live Price ({live_price_data.get('source','?')} · {live_price_data.get('data_type','?')})")
+        live_block = (
+            f"Live real-time price snapshot for {ticker}, fetched just now from "
+            f"{live_price_data.get('source','the live feed')} (real data, not cached/estimated):\n"
+            f"{json.dumps(live_price_data)}\n\n"
+        )
+    else:
+        live_block = (
+            f"No live real-time price snapshot could be fetched for {ticker} right now. "
+            f"Do not invent, estimate, or guess a current price — state plainly that "
+            f"live price data is unavailable if the question needs it.\n\n"
+        )
+
+    convo = "\n".join(
+        f"{'User' if h.get('role') == 'user' else 'Assistant'}: {h.get('content','')}"
+        for h in history[-10:] if h.get("content")
+    )
+
+    prompt = (
+        f"You are a trading analyst continuing a follow-up chat about {ticker}. "
+        f"You are given REAL data only, pulled directly from live sources — never "
+        f"invent, estimate, or fabricate any figure that isn't in it. If the user asks "
+        f"about something not covered by the data below, say plainly that you don't "
+        f"have that data rather than making something up.\n\n"
+        f"1) Prior structured analysis (real, built earlier from live indicators, "
+        f"fundamentals, and macro data — for grounding only, do not repeat it back verbatim):\n"
+        f"{json.dumps(context)[:6000]}\n\n"
+        f"2) {live_block}"
+        f"Conversation so far:\n{convo}\n\n"
+        f"User's new question: {question}\n\n"
+        f"Answer the question directly and concisely, grounded only in the real data above. "
+        f"Respond in PLAIN TEXT ONLY — no Markdown, no headers, no bullet symbols or "
+        f"asterisks, no JSON, no code fences. Plain sentences only, as if writing the "
+        f"body of a .txt file."
+    )
+
+    try:
+        answer = call_openrouter_plaintext(model_id, prompt)
+        rl_record(model["key"])
+    except requests.exceptions.HTTPError as e:
+        code = e.response.status_code if e.response else 0
+        if code == 429: return jsonify({"error": "OpenRouter rate limit. Wait a moment."}), 429
+        return jsonify({"error": f"OpenRouter HTTP {code}: {e}"}), 502
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"AI error: {e}"}), 500
+
+    return jsonify({"answer": answer, "data_sources": data_sources})
+ 
+ 
 @app.route("/api/gbm", methods=["POST"])
 def api_gbm():
     body       = request.get_json(force=True) or {}
