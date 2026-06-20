@@ -136,6 +136,7 @@ A 30-coin watchlist spanning Layer 0/1/2 chains, DeFi, Oracles, and meme assets,
 </details>
 
 The grid filters by category (`ALL · LAYER 1 · LAYER 2 · LAYER 0 · DEFI · ORACLE · MEME`) and sorts by price, 24h change, or market cap.
+<img width="749" height="482" alt="Screenshot 2026-06-12 202949" src="https://github.com/user-attachments/assets/4a473a12-11e6-430e-81ff-81c6ff922b83" />
 
 ---
 
@@ -166,7 +167,8 @@ Eight Groq-hosted models, selectable per analysis, each fed the same structured 
 
 Every analysis can be followed up with **plain-text chat** (`/api/ai-followup`) that stays grounded in a *fresh* live-price snapshot and the prior structured analysis — the model is explicitly instructed never to estimate a price it can't verify. Each model gets its own sliding-window rate limiter (30 RPM / 1,000 RPD).
 
-<img width="1145" height="594" alt="AI Trading Analysis" src="https://github.com/user-attachments/assets/6cd35ac7-d4d3-4343-92f1-6ced164af853" />
+<img width="1201" height="2254" alt="starfish ai" src="https://github.com/user-attachments/assets/e480747b-0081-450e-98a5-6e5129343904" />
+
 
 ---
 
@@ -179,6 +181,9 @@ S(t+dt) = S(t) · exp[(μ − ½σ²)·dt + σ·√dt·Z]      Z ~ N(0, 1)
 ```
 
 The response returns the full percentile band (`p5 · p25 · p50 · p75 · p95`) and a sample of up to 80 simulated paths for fan-chart rendering.
+<img width="1176" height="549" alt="Screenshot 2026-05-13 101044" src="https://github.com/user-attachments/assets/3d37e3c0-c698-4267-bacb-d350cf66116e" />
+<img width="1161" height="326" alt="Screenshot 2026-05-13 101111" src="https://github.com/user-attachments/assets/cc6e8e55-19dc-49cb-97c8-e16f207eb47e" />
+
 
 ---
 
@@ -190,6 +195,7 @@ Searches real-money and play-money prediction markets concurrently and ranks res
 - **PredScope** (Polymarket-based aggregator) — best matching outcome per market
 
 Useful as a sanity-check against the AI desk's own read on an event or ticker-adjacent question.
+<img width="1207" height="550" alt="Screenshot 2026-05-13 102227" src="https://github.com/user-attachments/assets/1f69fda1-9449-4433-802d-e15c802189d8" />
 
 ---
 
