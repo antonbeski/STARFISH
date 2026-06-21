@@ -2445,6 +2445,15 @@ def calc_support_resistance(c, window=20):
 # ══════════════════════════════════════════════════════════════════════════════
 # ENHANCED AI ANALYSIS ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
+# Cache of the full structured data payload (technicals, fundamentals, macro,
+# shipping, OHLCV — everything fed to the model) keyed by "ticker|period".
+# Populated once per /api/ai-analysis call and reused by /api/ai-followup so
+# follow-up questions can be grounded in the complete dataset without paying
+# to re-fetch macro/fundamentals/shipping or re-run indicators every message.
+_ANALYSIS_PAYLOAD_CACHE = {}
+_ANALYSIS_PAYLOAD_CACHE_TTL = 1800  # 30 min — long enough for a chat session
+ 
+ 
 def _sf(v, d=4):
     try: x = float(v); return None if np.isnan(x) else round(x, d)
     except: return None
@@ -3827,9 +3836,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     .ai-chat-msg.ai-chat-user{{background:#f0f0f0}}
     .ai-chat-lbl{{display:flex;align-items:center;justify-content:space-between;font-size:.55rem;
                   font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#888;margin-bottom:6px}}
-    .ai-chat-dl{{font-family:inherit;text-transform:none;letter-spacing:0;color:#555;cursor:pointer;
-                 border:1px solid #000;border-radius:20px;padding:1px 9px;font-size:.6rem;background:transparent}}
-    .ai-chat-dl:hover{{background:#000;color:#fff}}
     .ai-followup-row{{display:flex;gap:10px}}
     #ai-followup-input{{flex:1}}
 
@@ -4785,7 +4791,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     <div class="ai-followup-hdr">Ask a follow-up</div>
     <div class="ai-chat-log" id="ai-chat-log"></div>
     <div class="ai-followup-row">
-      <input id="ai-followup-input" type="text" placeholder="Ask about this analysis…"
+      <input id="ai-followup-input" type="text" placeholder="Ask about the data — technicals, fundamentals, macro, anything…"
         onkeydown="if(event.key==='Enter')askFollowup()" />
       <button class="btn-ai" id="ai-followup-btn" onclick="askFollowup()">Ask</button>
     </div>
@@ -5572,25 +5578,12 @@ function renderChatMsg(role,text,sources){{
   var isUser=role==='user';
   var div=document.createElement('div');
   div.className='ai-chat-msg'+(isUser?' ai-chat-user':'');
-  var dlBtn=isUser?'':'<span class="ai-chat-dl" onclick="downloadTxt(this)">&#11015; .txt</span>';
   var srcHtml=(!isUser&&sources&&sources.length)?
     '<div style="font-size:.55rem;letter-spacing:.05em;color:#888;margin-bottom:8px">'+
     sources.map(s=>esc(s)).join(' &middot; ')+'</div>':'';
-  div.innerHTML='<div class="ai-chat-lbl"><span>'+(isUser?'You':'AI')+'</span>'+dlBtn+'</div>'+srcHtml+esc(text);
-  if(!isUser)div.dataset.txt=text;
+  div.innerHTML='<div class="ai-chat-lbl"><span>'+(isUser?'You':'AI')+'</span></div>'+srcHtml+esc(text);
   log.appendChild(div);
   log.scrollTop=log.scrollHeight;
-}}
-
-function downloadTxt(el){{
-  var msg=el.closest('.ai-chat-msg');
-  var txt=(msg&&msg.dataset.txt)||'';
-  var blob=new Blob([txt],{{type:'text/plain'}});
-  var a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='ai-answer-'+TICKER+'-'+Date.now()+'.txt';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
 }}
 
 function askFollowup(){{
@@ -6559,6 +6552,7 @@ def api_ai_analysis():
                                           live_price_data=live_price_data,
                                           shipping_ctx=shipping_ctx)
         prompt   = build_prompt(payload)
+        _ANALYSIS_PAYLOAD_CACHE[f"{ticker}|{period}"] = {"payload": payload, "ts": time.time()}
     except Exception as e:
         return jsonify({"error": f"Indicator error: {e}"}), 500
  
@@ -6584,11 +6578,24 @@ def api_ai_analysis():
  
  
 
+def _compact_context(ctx):
+    """Pull just the few short fields needed for continuity out of a prior
+    analysis object — avoids dumping the full multi-paragraph JSON (expensive
+    and mostly irrelevant once the full dataset is available)."""
+    if not isinstance(ctx, dict):
+        return "none available"
+    keys = ["verdict", "confidence", "time_horizon", "summary", "confluence_summary"]
+    parts = [f"{k}: {ctx[k]}" for k in keys if ctx.get(k)]
+    return " | ".join(parts) if parts else "none available"
+
+
 @app.route("/api/ai-followup", methods=["POST"])
 def api_ai_followup():
-    """Follow-up chat on top of a completed AI analysis. Output is plain text
-    only (no JSON/markdown) so it can be displayed cleanly and saved as a
-    .txt file from the chat UI."""
+    """Follow-up chat on top of a completed AI analysis. Grounded in the FULL
+    data payload (technicals, fundamentals, macro, shipping, OHLCV — the same
+    data the original analysis was built from) so the user can ask about any
+    of it, not just the AI's own narrative. The payload is reused from cache
+    (no re-fetch / re-compute), and output is plain text only (no JSON/markdown)."""
     body     = request.get_json(force=True) or {}
     ticker   = (body.get("ticker", "AAPL") or "AAPL").strip().upper()
     period   = body.get("period", "6mo")
@@ -6610,6 +6617,18 @@ def api_ai_followup():
         reset = rl_next_rpm_reset(model["key"])
         return jsonify({"error": f"Rate limit hit ({model['label']}): RPM {rl['rpm_used']}/{rl['rpm_max']}, RPD {rl['rpd_used']}/{rl['rpd_max']}. Resets in {reset}s."}), 429
 
+    # ── Reuse the full data payload from the original analysis (cached —
+    # no re-fetch of macro/fundamentals/shipping, no re-run of indicators) ──
+    cached = _ANALYSIS_PAYLOAD_CACHE.get(f"{ticker}|{period}")
+    has_full_data = bool(cached and time.time() - cached["ts"] < _ANALYSIS_PAYLOAD_CACHE_TTL)
+    if has_full_data:
+        full_prompt = build_prompt(cached["payload"])
+        data_block  = full_prompt.split("[INPUT DATA]", 1)[1].split("[INSTRUCTIONS]", 1)[0].strip()
+        data_sources = ["Full Analysis Dataset (technicals, fundamentals, macro, shipping, OHLCV)"]
+    else:
+        data_block = None
+        data_sources = ["Prior AI Analysis Summary (full dataset expired — run Analyse again for full data access)"]
+
     # ── Pull a FRESH real price snapshot from the live pipeline — the model
     # must never guess/estimate a current price; if it's unavailable we say so. ──
     try:
@@ -6617,13 +6636,12 @@ def api_ai_followup():
     except Exception:
         live_price_data = None
 
-    data_sources = ["Prior AI Analysis (this session, built from live data)"]
     if live_price_data:
         data_sources.append(f"Live Price ({live_price_data.get('source','?')} · {live_price_data.get('data_type','?')})")
         live_block = (
-            f"Live real-time price snapshot for {ticker}, fetched just now from "
-            f"{live_price_data.get('source','the live feed')} (real data, not cached/estimated):\n"
-            f"{json.dumps(live_price_data)}\n\n"
+            f"Freshest live price snapshot for {ticker}, fetched just now from "
+            f"{live_price_data.get('source','the live feed')} — this supersedes any price "
+            f"in the dataset above:\n{json.dumps(live_price_data)}\n\n"
         )
     else:
         live_block = (
@@ -6637,16 +6655,29 @@ def api_ai_followup():
         for h in history[-10:] if h.get("content")
     )
 
+    if data_block:
+        dataset_block = (
+            "FULL DATASET for this ticker — the same real data the original analysis "
+            "was built from (price/MA/Bollinger/RSI/MACD/volume, advanced technicals, "
+            "fundamentals, macro, shipping, full OHLCV). Answer any question grounded "
+            "in any part of it, not just the prior verdict:\n" + data_block + "\n\n"
+        )
+    else:
+        dataset_block = (
+            "Prior AI verdict (narrative summary only — the full underlying dataset for "
+            "this session expired; answer only what this summary supports, and say so "
+            "plainly if the question needs more detail than this):\n"
+            + _compact_context(context) + "\n\n"
+        )
+
     prompt = (
-        f"You are a trading analyst continuing a follow-up chat about {ticker}. "
+        f"You are a trading analyst answering follow-up questions about {ticker}. "
         f"You are given REAL data only, pulled directly from live sources — never "
         f"invent, estimate, or fabricate any figure that isn't in it. If the user asks "
-        f"about something not covered by the data below, say plainly that you don't "
-        f"have that data rather than making something up.\n\n"
-        f"1) Prior structured analysis (real, built earlier from live indicators, "
-        f"fundamentals, and macro data — for grounding only, do not repeat it back verbatim):\n"
-        f"{json.dumps(context)[:6000]}\n\n"
-        f"2) {live_block}"
+        f"about something not covered below, say plainly that you don't have that data "
+        f"rather than making something up.\n\n"
+        f"{dataset_block}"
+        f"{live_block}"
         f"Conversation so far:\n{convo}\n\n"
         f"User's new question: {question}\n\n"
         f"Answer the question directly and concisely, grounded only in the real data above. "
