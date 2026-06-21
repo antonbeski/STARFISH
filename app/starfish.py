@@ -1183,11 +1183,8 @@ AI_MODELS = [
     {"id": "llama-3.3-70b-versatile",              "key": "llama70b",   "label": "Llama 3.3 70B",   "desc": "Fast & balanced · 131K ctx",           "color": "#000"},
     {"id": "llama-3.1-8b-instant",                 "key": "llama8b",    "label": "Llama 3.1 8B",    "desc": "Fastest · 560 t/s · 131K ctx",         "color": "#000"},
     {"id": "meta-llama/llama-4-scout-17b-16e-instruct", "key": "llama4scout","label": "Llama 4 Scout",    "desc": "750 t/s · vision · 131K ctx",          "color": "#000"},
-    {"id": "qwen/qwen3-32b",                        "key": "qwen32b",    "label": "Qwen3 32B",       "desc": "Reasoning · 400 t/s · 131K ctx",       "color": "#000"},
     {"id": "openai/gpt-oss-20b",                    "key": "gptoss20b",  "label": "GPT-OSS 20B",     "desc": "Fastest OSS · 1000 t/s · 131K ctx",    "color": "#000"},
     {"id": "openai/gpt-oss-120b",                   "key": "gptoss120b", "label": "GPT-OSS 120B",    "desc": "Flagship OSS · 500 t/s · 131K ctx",    "color": "#000"},
-    {"id": "groq/compound",                         "key": "compound",   "label": "Groq Compound",   "desc": "Agentic · web search · code exec",     "color": "#000"},
-    {"id": "groq/compound-mini",                    "key": "compoundmini","label": "Compound Mini",  "desc": "Agentic · fast · tool-enabled",        "color": "#000"},
 ]
 RL_RPM = 30
 RL_RPD = 1000
@@ -1301,86 +1298,6 @@ def fetch_all_macro():
             try: f.result()
             except: pass
     return results
- 
- 
-# ══════════════════════════════════════════════════════════════════════════════
-# GOOGLE TRENDS (pytrends — unofficial, free)
-# ══════════════════════════════════════════════════════════════════════════════
-_TRENDS_CACHE = {}
-_TRENDS_CACHE_TTL = 1800
- 
- 
-def fetch_google_trends(keywords, timeframe="today 3-m", max_retries=3):
-    """Fetch search interest from Google Trends (via pytrends) for the given
-    keywords. Google Trends aggressively rate-limits automated requests
-    (HTTP 429), so this retries with exponential backoff + jitter, optionally
-    rotates through proxies from the GOOGLE_TRENDS_PROXIES env var
-    (comma-separated), and falls back to the last good cached result instead
-    of going empty on a transient failure."""
-    keywords = list(dict.fromkeys(k for k in keywords if k))[:5]  # hard limit: 5 keywords/payload
-    if not keywords:
-        return {}
-
-    cache_key = f"trends_{'_'.join(keywords)}_{timeframe}"
-    now = time.time()
-    cached = _TRENDS_CACHE.get(cache_key)
-    if cached and now - cached["ts"] < _TRENDS_CACHE_TTL:
-        return cached["data"]
-
-    proxies = [p.strip() for p in os.environ.get("GOOGLE_TRENDS_PROXIES", "").split(",") if p.strip()]
-
-    for attempt in range(max_retries):
-        try:
-            from pytrends.request import TrendReq
-            pt = TrendReq(
-                hl="en-US", tz=0,
-                timeout=(10, 25),          # generous timeout — short timeouts cause spurious retries that trigger 429s
-                retries=2, backoff_factor=0.5,
-                proxies=proxies or None,
-            )
-            pt.build_payload(keywords, cat=0, timeframe=timeframe, geo="", gprop="")
-            df = pt.interest_over_time()
-            result = {}
-            if df is not None and not df.empty:
-                for kw in keywords:
-                    if kw not in df.columns:
-                        continue
-                    series = df[kw].dropna()
-                    if series.empty:
-                        continue
-                    if len(series) > 5:
-                        trend = "rising" if series.iloc[-1] > series.iloc[-5] else "falling"
-                    else:
-                        trend = "stable"
-                    result[kw] = {
-                        "current": int(series.iloc[-1]),
-                        "avg_30d": round(float(series.tail(4).mean()), 1),
-                        "peak":    int(series.max()),
-                        "trend":   trend,
-                        "history": [(str(d.date()), int(v)) for d, v in series.tail(12).items()],
-                    }
-            if result:
-                _TRENDS_CACHE[cache_key] = {"data": result, "ts": now}
-                return result
-            break  # empty-but-no-error response (e.g. no data for these keywords) — don't retry forever
-        except Exception as e:
-            is_rate_limited = "429" in str(e) or "TooManyRequests" in type(e).__name__
-            if is_rate_limited and attempt < max_retries - 1:
-                time.sleep((2 ** attempt) + random.uniform(0, 1))  # exponential backoff + jitter
-                continue
-            break
-
-    # All attempts failed/empty — serve stale cached data rather than nothing
-    return cached["data"] if cached else {}
- 
- 
-def get_ticker_trend_keywords(ticker, name):
-    """Build relevant search keywords for a ticker."""
-    base = ticker.replace(".NS", "").replace(".BO", "")
-    company_clean = re.sub(r"[^a-zA-Z0-9 ]", "", name).strip()
-    words = company_clean.split()
-    short = " ".join(words[:2]) if len(words) >= 2 else company_clean
-    return list(dict.fromkeys([short, base, f"{base} stock"]))[:3]
  
  
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1575,77 +1492,66 @@ SECTORS = {
         "keywords": ["telecom","media","streaming","internet","AT&T","Netflix","Meta","Alphabet","Disney","Comcast","Verizon"],
         "queries": ["communication services sector stocks","telecom media internet stocks news"],
         "fred_series": ["DFF", "UNRATE"],
-        "trend_keywords": ["streaming", "social media"],
     },
     "consumer-discretionary": {
         "label": "Consumer Discretionary", "sub": "Retail · Autos · Leisure", "key": "XLY",
         "keywords": ["retail","auto","leisure","Amazon","Tesla","Nike","McDonald's","Booking","Home Depot"],
         "queries": ["consumer discretionary sector stocks news","retail auto leisure stocks"],
         "fred_series": ["CPIAUCSL", "UNRATE", "MORTGAGE30US"],
-        "trend_keywords": ["retail sales", "consumer spending"],
     },
     "consumer-staples": {
         "label": "Consumer Staples", "sub": "Food · Beverages · Essentials", "key": "XLP",
         "keywords": ["food","beverage","household","Procter Gamble","Coca-Cola","PepsiCo","Walmart","Costco","Unilever"],
         "queries": ["consumer staples sector stocks news","food beverage essentials stocks"],
         "fred_series": ["CPIAUCSL", "DFF"],
-        "trend_keywords": ["grocery", "food prices"],
     },
     "energy": {
         "label": "Energy", "sub": "Oil · Gas · Renewables", "key": "XLE",
         "keywords": ["oil","gas","energy","renewable","ExxonMobil","Chevron","Shell","BP","ConocoPhillips","pipeline"],
         "queries": ["energy sector stocks oil gas news","oil gas renewables stocks"],
         "fred_series": ["DCOILWTICO", "DTWEXBGS"],
-        "trend_keywords": ["oil price", "crude oil"],
     },
     "financials": {
         "label": "Financials", "sub": "Banks · Insurance · Fintech", "key": "XLF",
         "keywords": ["bank","insurance","fintech","JPMorgan","Visa","Mastercard","Goldman Sachs","Wells Fargo","Berkshire"],
         "queries": ["financial sector stocks banks insurance news","banks fintech stocks news"],
         "fred_series": ["DFF", "T10Y2Y", "BAMLH0A0HYM2"],
-        "trend_keywords": ["interest rates", "banking"],
     },
     "health-care": {
         "label": "Health Care", "sub": "Pharma · Biotech · Hospitals", "key": "XLV",
         "keywords": ["pharma","biotech","hospital","Pfizer","UnitedHealth","Johnson","Merck","Abbott","Moderna","drug"],
         "queries": ["healthcare sector stocks pharma biotech news","pharma biotech hospital stocks"],
         "fred_series": ["CPIMEDSL", "DFF"],
-        "trend_keywords": ["pharma", "biotech stocks"],
     },
     "industrials": {
         "label": "Industrials", "sub": "Aerospace · Machinery · Logistics", "key": "XLI",
         "keywords": ["aerospace","defense","machinery","logistics","Boeing","Caterpillar","Honeywell","UPS","Raytheon"],
         "queries": ["industrials sector stocks aerospace machinery news","defense logistics industrial stocks"],
         "fred_series": ["DBRI", "INDPRO"],
-        "trend_keywords": ["industrial production", "defense spending"],
     },
     "information-technology": {
         "label": "Information Technology", "sub": "Software · Hardware · Semiconductors", "key": "XLK",
         "keywords": ["software","hardware","semiconductor","chip","Apple","Microsoft","Nvidia","Intel","AMD","cloud","AI"],
         "queries": ["technology sector stocks software semiconductor news","software hardware chip stocks"],
         "fred_series": ["DFF", "T10Y2Y"],
-        "trend_keywords": ["artificial intelligence", "semiconductor"],
     },
     "materials": {
         "label": "Materials", "sub": "Chemicals · Metals · Mining", "key": "XLB",
         "keywords": ["chemical","metal","mining","gold","Dow","Rio Tinto","Freeport","Newmont","Linde","commodity"],
         "queries": ["materials sector stocks chemicals metals mining news","mining metals commodities stocks"],
         "fred_series": ["DTWEXBGS", "GOLDAMGBD228NLBM"],
-        "trend_keywords": ["gold price", "copper price"],
     },
     "real-estate": {
         "label": "Real Estate", "sub": "Property · REITs", "key": "XLRE",
         "keywords": ["REIT","property","real estate","Prologis","American Tower","Simon Property","Crown Castle","Equinix"],
         "queries": ["real estate sector REIT stocks news","property REIT stocks news"],
         "fred_series": ["MORTGAGE30US", "DFF", "CSUSHPINSA"],
-        "trend_keywords": ["real estate", "housing market"],
     },
     "utilities": {
         "label": "Utilities", "sub": "Power · Water · Gas", "key": "XLU",
         "keywords": ["power","electric","water","gas utility","NextEra","Duke Energy","Southern Company","Dominion","grid"],
         "queries": ["utilities sector stocks power water news","electric gas utility stocks news"],
         "fred_series": ["DFF", "DCOILWTICO"],
-        "trend_keywords": ["electricity prices", "utility stocks"],
     },
 }
  
@@ -2544,7 +2450,7 @@ def _sf(v, d=4):
     except: return None
  
  
-def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_data=None, fundamentals=None, shipping_ctx=None, live_price_data=None):
+def build_analysis_payload(ticker, period, name, df, macro_data=None, fundamentals=None, shipping_ctx=None, live_price_data=None):
     # ── DATA HYGIENE: drop NaN rows, deduplicate index, enforce numeric types ──
     df = df[~df.index.duplicated(keep="last")].sort_index()
     for col in ["Open", "High", "Low", "Close"]:
@@ -2842,7 +2748,6 @@ def build_analysis_payload(ticker, period, name, df, macro_data=None, trends_dat
         "confluence": confluence,
         "ohlcv": ohlcv,
         "macro": macro_data or {},
-        "trends": trends_data or {},
         "fundamentals": fundamentals or {},
         "shipping": shipping_ctx or {},
         "live": {
@@ -2872,7 +2777,6 @@ def build_prompt(payload):
     adv      = p.get("advanced", {})
     perf     = p.get("performance", {})
     macro    = p.get("macro", {})
-    trends   = p.get("trends", {})
     fund     = p.get("fundamentals", {})
     shipping = p.get("shipping", {})
     pats     = p.get("patterns", [])
@@ -2887,7 +2791,6 @@ def build_prompt(payload):
     missing_data = []
     if not fund:     missing_data.append("fundamentals (Yahoo unavailable)")
     if not macro:    missing_data.append("FRED macro data")
-    if not trends:   missing_data.append("Google Trends")
     if not shipping: missing_data.append("AIS shipping context")
     data_quality_lines = [
         "## DATA QUALITY REPORT",
@@ -2972,16 +2875,6 @@ def build_prompt(payload):
             macro_lines.append(f"- {md['label']}: {f(md['value'])}{chg} [{md.get('date','')}]")
         macro_lines.append("")
 
-    # ── GOOGLE TRENDS ──
-    trends_lines = []
-    if trends:
-        trends_lines = ["## SEARCH INTEREST (Google Trends)"]
-        for kw, td in trends.items():
-            trends_lines.append(
-                f"- '{kw}': {td.get('current')}/100  |  30d avg: {td.get('avg_30d')}  |  {td.get('trend','N/A').upper()}"
-            )
-        trends_lines.append("")
-
     # ── SHIPPING ──
     shipping_lines = []
     if shipping:
@@ -3060,7 +2953,7 @@ def build_prompt(payload):
         f"- ATR(14): {p['currency']} {f(atr.get('value'))} ({f(atr.get('pct'))}% of price)",
         f"- Latest Vol: {int(vol['latest']) if vol.get('latest') else 'N/A'}  |  20D Avg: {int(vol['avg_20d']) if vol.get('avg_20d') else 'N/A'}  |  Ratio: {f(vol.get('ratio_vs_avg'))}x",
         "",
-    ] + adv_lines + fund_lines + macro_lines + trends_lines + shipping_lines + [
+    ] + adv_lines + fund_lines + macro_lines + shipping_lines + [
         "## RECENT OHLCV (last 20 trading days)",
         "date,open,high,low,close,volume",
     ] + [
@@ -3098,7 +2991,7 @@ def build_prompt(payload):
         '  "chart_pattern_analysis": "Dominant structure + swing highs/lows with prices + volume-price confirmation + candlestick patterns by date + last-5-candle micro-structure. Min 3 paragraphs.",',
         '  "technical_analysis": "MA alignment + RSI trajectory + MACD histogram evolution + Stochastic/Williams + OBV/CMF/VWAP + ATR + BB + Ichimoku + S/R + ADX. Cite exact values. Min 5 paragraphs.",',
         '  "fundamental_analysis": "P/E, P/B, P/S vs sector norms (state over/undervalued by X%) + growth quality + margins/ROE + balance sheet + analyst gap + short interest as contrarian signal.",',
-        '  "macro_and_altdata": "Map each FRED series to a direct mechanism for this ticker. Google Trends as retail sentiment — rising/falling and near-term demand implication. Shipping context if sector-relevant.",',
+        '  "macro_and_altdata": "Map each FRED series to a direct mechanism for this ticker. Shipping context if sector-relevant.",',
         '  "risk_factors": "Exactly 3 risks: Risk: [scenario + exact threshold]. Early warning: [what to watch]. Mitigation: [action].",',
         '  "action_plan": "Step 1: entry condition (price + indicator confirmation). Step 2: position size (% portfolio, ATR-justified). Step 3: scale-in trigger. Step 4: stop-loss (show ATR or S/R calculation). Step 5: exit at T1 (partial) and T2 (remainder).",',
         '  "summary": "Sentence 1: core thesis — the single most critical technical+fundamental confluence. Sentence 2: the biggest risk with its specific threshold."',
@@ -3123,9 +3016,6 @@ def build_prompt(payload):
 # shrink-and-retry so the caller never sees the raw error.
 GROQ_SAFE_MAX_TOKENS = {
     "llama-3.1-8b-instant": 1400,
-    "qwen/qwen3-32b":       1400,
-    "groq/compound":        1400,
-    "groq/compound-mini":   1400,
 }
 GROQ_DEFAULT_ANALYSIS_MAX_TOKENS = 3800
 
@@ -3136,12 +3026,12 @@ def _groq_max_tokens(model_id, default=GROQ_DEFAULT_ANALYSIS_MAX_TOKENS):
 
 def _shrink_prompt_for_retry(prompt):
     """413 fallback only: drop the least decision-critical sections
-    (macro/trends/shipping/fundamentals/advanced-technicals) and cut the
+    (macro/shipping/fundamentals/advanced-technicals) and cut the
     OHLCV table to the last 8 rows, leaving [INSTRUCTIONS]/[OUTPUT FORMAT]/
     [CONSTRAINTS] untouched so the model still returns the right schema."""
     out = prompt
     for header in ("## FUNDAMENTALS", "## MACRO ENVIRONMENT (FRED Live)",
-                   "## SEARCH INTEREST (Google Trends)", "## SHIPPING & SUPPLY CHAIN (AIS)",
+                   "## SHIPPING & SUPPLY CHAIN (AIS)",
                    "## ADVANCED TECHNICAL INDICATORS"):
         out = re.sub(re.escape(header) + r".*?(?=\n##|\n\[)", "", out, flags=re.DOTALL)
     m = re.search(r"(## RECENT OHLCV.*?\ndate,open,high,low,close,volume\n)(.*?)(\n\n)", out, re.DOTALL)
@@ -3187,8 +3077,8 @@ def _groq_chat(model_id, prompt, temperature, max_tokens, timeout):
 def _extract_json_object(text):
     """Return the first balanced {...} block in text by scanning brace depth
     (ignoring braces inside string literals), or None if none is found. More
-    robust than a greedy regex against agentic models (e.g. compound-mini)
-    that sometimes append commentary or a second JSON-looking block."""
+    robust than a greedy regex against models that sometimes append
+    commentary or a second JSON-looking block."""
     start = text.find("{")
     if start == -1:
         return None
@@ -3571,7 +3461,6 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
     alt_data_badges = """
 <div class="alt-data-row">
   <span class="alt-data-badge"><span class="alt-dot"></span>FRED Macro</span>
-  <span class="alt-data-badge"><span class="alt-dot"></span>Google Trends</span>
   <span class="alt-data-badge"><span class="alt-dot"></span>Fundamentals</span>
   <span class="alt-data-badge"><span class="alt-dot"></span>10 Technicals</span>
   <span class="alt-data-badge"><span class="alt-dot"></span>AIS Shipping</span>
@@ -5252,7 +5141,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       </svg>
     </div>
     <p class="disclaimer-body">
-      <span class="disclaimer-label">Disclaimer</span>Financial information is sourced from Yahoo Finance, FRED (Federal Reserve Bank of St. Louis), Google Trends, public AIS shipping data, and open data providers — presented solely for informational and educational purposes. AI analyses powered by DeepSeek, Qwen, and Meta&rsquo;s Llama via OpenRouter using live macro data, fundamentals, and search-interest signals. Sector news aggregated from Reuters, CNBC, WSJ, Yahoo Finance, MarketWatch, FT, Benzinga, and Seeking Alpha. Not financial advice. Consult qualified professionals before making investment decisions.
+      <span class="disclaimer-label">Disclaimer</span>Financial information is sourced from Yahoo Finance, FRED (Federal Reserve Bank of St. Louis), public AIS shipping data, and open data providers — presented solely for informational and educational purposes. AI analyses powered by DeepSeek, Qwen, and Meta&rsquo;s Llama via OpenRouter using live macro data, fundamentals, and search-interest signals. Sector news aggregated from Reuters, CNBC, WSJ, Yahoo Finance, MarketWatch, FT, Benzinga, and Seeking Alpha. Not financial advice. Consult qualified professionals before making investment decisions.
     </p>
   </div>
 </div>
@@ -5600,7 +5489,7 @@ function runAnalysis(){{
   res.innerHTML=`<div class="ai-loading">
     <div class="ai-spin"></div>
     <div class="ai-load-txt">Fetching live data &amp; running AI analysis\u2026</div>
-    <div class="ai-load-sub">Pulling FRED macro data, Google Trends, fundamentals, 10+ technical indicators &mdash; building institutional-grade analysis (30\u201360s)</div>
+    <div class="ai-load-sub">Pulling FRED macro data, fundamentals, 10+ technical indicators &mdash; building institutional-grade analysis (30\u201360s)</div>
   </div>`;
  
   fetch('/api/ai-analysis',{{
@@ -6620,7 +6509,6 @@ def api_ai_analysis():
     # live_price_data is fetched first (fastest, WebSocket cache hit is O(1))
     # so it's always ready before the slower macro/fundamentals calls finish.
     macro_data    = {}
-    trends_data   = {}
     fundamentals  = {}
     shipping_ctx  = {}
     live_price_data = None   # populated below
@@ -6638,13 +6526,6 @@ def api_ai_analysis():
         try: macro_data = fetch_all_macro()
         except: pass
  
-    def _fetch_trends():
-        nonlocal trends_data
-        try:
-            kws = get_ticker_trend_keywords(ticker, name)
-            trends_data = fetch_google_trends(kws, timeframe="today 3-m")
-        except: pass
- 
     def _fetch_fundamentals():
         nonlocal fundamentals
         try: fundamentals = _get_fundamentals(ticker)
@@ -6656,7 +6537,7 @@ def api_ai_analysis():
         except: pass
  
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        futs = [ex.submit(_fetch_macro), ex.submit(_fetch_trends),
+        futs = [ex.submit(_fetch_macro),
                 ex.submit(_fetch_fundamentals), ex.submit(_fetch_shipping)]
         concurrent.futures.wait(futs, timeout=18)
  
@@ -6667,7 +6548,6 @@ def api_ai_analysis():
         src_label   = live_price_data.get("source", "Live")
         data_sources.append(f"Real-Time Price ({src_label} · {dtype_label})")
     if macro_data:    data_sources.append(f"FRED Macro ({len(macro_data)} series)")
-    if trends_data:   data_sources.append(f"Google Trends ({len(trends_data)} keywords)")
     if fundamentals:  data_sources.append("Yahoo Fundamentals")
     if shipping_ctx:  data_sources.append("AIS Shipping Context")
     data_sources += ["12 Technical Indicators", "30-Day OHLCV Chart", "Candlestick Pattern Analysis", "SPY Correlation"]
@@ -6675,7 +6555,6 @@ def api_ai_analysis():
     try:
         payload  = build_analysis_payload(ticker, period, name, df,
                                           macro_data=macro_data,
-                                          trends_data=trends_data,
                                           fundamentals=fundamentals,
                                           live_price_data=live_price_data,
                                           shipping_ctx=shipping_ctx)
@@ -6959,15 +6838,6 @@ def api_macro():
         return jsonify({"macro": data, "baltic_dry": bdi, "timestamp": datetime.utcnow().isoformat()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
- 
- 
-@app.route("/api/trends")
-def api_trends():
-    """Expose Google Trends data for a given query."""
-    query = request.args.get("q", "").strip()
-    if not query: return jsonify({"error": "q param required"}), 400
-    data = fetch_google_trends([query], timeframe="today 3-m")
-    return jsonify({"trends": data, "query": query})
  
  
 @app.route("/api/satellite")
@@ -8335,6 +8205,6 @@ if __name__ == "__main__":
     print("  STARFISH — Market Dynamics")
     print("  http://127.0.0.1:5000")
     print("=" * 60)
-    print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client\n")
+    print("\n  pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml fredapi websocket-client\n")
     _start_adsb_collector()
     app.run(debug=True, host="0.0.0.0", port=5000)
