@@ -1310,36 +1310,68 @@ _TRENDS_CACHE = {}
 _TRENDS_CACHE_TTL = 1800
  
  
-def fetch_google_trends(keywords, timeframe="today 3-m"):
-    """Fetch search interest from Google Trends for given keywords."""
+def fetch_google_trends(keywords, timeframe="today 3-m", max_retries=3):
+    """Fetch search interest from Google Trends (via pytrends) for the given
+    keywords. Google Trends aggressively rate-limits automated requests
+    (HTTP 429), so this retries with exponential backoff + jitter, optionally
+    rotates through proxies from the GOOGLE_TRENDS_PROXIES env var
+    (comma-separated), and falls back to the last good cached result instead
+    of going empty on a transient failure."""
+    keywords = list(dict.fromkeys(k for k in keywords if k))[:5]  # hard limit: 5 keywords/payload
+    if not keywords:
+        return {}
+
     cache_key = f"trends_{'_'.join(keywords)}_{timeframe}"
     now = time.time()
-    if cache_key in _TRENDS_CACHE and now - _TRENDS_CACHE[cache_key]["ts"] < _TRENDS_CACHE_TTL:
-        return _TRENDS_CACHE[cache_key]["data"]
-    try:
-        from pytrends.request import TrendReq
-        pt = TrendReq(hl="en-US", tz=0, timeout=(5, 15), retries=1, backoff_factor=0.5)
-        pt.build_payload(keywords[:5], cat=0, timeframe=timeframe, geo="", gprop="")
-        df = pt.interest_over_time()
-        if df is not None and not df.empty:
+    cached = _TRENDS_CACHE.get(cache_key)
+    if cached and now - cached["ts"] < _TRENDS_CACHE_TTL:
+        return cached["data"]
+
+    proxies = [p.strip() for p in os.environ.get("GOOGLE_TRENDS_PROXIES", "").split(",") if p.strip()]
+
+    for attempt in range(max_retries):
+        try:
+            from pytrends.request import TrendReq
+            pt = TrendReq(
+                hl="en-US", tz=0,
+                timeout=(10, 25),          # generous timeout — short timeouts cause spurious retries that trigger 429s
+                retries=2, backoff_factor=0.5,
+                proxies=proxies or None,
+            )
+            pt.build_payload(keywords, cat=0, timeframe=timeframe, geo="", gprop="")
+            df = pt.interest_over_time()
             result = {}
-            for kw in keywords[:5]:
-                if kw in df.columns:
+            if df is not None and not df.empty:
+                for kw in keywords:
+                    if kw not in df.columns:
+                        continue
                     series = df[kw].dropna()
-                    if not series.empty:
-                        result[kw] = {
-                            "current": int(series.iloc[-1]),
-                            "avg_30d": round(float(series.tail(4).mean()), 1),
-                            "peak":    int(series.max()),
-                            "trend":   "rising" if series.iloc[-1] > series.iloc[-5] else "falling"
-                                       if len(series) > 5 else "stable",
-                            "history": [(str(d.date()), int(v)) for d, v in series.tail(12).items()],
-                        }
-            _TRENDS_CACHE[cache_key] = {"data": result, "ts": now}
-            return result
-    except Exception:
-        pass
-    return {}
+                    if series.empty:
+                        continue
+                    if len(series) > 5:
+                        trend = "rising" if series.iloc[-1] > series.iloc[-5] else "falling"
+                    else:
+                        trend = "stable"
+                    result[kw] = {
+                        "current": int(series.iloc[-1]),
+                        "avg_30d": round(float(series.tail(4).mean()), 1),
+                        "peak":    int(series.max()),
+                        "trend":   trend,
+                        "history": [(str(d.date()), int(v)) for d, v in series.tail(12).items()],
+                    }
+            if result:
+                _TRENDS_CACHE[cache_key] = {"data": result, "ts": now}
+                return result
+            break  # empty-but-no-error response (e.g. no data for these keywords) — don't retry forever
+        except Exception as e:
+            is_rate_limited = "429" in str(e) or "TooManyRequests" in type(e).__name__
+            if is_rate_limited and attempt < max_retries - 1:
+                time.sleep((2 ** attempt) + random.uniform(0, 1))  # exponential backoff + jitter
+                continue
+            break
+
+    # All attempts failed/empty — serve stale cached data rather than nothing
+    return cached["data"] if cached else {}
  
  
 def get_ticker_trend_keywords(ticker, name):
@@ -3082,29 +3114,114 @@ def build_prompt(payload):
     return "\n".join(lines)
  
  
+# ── Groq request-size safety net ────────────────────────────────────────────
+# Several Groq models advertise a 131K context window but enforce a much
+# smaller effective per-request token budget on standard API keys — this
+# surfaces as "413 Payload Too Large" even on normal-sized prompts. These are
+# the models observed hitting it in practice; their max_tokens is capped up
+# front, and a 413 that slips through anyway triggers one automatic
+# shrink-and-retry so the caller never sees the raw error.
+GROQ_SAFE_MAX_TOKENS = {
+    "llama-3.1-8b-instant": 1400,
+    "qwen/qwen3-32b":       1400,
+    "groq/compound":        1400,
+    "groq/compound-mini":   1400,
+}
+GROQ_DEFAULT_ANALYSIS_MAX_TOKENS = 3800
+
+
+def _groq_max_tokens(model_id, default=GROQ_DEFAULT_ANALYSIS_MAX_TOKENS):
+    return GROQ_SAFE_MAX_TOKENS.get(model_id, default)
+
+
+def _shrink_prompt_for_retry(prompt):
+    """413 fallback only: drop the least decision-critical sections
+    (macro/trends/shipping/fundamentals/advanced-technicals) and cut the
+    OHLCV table to the last 8 rows, leaving [INSTRUCTIONS]/[OUTPUT FORMAT]/
+    [CONSTRAINTS] untouched so the model still returns the right schema."""
+    out = prompt
+    for header in ("## FUNDAMENTALS", "## MACRO ENVIRONMENT (FRED Live)",
+                   "## SEARCH INTEREST (Google Trends)", "## SHIPPING & SUPPLY CHAIN (AIS)",
+                   "## ADVANCED TECHNICAL INDICATORS"):
+        out = re.sub(re.escape(header) + r".*?(?=\n##|\n\[)", "", out, flags=re.DOTALL)
+    m = re.search(r"(## RECENT OHLCV.*?\ndate,open,high,low,close,volume\n)(.*?)(\n\n)", out, re.DOTALL)
+    if m:
+        rows = [r for r in m.group(2).split("\n") if r.strip()]
+        out = out[:m.start(2)] + "\n".join(rows[-8:]) + out[m.end(2):]
+    # Generic safety net for prompts with no "## " sections to strip (e.g. the
+    # plain-text follow-up chat prompt): keep the instructions at the start
+    # and the live question/context at the end, drop the bulky middle.
+    if len(out) > 4000:
+        out = out[:1500] + "\n...[earlier context trimmed for length]...\n" + out[-2500:]
+    return out
+
+
+def _groq_chat(model_id, prompt, temperature, max_tokens, timeout):
+    """POST to Groq's chat-completions endpoint with one automatic
+    shrink-and-retry on 413 (request/TPM too large) so callers never have to
+    handle a raw 413 from Groq."""
+    def _post(p, mt):
+        return requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": p}],
+                "temperature": temperature,
+                "max_tokens": mt,
+                "top_p": 1,
+                "frequency_penalty": 0,
+            },
+            timeout=timeout,
+        )
+
+    r = _post(prompt, max_tokens)
+    if r.status_code == 413:
+        r = _post(_shrink_prompt_for_retry(prompt), min(max_tokens, 1000))
+    return r
+
+
+def _extract_json_object(text):
+    """Return the first balanced {...} block in text by scanning brace depth
+    (ignoring braces inside string literals), or None if none is found. More
+    robust than a greedy regex against agentic models (e.g. compound-mini)
+    that sometimes append commentary or a second JSON-looking block."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth, in_str, escape = 0, False, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 def call_groq(model_id, prompt):
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY environment variable is not set.")
 
     # temperature=0 → deterministic, fact-grounded output (no creative drift)
-    # max_tokens=3800 → matches prompt constraint of 3,200 JSON + overhead
-    # Groq uses OpenAI-compatible /openai/v1/chat/completions endpoint
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model_id,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,          # deterministic: removes hallucination drift
-            "max_tokens": 3800,        # matched to output schema constraint
-            "top_p": 1,
-            "frequency_penalty": 0,
-        },
-        timeout=120,
-    )
+    # max_tokens → matched to output schema constraint, capped per-model to
+    # avoid 413s on models with a smaller effective request budget
+    r = _groq_chat(model_id, prompt, 0, _groq_max_tokens(model_id), 120)
     r.raise_for_status()
 
     raw = r.json()["choices"][0]["message"]["content"].strip()
@@ -3113,14 +3230,18 @@ def call_groq(model_id, prompt):
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
 
-    # ── Greedy extraction: find outermost { ... } block ──
-    m = re.search(r'\{.*\}', raw, re.DOTALL)
-    if not m:
+    # ── Balanced-brace extraction (see _extract_json_object) ──
+    candidate = _extract_json_object(raw)
+    if candidate is None:
         raise json.JSONDecodeError("No JSON object found in model response", raw, 0)
-    candidate = m.group(0)
 
-    # ── Parse and validate required keys ──
-    result = json.loads(candidate)
+    # ── Parse, with one repair pass for the model's most common slip: a
+    # missing comma between two members (e.g. "key1": "val1"\n  "key2": ...) ──
+    try:
+        result = json.loads(candidate)
+    except json.JSONDecodeError:
+        repaired = re.sub(r'([}\]"\d])(\s*\n\s*)(")', r'\1,\2\3', candidate)
+        result = json.loads(repaired)
     required = {"verdict", "confidence", "time_horizon", "price_targets",
                 "confluence_summary", "chart_pattern_analysis", "technical_analysis",
                 "fundamental_analysis", "macro_and_altdata", "risk_factors",
@@ -3156,22 +3277,7 @@ def call_groq_plaintext(model_id, prompt):
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY environment variable is not set.")
 
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model_id,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "max_tokens": 1200,
-            "top_p": 1,
-            "frequency_penalty": 0,
-        },
-        timeout=60,
-    )
+    r = _groq_chat(model_id, prompt, 0.2, min(1200, _groq_max_tokens(model_id, default=1200)), 60)
     r.raise_for_status()
     raw = r.json()["choices"][0]["message"]["content"].strip()
 
@@ -5512,11 +5618,27 @@ function runAnalysis(){{
  
 function esc(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}
 function fn(v,d){{d=d||2;return(v==null||v===undefined)?'N/A':Number(v).toFixed(d);}}
+function fmtField(v){{
+  if(v==null)return '';
+  if(typeof v==='string')return v;
+  if(Array.isArray(v))return v.map(fmtField).join('\\n\\n');
+  if(typeof v==='object'){{
+    var lines=[];
+    for(var k in v){{
+      var words=k.split('_');
+      var label=words.map(function(w){{return w.charAt(0).toUpperCase()+w.slice(1);}}).join(' ');
+      lines.push(label+': '+fmtField(v[k]));
+    }}
+    return lines.join('\\n');
+  }}
+  return String(v);
+}}
  
 function renderAIResult(data){{
   var r=data.analysis;
   var m=MODELS.find(x=>x.id===data.model_id)||{{}};
-  var verdict=(r.verdict||'HOLD').toUpperCase();
+  var verdict=(fmtField(r.verdict)||'HOLD').toUpperCase();
+  if(['BUY','SELL','HOLD'].indexOf(verdict)===-1)verdict='HOLD';
   var pt=r.price_targets||{{}};
   var dataTags=data.data_sources||[];
   var tagsHtml=dataTags.length?'<div class="ai-data-tags">'+dataTags.map(t=>'<span class="ai-data-tag">'+esc(t)+'</span>').join('')+'</div>':'';
@@ -5528,15 +5650,15 @@ function renderAIResult(data){{
     {{lbl:'Risk Factors',key:'risk_factors'}},
     {{lbl:"Trader's Action Plan",key:'action_plan'}},
   ];
-  var secHtml=secs.map(s=>'<div class="ai-sec"><div class="ai-sec-hdr">'+s.lbl+'</div><div class="ai-sec-body">'+esc(r[s.key]||'No data.')+'</div></div>').join('');
+  var secHtml=secs.map(s=>'<div class="ai-sec"><div class="ai-sec-hdr">'+s.lbl+'</div><div class="ai-sec-body">'+esc(fmtField(r[s.key])||'No data.')+'</div></div>').join('');
   document.getElementById('ai-result').innerHTML=
     '<div class="ai-verdict-bar">'+
       '<div class="ai-badge v-'+verdict+'">'+verdict+'</div>'+
       '<div class="ai-vmeta">'+
-        '<div class="ai-summary">'+esc(r.summary||'')+'</div>'+
+        '<div class="ai-summary">'+esc(fmtField(r.summary)||'')+'</div>'+
         '<div class="ai-meta-row">'+
-          '<span class="ai-mi"><strong>Confidence&nbsp;</strong>'+esc(r.confidence||'Medium')+'</span>'+
-          '<span class="ai-mi"><strong>Horizon&nbsp;</strong>'+esc(r.time_horizon||'Mid')+'-term</span>'+
+          '<span class="ai-mi"><strong>Confidence&nbsp;</strong>'+esc(fmtField(r.confidence)||'Medium')+'</span>'+
+          '<span class="ai-mi"><strong>Horizon&nbsp;</strong>'+esc(fmtField(r.time_horizon)||'Mid')+'-term</span>'+
         '</div>'+
       '</div>'+
       '<span class="ai-model-tag"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+(m.color||'#fff')+';margin-right:4px"></span>'+esc(m.label||data.model_id)+'</span>'+
