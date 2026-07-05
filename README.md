@@ -5,7 +5,7 @@
 $${\color{red}\textbf{S}}\text{tatistical }{\color{red}\textbf{T}}\text{rend }{\color{red}\textbf{A}}\text{nalysis and }{\color{red}\textbf{R}}\text{isk }{\color{red}\textbf{F}}\text{orecasting through }{\color{red}\textbf{I}}\text{ntelligent }{\color{red}\textbf{S}}\text{ignal }{\color{red}\textbf{H}}\text{euristics}$$
 
 <a href="#-features">
-<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=20&duration=2400&pause=900&color=2C5364&center=true&vCenter=true&multiline=false&repeat=true&width=820&height=40&lines=12-Indicator+Charting+Engine+%C2%B7+Plotly;Live+Equities+%26+Crypto+%C2%B7+Alpaca+%C2%B7+CoinGecko;8-Model+AI+Trading+Desk+%C2%B7+Groq;Monte+Carlo+GBM+%C2%B7+Prediction+Markets;Satellite+%C2%B7+AIS+Vessels+%C2%B7+ADS-B+Aircraft;C%2B%2B+%2F+Rust+JIT-Compiled+Native+Acceleration" alt="Typing SVG" />
+<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=20&duration=2400&pause=900&color=2C5364&center=true&vCenter=true&multiline=false&repeat=true&width=820&height=40&lines=12-Indicator+Charting+Engine+%C2%B7+Plotly;Live+Equities+%26+Crypto+%C2%B7+Alpaca+%C2%B7+CoinGecko;5-Model+AI+Trading+Desk+%C2%B7+Groq;Monte+Carlo+GBM+%C2%B7+Prediction+Markets;Satellite+%C2%B7+AIS+Vessels+%C2%B7+ADS-B+Aircraft;C%2B%2B+%2F+Rust+JIT-Compiled+Native+Acceleration" alt="Typing SVG" />
 </a>
 
 <br/>
@@ -21,7 +21,7 @@ $${\color{red}\textbf{S}}\text{tatistical }{\color{red}\textbf{T}}\text{rend }{\
 
 **Equities · Crypto · AI Trading Desk · Monte Carlo Simulation · Prediction Markets · Macro Data · Live News · Satellite Intelligence · AIS Vessels · ADS-B Aircraft**
 
-*A single-file, full-stack market intelligence platform: real-time Alpaca/CoinGecko price feeds, an 8-model Groq AI trading desk, Geometric Brownian Motion risk simulation, a prediction-market consensus engine, live FRED macroeconomics, Google Trends sentiment, AIS shipping, ADS-B flight tracking, and a Sentinel-2 satellite viewer — accelerated by JIT-compiled C++ and Rust hot paths.*
+*A single-file, full-stack market intelligence platform: real-time Alpaca/CoinGecko price feeds, a 5-model Groq AI trading desk, Geometric Brownian Motion risk simulation, a prediction-market consensus engine, live FRED macroeconomics, AIS shipping, ADS-B flight tracking, and a Sentinel-2 satellite viewer — accelerated by JIT-compiled C++ and Rust hot paths.*
 
 [Features](#-features) · [Architecture](#-architecture) · [Installation](#-installation) · [Configuration](#-configuration) · [API Reference](#-api-reference) · [Native Acceleration](#-native-acceleration-layer)
 
@@ -31,7 +31,7 @@ $${\color{red}\textbf{S}}\text{tatistical }{\color{red}\textbf{T}}\text{rend }{\
 
 ## 📡 Overview
 
-STARFISH is a self-contained Flask application that fuses **live trading data, AI reasoning, and alternative data signals** into a single dark-themed dashboard. It tracks both US equities (via Alpaca's paper-trading feed) and a 30-asset crypto watchlist (via CoinGecko) side by side, runs an 8-model AI analysis desk on top of Groq's inference API, simulates forward price risk with a Geometric Brownian Motion engine, aggregates real-money prediction-market consensus, and layers in macro data, sector news, satellite imagery, shipping traffic, and live flight tracking — the kind of alternative data stack institutional desks pay for.
+STARFISH is a self-contained Flask application that fuses **live trading data, AI reasoning, and alternative data signals** into a single dark-themed dashboard. It tracks both US equities (via Alpaca's paper-trading feed) and a 31-asset crypto watchlist (via CoinGecko) side by side, runs an AI analysis desk across 5 Groq models, simulates forward price risk with a Geometric Brownian Motion engine, aggregates real-money prediction-market consensus, and layers in macro data, sector news, satellite imagery, shipping traffic, and live flight tracking — the kind of alternative data stack institutional desks pay for.
 
 The entire platform ships as **one Python file**, with zero database and zero frontend build step. On first run, it silently attempts to JIT-compile native C++ and Rust extensions for its hottest math (EMA, RSI, OBV, tile projection) and falls back to pure pandas/NumPy if a compiler isn't present — so it runs anywhere, and runs faster where it can.
 
@@ -45,16 +45,16 @@ The entire platform ships as **one Python file**, with zero database and zero fr
 
 **📈 Live Markets**
 - 12-stock Alpaca watchlist
-- 30-asset crypto watchlist
+- 31-asset crypto watchlist
 - WebSocket sub-second feed
 - Candlestick + Line charts
-- 13 technical indicators
+- 13 technical indicators (5 charted, 8 AI-only)
 
 </td>
 <td width="33%" valign="top">
 
 **🧠 AI & Risk**
-- 8 Groq models on tap
+- 5 Groq models on tap
 - Streaming follow-up chat
 - Monte Carlo GBM simulator
 - Prediction-market consensus
@@ -68,7 +68,6 @@ The entire platform ships as **one Python file**, with zero database and zero fr
 - AIS live vessel tracking
 - ADS-B live aircraft tracking
 - FRED macro + Baltic Dry
-- Google Trends sentiment
 
 </td>
 </tr>
@@ -117,12 +116,12 @@ The grid filters by sector (`ALL · TECH · FINANCE · CONSUMER · AUTO · HEALT
 
 ---
 
-### 2 · Live Crypto — 30-Asset CoinGecko Watchlist
+### 2 · Live Crypto — 31-Asset CoinGecko Watchlist
 
-A 30-coin watchlist spanning Layer 0/1/2 chains, DeFi, Oracles, and meme assets, refreshed every 10 seconds with live price, 24h change, market cap, and volume — plus a real 24-hour hourly sparkline per coin via `/api/crypto-sparkline`.
+A 31-coin watchlist spanning Layer 0/1/2 chains, DeFi, Oracles, and meme assets, refreshed every 10 seconds with live price, 24h change, market cap, and volume — plus a real 24-hour hourly sparkline per coin via `/api/crypto-sparkline`.
 
 <details>
-<summary><b>View all 30 tracked coins</b></summary>
+<summary><b>View all 31 tracked coins</b></summary>
 
 | Category | Assets |
 |---|---|
@@ -144,27 +143,24 @@ The grid filters by category (`ALL · LAYER 1 · LAYER 2 · LAYER 0 · DEFI · O
 ### 3 · Interactive Charting Engine
 
 - **Candlestick & Line charts** rendered via Plotly with a custom theme, drag-to-pan and unified hover tooltips
-- **13 indicators**: SMA (20/50/200), EMA, Bollinger Bands, RSI (14), MACD (12/26/9), ATR, OBV, Stochastic %K/%D, Williams %R, Chaikin Money Flow, ADX, VWAP, Ichimoku Cloud, plus rolling Support/Resistance
+- **5 chart-rendered indicators** (toggle in UI, `build_chart()`): SMA (20/50/200), Bollinger Bands, RSI (14), MACD (12/26/9), Volume — plus **8 additional indicators** computed for the AI analysis engine only (`build_analysis_payload()`): EMA, ATR, OBV, Stochastic %K/%D, Williams %R, Chaikin Money Flow, ADX, VWAP, Ichimoku Cloud, and rolling Support/Resistance
 - **Time range selector**: 1M · 3M · 6M · 1Y · 2Y · 5Y
 - **USD and INR currency detection** — auto-appends `.NS` for NSE / `.BO` for BSE tickers
 - Indicator math is **natively accelerated** — see [Native Acceleration Layer](#-native-acceleration-layer)
 
 ---
 
-### 4 · AI Trading Desk — 8 Groq Models
+### 4 · AI Trading Desk — 5 Groq Models
 
-Eight Groq-hosted models, selectable per analysis, each fed the same structured financial brief — OHLCV, 13 technical indicators, FRED macro, Google Trends, fundamentals, shipping context, and a real-time price snapshot pulled from the same Alpaca waterfall used by the equities grid:
+Five Groq-hosted models, selectable per analysis, each fed the same structured financial brief — OHLCV, 12+ technical indicators, FRED macro, fundamentals, shipping context, and a real-time price snapshot pulled from the same Alpaca waterfall used by the equities grid:
 
 | Model | API ID | Profile |
 |---|---|---|
 | Llama 3.3 70B | `llama-3.3-70b-versatile` | Fast & balanced · 131K ctx |
 | Llama 3.1 8B | `llama-3.1-8b-instant` | Fastest · 560 t/s · 131K ctx |
-| Llama 4 Scout | `llama-4-scout-17b-16e-instruct` | 750 t/s · vision · 131K ctx |
-| Qwen3 32B | `qwen3-32b` | Reasoning · 400 t/s · 131K ctx |
-| GPT-OSS 20B | `gpt-oss-20b` | Fastest OSS · 1000 t/s · 131K ctx |
-| GPT-OSS 120B | `gpt-oss-120b` | Flagship OSS · 500 t/s · 131K ctx |
-| Groq Compound | `groq/compound` | Agentic · web search · code exec |
-| Compound Mini | `groq/compound-mini` | Agentic · fast · tool-enabled |
+| Llama 4 Scout | `meta-llama/llama-4-scout-17b-16e-instruct` | 750 t/s · vision · 131K ctx |
+| GPT-OSS 20B | `openai/gpt-oss-20b` | Fastest OSS · 1000 t/s · 131K ctx |
+| GPT-OSS 120B | `openai/gpt-oss-120b` | Flagship OSS · 500 t/s · 131K ctx |
 
 Every analysis can be followed up with **plain-text chat** (`/api/ai-followup`) that stays grounded in a *fresh* live-price snapshot and the prior structured analysis — the model is explicitly instructed never to estimate a price it can't verify. Each model gets its own sliding-window rate limiter (30 RPM / 1,000 RPD).
 
@@ -230,9 +226,9 @@ Eight financial RSS/HTML sources scraped concurrently and de-duplicated, filtere
 
 ### 9 · Shipping & Macro Context
 
-- **Baltic Dry Index (BDI)** — scraped as a global trade proxy
+- **Baltic Dry Index (BDI)** — sourced via FRED (`DBRI` series) as a global trade proxy
 - **AIS live vessel tracking** — `aisstream.io` WebSocket feed, rendered on a full-screen Leaflet map with Start/Stop control and freehand region selection
-- **Major port monitoring**: Houston, Los Angeles, Rotterdam, Singapore, Shanghai
+- **Major port reference list** (Houston, Los Angeles, Rotterdam, Singapore, Shanghai) — defined in `MAJOR_PORTS` for future congestion-monitoring integration, not yet wired to a live feed
 
 <img width="1157" height="620" alt="Live Vessel Tracker" src="https://github.com/user-attachments/assets/3fcca1f8-b975-4083-b654-160642d00b71" />
 
@@ -268,12 +264,6 @@ A fully interactive satellite imagery viewer powered by the **Copernicus Data Sp
 
 ---
 
-### 13 · Google Trends Sentiment
-
-Pulls 3-month search interest via `pytrends` for each ticker's company name and symbol, returning current score, 30-day average, peak, and trend direction.
-
----
-
 ## 🏗️ Architecture
 
 ```mermaid
@@ -287,7 +277,6 @@ flowchart LR
 
     subgraph ALT["Alternative Data"]
         FRED[FRED Macro API]
-        TRENDS[Google Trends]
         AIS[AIS Vessel Stream]
         ADSB[ADS-B Collector Thread]
         SAT[Copernicus / Sentinel Hub]
@@ -299,13 +288,12 @@ flowchart LR
         IND[13 Technical Indicators]
         NATIVE[(C++ / Rust\nHot Path)]
         GBM[Monte Carlo GBM]
-        AI[Groq · 8 Models]
+        AI[Groq · 5 Models]
     end
 
     APP --> ALP
     APP --> CG
     APP --> FRED
-    APP --> TRENDS
     APP --> AIS
     APP --> ADSB
     APP --> SAT
@@ -317,7 +305,6 @@ flowchart LR
     APP --> AI
     AI -.uses.-> IND
     AI -.uses.-> FRED
-    AI -.uses.-> TRENDS
     AI -.uses.-> ALP
     APP --> U
 ```
@@ -334,7 +321,7 @@ STARFISH (starfish.py)
 │   ├── GET       /api/alpaca-crypto     → Live crypto watchlist
 │   ├── GET       /api/crypto-sparkline  → 24h hourly coin prices
 │   ├── GET       /api/alpaca-account    → Paper-trading account summary
-│   ├── POST      /api/ai-analysis       → 8-model Groq AI analysis
+│   ├── POST      /api/ai-analysis       → 5-model Groq AI analysis
 │   ├── POST      /api/ai-followup       → Grounded follow-up chat
 │   ├── POST      /api/gbm               → Monte Carlo GBM simulation
 │   ├── GET       /api/prediction-markets→ Manifold + PredScope consensus
@@ -342,7 +329,6 @@ STARFISH (starfish.py)
 │   ├── GET       /api/live-id           → YouTube live video ID lookup
 │   ├── GET       /api/news              → Sector news aggregation
 │   ├── GET       /api/macro             → FRED + Baltic Dry data
-│   ├── GET       /api/trends            → Google Trends query
 │   ├── GET       /api/satellite         → Sector satellite targets
 │   ├── GET       /api/ais-key           → AIS stream key status
 │   ├── GET       /vessels               → Live AIS vessel tracker page
@@ -364,11 +350,10 @@ STARFISH (starfish.py)
 │   ├── _alpaca_ws_thread()              → Sub-second WebSocket trade feed
 │   ├── alpaca_fetch_crypto_data()       → CoinGecko crypto watchlist
 │   ├── coingecko_fetch_crypto_data()    → CoinGecko simple/price batch
-│   ├── dia_fetch_crypto_data()          → DIA Data secondary quote engine
+│   ├── dia_fetch_crypto_data()          → DIA Data secondary quote engine (defined, not yet wired in)
 │   ├── fetch_yfinance_data()            → OHLCV via Yahoo Finance (v8/v7/lib fallback)
 │   ├── fetch_all_macro()                → FRED macro series (concurrent)
 │   ├── fetch_all_news()                 → 8-source RSS/HTML aggregation
-│   ├── fetch_google_trends()            → pytrends 3-month interest
 │   ├── fetch_shipping_context()         → AIS + port context
 │   ├── _adsb_collector()                → Background ADS-B polling thread
 │   └── TokenManager                     → CDSE OAuth2 auto-refresh (27-min cycle)
@@ -439,7 +424,7 @@ git clone https://github.com/yourusername/starfish.git
 cd starfish
 
 # 2. Install dependencies
-pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client
+pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml websocket-client
 
 # 3. Set environment variables (see Configuration below)
 export GROQ_API_KEY="your_groq_key"
@@ -462,7 +447,7 @@ Open your browser at **http://127.0.0.1:5000**
 
 | Variable | Required | Description |
 |---|---|---|
-| `GROQ_API_KEY` | **Yes** (for AI) | [Groq](https://groq.com) API key powering the 8-model AI trading desk |
+| `GROQ_API_KEY` | **Yes** (for AI) | [Groq](https://groq.com) API key powering the 5-model AI trading desk |
 | `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | No | [Alpaca](https://alpaca.markets) paper-trading keys for the live equities feed and account panel |
 | `FRED_API_KEY` | No | [FRED](https://fred.stlouisfed.org) API key for macro data (empty key degrades gracefully) |
 | `COINGECKO_API_KEY` | No | CoinGecko Pro key — switches the base URL to the Pro endpoint; falls back to the public API otherwise |
@@ -475,7 +460,6 @@ Open your browser at **http://127.0.0.1:5000**
 ALPACA_CACHE_TTL   = 15    # seconds — Alpaca equities watchlist
 CRYPTO_CACHE_TTL    = 10    # seconds — CoinGecko crypto watchlist
 _FRED_CACHE_TTL     = 3600  # 1 hour  — FRED macro data
-_TRENDS_CACHE_TTL   = 1800  # 30 min  — Google Trends
 _AIS_CACHE_TTL       = 600   # 10 min  — AIS shipping context
 _REFRESH_INTERVAL    = 1620  # 27 min  — CDSE OAuth2 token
 ```
@@ -507,7 +491,6 @@ _REFRESH_INTERVAL    = 1620  # 27 min  — CDSE OAuth2 token
   "data_sources": [
     "Real-Time Price (Alpaca WebSocket · LIVE)",
     "FRED Macro (9 series)",
-    "Google Trends (3 keywords)",
     "Yahoo Fundamentals",
     "AIS Shipping Context",
     "12 Technical Indicators",
@@ -552,7 +535,7 @@ Grounded plain-text follow-up chat on a completed analysis.
 Live data for the 12-symbol equities watchlist.
 
 #### `GET /api/alpaca-crypto`
-Live data for the 30-asset crypto watchlist (CoinGecko).
+Live data for the 31-asset crypto watchlist (CoinGecko).
 
 #### `GET /api/crypto-sparkline?id=bitcoin`
 24-hour hourly price series for a single CoinGecko coin ID.
@@ -616,9 +599,6 @@ Valid sector IDs: `energy · materials · industrials · consumer-discretionary 
 #### `GET /api/satellite?sector=energy`
 Returns 30 curated lat/lon targets for the sector.
 
-#### `GET /api/trends?q=NVDA`
-3-month Google Trends interest for a query.
-
 #### `GET /api/live-id?handle=@handle`
 Active YouTube live-stream video ID for a channel handle.
 
@@ -679,6 +659,8 @@ Health check: tests Yahoo Finance data fetch and FRED macro series.
 
 ## 🧮 Technical Indicators — Implementation Notes
 
+> Only SMA, Bollinger Bands, RSI, MACD, and Volume are rendered as chart overlays (`build_chart()`). The remaining indicators below are computed exclusively for the AI analysis payload (`build_analysis_payload()`) and are not drawn on the price chart itself.
+
 | Indicator | Function | Formula Notes |
 |---|---|---|
 | SMA 20/50/200 | `calc_sma()` | `rolling(w).mean()` on Close |
@@ -705,17 +687,15 @@ Health check: tests Yahoo Finance data fetch and FRED macro series.
 | [Alpaca Markets](https://alpaca.markets) | Live equities + paper account | WebSocket + REST |
 | [CoinGecko](https://coingecko.com) | Live crypto prices, market cap, sparkline | REST API |
 | [Yahoo Finance](https://finance.yahoo.com) | OHLCV, fundamentals | Custom HTTP scraper (v8/v7/library fallback) |
-| [FRED — St. Louis Fed](https://fred.stlouisfed.org) | 9 macro series | Public REST API |
-| [Groq](https://groq.com) | LLM inference (8 models) | REST API |
+| [FRED — St. Louis Fed](https://fred.stlouisfed.org) | 9 macro series + Baltic Dry proxy | Public REST API |
+| [Groq](https://groq.com) | LLM inference (5 models) | REST API |
 | [Manifold Markets](https://manifold.markets) | Prediction-market probabilities | REST API |
 | PredScope (Polymarket-based) | Prediction-market probabilities | REST API |
-| [Google Trends](https://trends.google.com) | Search interest | `pytrends` |
 | [AISStream.io](https://aisstream.io) | Live vessel positions | WebSocket API |
 | [adsb.lol](https://api.adsb.lol) | Live aircraft positions | REST API (polled every 5s) |
 | [Copernicus CDSE](https://dataspace.copernicus.eu) | Sentinel-2 L2A imagery | OAuth2 + Sentinel Hub Process API |
 | [Nominatim / OSM](https://nominatim.openstreetmap.org) | Location geocoding | REST API |
 | Yahoo Finance, CNBC, MarketWatch, Benzinga, FT, WSJ, Reuters, Seeking Alpha | Financial news | RSS/HTML scraping |
-| Baltic Exchange | Shipping index (BDI) | Web scraping |
 
 ---
 
@@ -731,14 +711,12 @@ plotly
 httpx
 beautifulsoup4
 lxml
-pytrends
-fredapi
 websocket-client
 ```
 
 Install all at once:
 ```bash
-pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml pytrends fredapi websocket-client
+pip install flask requests numpy pandas yfinance plotly httpx beautifulsoup4 lxml websocket-client
 ```
 
 > Native acceleration is optional and detected automatically — install `g++` and/or `rustc` on the host if you want the compiled hot paths; everything still works without them.
@@ -803,6 +781,7 @@ Contributions are welcome. Please:
 - Expand sector news sources
 - Add more satellite targets per sector
 - Wire `dia_fetch_crypto_data()` in as an active CoinGecko fallback
+- Wire `MAJOR_PORTS` into an active port-congestion signal
 - Persistent caching (Redis / SQLite) in place of in-process dicts
 
 ---
