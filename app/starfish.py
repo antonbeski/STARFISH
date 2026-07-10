@@ -4568,7 +4568,7 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       paper_bgcolor:'rgba(0,0,0,0)',
       plot_bgcolor:'rgba(0,0,0,0)',
       font:{{color:'#787b86', family:"'DM Sans',sans-serif", size:10}},
-      margin:{{l:62, r:20, t:48, b:44}},
+      margin:{{l:62, r:20, t:56, b:78}},
       xaxis:{{
         gridcolor:'rgba(42,46,57,0.6)', color:'#787b86',
         zeroline:false, showline:false,
@@ -4583,8 +4583,10 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
       hovermode:'x unified',
       hoverlabel:{{bgcolor:'rgba(255,255,255,0.97)',bordercolor:'rgba(120,123,134,0.3)',
                    font:{{color:'#000',size:11}}}},
+      /* Legend lives BELOW the plot (not stacked with the title above it) —
+         this is the single fix for the title/legend/annotation text collision. */
       legend:{{
-        orientation:'h', y:1.07, x:0,
+        orientation:'h', y:-0.22, yanchor:'top', x:0, xanchor:'left',
         font:{{size:9,color:'#787b86'}},
         bgcolor:'rgba(0,0,0,0)', borderwidth:0
       }}
@@ -4738,10 +4740,15 @@ def render_page(ticker, period, chart_type, active_indicators, graph_html, error
         type:'line', x0:d.s_0, x1:d.s_0, y0:0, y1:1, yref:'paper',
         line:{{color:'#787b86', width:1.5, dash:'dash'}}
       }}],
+      /* Entry-price label is pinned INSIDE the plot area (y:0.94 of the
+         axes, not the figure) with its own readable background box, so it
+         never collides with the title above or the legend below. */
       annotations:[{{
-        x:d.s_0, y:1.05, yref:'paper', xanchor:'center',
-        text:'<b>Entry ' + d.s_0.toFixed(2) + '</b>',
-        showarrow:false, font:{{size:9, color:'#787b86'}}
+        x:d.s_0, y:0.94, yref:'paper', xanchor:'center', yanchor:'top',
+        text:'Entry ' + d.s_0.toFixed(2),
+        showarrow:false, font:{{size:9, color:'#37474f'}},
+        bgcolor:'rgba(255,255,255,0.92)', bordercolor:'rgba(120,123,134,0.35)',
+        borderwidth:1, borderpad:4
       }}]
     }}), {{responsive:true}});
 
