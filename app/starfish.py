@@ -7382,11 +7382,13 @@ def api_finviz_ticker():
             df_bal = fut_bal.result()
             df_cas = fut_cas.result()
 
-        # Helper to convert DataFrame to records list safely
+        # Helper to convert DataFrame to records list safely.
+        # NaN/NaT are not valid JSON tokens (jsonify would emit a literal
+        # "NaN", which JSON.parse rejects) — replace them with None first.
         def df_to_json(df):
             if df is None or not isinstance(df, pd.DataFrame) or df.empty:
                 return []
-            return df.to_dict(orient="records")
+            return df.where(pd.notnull(df), None).to_dict(orient="records")
 
         statements = {
             "income": df_to_json(df_inc),
@@ -7434,10 +7436,12 @@ def api_finviz_market():
             df_crypto = fut_crypto.result()
             news_dict = fut_news.result()
 
+        # NaN/NaT are not valid JSON tokens (jsonify would emit a literal
+        # "NaN", which JSON.parse rejects) — replace them with None first.
         def df_to_json(df):
             if df is None or not isinstance(df, pd.DataFrame) or df.empty:
                 return []
-            return df.to_dict(orient="records")
+            return df.where(pd.notnull(df), None).to_dict(orient="records")
 
         # Convert news dict of dataframes
         news_json = {}
