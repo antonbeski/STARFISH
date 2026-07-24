@@ -7068,7 +7068,7 @@ async function fetchFinvizMarketData() {{
         sectorsTbody.innerHTML += `<tr>
           <td style="font-weight:600">${{name}}</td>
           <td class="mono">${{price}}</td>
-          <td class="mono ${cls}" style="font-weight:700">${{change}}</td>
+          <td class="mono ${{cls}}" style="font-weight:700">${{change}}</td>
           <td class="mono">${{vol}}</td>
         </tr>`;
       }});
@@ -7170,7 +7170,7 @@ async function fetchFinvizMarketData() {{
         forexTbody.innerHTML += `<tr>
           <td class="mono" style="font-weight:700">${{ticker}}</td>
           <td class="mono">${{price}}</td>
-          <td class="mono ${cls}">${{change}}</td>
+          <td class="mono ${{cls}}">${{change}}</td>
         </tr>`;
       }});
     }} else {{
@@ -7194,7 +7194,7 @@ async function fetchFinvizMarketData() {{
         cryptoTbody.innerHTML += `<tr>
           <td class="mono" style="font-weight:700">${{ticker}}</td>
           <td class="mono">${{price}}</td>
-          <td class="mono ${cls}">${{change}}</td>
+          <td class="mono ${{cls}}">${{change}}</td>
         </tr>`;
       }});
     }} else {{
